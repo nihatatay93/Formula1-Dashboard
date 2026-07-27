@@ -59,6 +59,7 @@ Formula1-Dashboard/
 │   ├── pyproject.toml
 │   └── uv.lock
 ├── docs/
+│   ├── DATABASE_DESIGN.md
 │   └── PROJECT_CONTEXT.md
 └── frontend/
     ├── src/
@@ -72,6 +73,7 @@ Formula1-Dashboard/
 - `backend/tests/`: Backend tests.
 - `frontend/src/`: React dashboard source.
 - `docs/`: Architecture, decisions, and persistent project context.
+- `docs/DATABASE_DESIGN.md`: Proposed Alembic conventions, migration phases, tables, constraints, indexes, and recovery behavior.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
 - `AGENTS.md`: Mandatory repository workflow and context rules.
 
@@ -135,6 +137,20 @@ Alembic and database model directories have not been created yet.
 - Date: 2026-07-27
 - Status: accepted
 
+### Phased database design
+
+- Decision: The current proposal separates the control plane, sporting data, and telemetry into independent migration phases.
+- Rationale: Validate job orchestration and session ingestion before committing to a high-volume telemetry schema or TimescaleDB.
+- Date: 2026-07-27
+- Status: proposed
+
+### SQLAlchemy database layer
+
+- Decision: The current proposal uses SQLAlchemy 2-style declarative models with synchronous sessions and psycopg for the first backfill phase.
+- Rationale: FastF1 processing is blocking, and one synchronous database model avoids unnecessary dual sync/async infrastructure at the start.
+- Date: 2026-07-27
+- Status: proposed
+
 ### No Redis at the start
 
 - Decision: Do not add Redis or another external background-job system until a demonstrated need exists.
@@ -153,18 +169,29 @@ Alembic and database model directories have not been created yet.
 
 No application tables, constraints, indexes, SQLAlchemy models, or Alembic migrations have been implemented.
 
-Required concepts whose physical schemas are still being designed:
+The proposed design is documented in `docs/DATABASE_DESIGN.md`. Its planned migration phases are:
 
-- Season and derived season ingestion status.
-- Event and session identity.
-- Persistent session ingestion state.
-- Year-level backfill jobs.
-- Event/session progress within each job.
-- Drivers, results, laps, and telemetry.
-- Data source identity: `live_signalr`, `fastf1_archive`, or `jolpica`.
-- Provisional and finalized data state.
+1. Backfill control plane: `seasons`, `events`, `sessions`, `session_ingestions`, `backfill_jobs`, and `backfill_job_sessions`.
+2. Sporting data: `drivers`, `session_entries`, `session_results`, and `laps`.
+3. Telemetry: deferred until storage volume and query patterns are measured.
 
-Uniqueness, idempotency, job locking, recovery, and query indexes must be finalized before the first migration is implemented.
+Key proposed constraints:
+
+- Unique event identity by `(season_year, round_number)`.
+- Unique session identity by `(event_id, session_key)`.
+- A partial unique index allowing only one `pending` or `running` backfill job per year.
+- Composite job-session identity by `(job_id, session_id)`.
+- Named check constraints for status, source, record state, and non-negative attempt counts.
+
+Key proposed behavior:
+
+- Persist session ingestion state independently from job history.
+- Derive year status from coverage, active jobs, and session state.
+- Claim session work with `FOR UPDATE SKIP LOCKED`.
+- Use session-level retries, heartbeats, and lease-based crash recovery.
+- Keep TimescaleDB and the telemetry table shape outside the first migration.
+
+All items in this subsection remain proposed until explicitly approved and implemented.
 
 ## API Contract
 
@@ -242,24 +269,27 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Declared persistent PostgreSQL and FastF1 cache volumes.
 - Verified the frontend production build.
 - Verified Docker Compose configuration parsing.
+- Created the proposed Alembic and database model design document.
 
 No application database schema, Alembic migration, FastF1 backfill, or live timing feature has been completed.
 
 ## Work in Progress
 
-- Alembic and initial database model design.
+- Review and approval of the proposed Alembic and database model design.
 
 ## Next Steps
 
-1. Complete and review the Alembic and database model design.
-2. Add SQLAlchemy and Alembic dependencies after design approval.
-3. Create the model and migration directory structure.
-4. Implement and verify the first Alembic migration.
-5. Implement one idempotent FastF1 session backfill vertical slice.
-6. Add season coverage and job-progress REST APIs.
-7. Add the basic season selection and progress UI.
-8. Measure telemetry volume before deciding on TimescaleDB.
-9. Design SignalR live timing and reconciliation separately.
+1. Review and approve or revise `docs/DATABASE_DESIGN.md`.
+2. Resolve the open decisions listed in that document.
+3. Add SQLAlchemy and Alembic dependencies after design approval.
+4. Create the model and migration directory structure.
+5. Implement and verify the control-plane migration.
+6. Implement and verify the sporting-data migration.
+7. Implement one idempotent FastF1 session backfill vertical slice.
+8. Add season coverage and job-progress REST APIs.
+9. Add the basic season selection and progress UI.
+10. Measure telemetry volume before deciding on TimescaleDB.
+11. Design SignalR live timing and reconciliation separately.
 
 ## Run and Test Commands
 
@@ -296,6 +326,7 @@ The checked-in backend unit test exists, but the current ignored host `.venv` is
 
 - `AGENTS.md`: Mandatory context, safety, language, and user-change preservation rules.
 - `docs/PROJECT_CONTEXT.md`: Authoritative record of current behavior, accepted decisions, and next steps.
+- `docs/DATABASE_DESIGN.md`: Proposed Alembic layout, relational model, migration phases, idempotency, locking, and recovery design.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
 - `backend/app/main.py`: FastAPI scaffold and health endpoints.
 - `backend/app/worker.py`: Placeholder worker lifecycle.
@@ -305,5 +336,6 @@ The checked-in backend unit test exists, but the current ignored host `.venv` is
 
 ## Change Log
 
+- 2026-07-27 — Added the proposed Alembic and database model design with phased migrations and explicit open decisions.
 - 2026-07-27 — Corrected repository documentation to English and recorded the implemented local scaffold.
 - 2026-07-27 — Created persistent project memory and recorded the initial architecture, backfill requirements, and live timing goals.
