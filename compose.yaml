@@ -22,6 +22,18 @@ services:
       retries: 10
       start_period: 5s
 
+  migrate:
+    build:
+      context: ./backend
+    command: ["/opt/venv/bin/alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql://formula1_dashboard@db:5432/formula1_dashboard
+    volumes:
+      - ./backend:/workspace
+    depends_on:
+      db:
+        condition: service_healthy
+
   api:
     build:
       context: ./backend
@@ -42,8 +54,8 @@ services:
     volumes:
       - ./backend:/workspace
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test:
         [
@@ -69,8 +81,8 @@ services:
       - ./backend:/workspace
       - fastf1_cache:/cache/fastf1
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test:
         [
@@ -113,4 +125,3 @@ volumes:
   postgres_data:
   fastf1_cache:
   frontend_node_modules:
-

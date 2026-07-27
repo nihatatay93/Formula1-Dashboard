@@ -16,11 +16,12 @@ The system is intended to:
 
 ## Current Architecture
 
-An initial local-development scaffold is present. It does not yet contain database models, Alembic migrations, FastF1 ingestion, backfill jobs, or live timing ingestion.
+The local-development scaffold and the first database migration are implemented. FastF1 ingestion, backfill job execution, sporting data, telemetry, and live timing ingestion are not yet implemented.
 
 Implemented services in `compose.yaml`:
 
 - `db`: PostgreSQL with a persistent `postgres_data` volume and a health check.
+- `migrate`: One-shot Alembic service that upgrades the database before the API and worker start.
 - `api`: FastAPI application with liveness and database-readiness endpoints.
 - `worker`: Separate process built from the backend image. It verifies the database connection and remains alive, but does not process jobs yet.
 - `frontend`: React, TypeScript, and Vite application that displays backend readiness.
@@ -28,9 +29,11 @@ Implemented services in `compose.yaml`:
 Implemented supporting infrastructure:
 
 - A persistent `fastf1_cache` Docker volume is declared for the worker.
-- The backend uses Python 3.13, `uv`, FastAPI, psycopg, Uvicorn, pytest, and Ruff.
+- The backend uses Python 3.13, `uv`, FastAPI, SQLAlchemy 2, Alembic, psycopg, Uvicorn, pytest, and Ruff.
 - The frontend uses Node.js 24, npm, React, TypeScript, and Vite.
 - PostgreSQL trust authentication is restricted to loopback-bound local development and must not be reused for production.
+- SQLAlchemy uses synchronous sessions with the explicit `postgresql+psycopg` dialect.
+- The application never calls `create_all`; Alembic is the only schema-authoring mechanism.
 
 Target data flow:
 
@@ -50,11 +53,24 @@ Formula1-Dashboard/
 ├── README.md
 ├── compose.yaml
 ├── backend/
+│   ├── alembic/
+│   │   ├── versions/
+│   │   ├── env.py
+│   │   └── script.py.mako
 │   ├── app/
+│   │   ├── db/
+│   │   │   ├── models/
+│   │   │   ├── base.py
+│   │   │   ├── engine.py
+│   │   │   ├── naming.py
+│   │   │   └── session.py
 │   │   ├── main.py
 │   │   └── worker.py
 │   ├── tests/
+│   │   ├── test_database_integration.py
+│   │   ├── test_database_metadata.py
 │   │   └── test_health.py
+│   ├── alembic.ini
 │   ├── Dockerfile
 │   ├── pyproject.toml
 │   └── uv.lock
@@ -70,14 +86,14 @@ Formula1-Dashboard/
 ```
 
 - `backend/app/`: FastAPI and worker process source.
+- `backend/app/db/`: SQLAlchemy metadata, connection configuration, session factory, and Revision 1 models.
+- `backend/alembic/`: Alembic environment and reviewed migration revisions.
 - `backend/tests/`: Backend tests.
 - `frontend/src/`: React dashboard source.
 - `docs/`: Architecture, decisions, and persistent project context.
-- `docs/DATABASE_DESIGN.md`: Proposed Alembic conventions, migration phases, tables, constraints, indexes, and recovery behavior.
+- `docs/DATABASE_DESIGN.md`: Accepted Alembic conventions, migration phases, tables, constraints, indexes, and recovery behavior.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
 - `AGENTS.md`: Mandatory repository workflow and context rules.
-
-Alembic and database model directories have not been created yet.
 
 ## Technical Decisions
 
@@ -139,17 +155,38 @@ Alembic and database model directories have not been created yet.
 
 ### Phased database design
 
-- Decision: The current proposal separates the control plane, sporting data, and telemetry into independent migration phases.
+- Decision: Separate the control plane, sporting data, and telemetry into independent migration phases.
 - Rationale: Validate job orchestration and session ingestion before committing to a high-volume telemetry schema or TimescaleDB.
 - Date: 2026-07-27
-- Status: proposed
+- Status: implemented
 
 ### SQLAlchemy database layer
 
-- Decision: The current proposal uses SQLAlchemy 2-style declarative models with synchronous sessions and psycopg for the first backfill phase.
+- Decision: Use SQLAlchemy 2-style declarative models with synchronous sessions and psycopg for the first backfill phase.
 - Rationale: FastF1 processing is blocking, and one synchronous database model avoids unnecessary dual sync/async infrastructure at the start.
 - Date: 2026-07-27
-- Status: proposed
+- Status: implemented
+
+### Migration service
+
+- Decision: Run Alembic through a one-shot `migrate` Compose service and make the API and worker wait for its successful completion.
+- Rationale: Prevent multiple long-running services from racing to apply schema changes.
+- Date: 2026-07-27
+- Status: implemented
+
+### Derived season status
+
+- Decision: Derive season status from discovered coverage, active jobs, and session ingestion state rather than storing a mutable season status column.
+- Rationale: Prevent season state from drifting away from its underlying job and session records.
+- Date: 2026-07-27
+- Status: accepted
+
+### Extensible state values
+
+- Decision: Store ingestion statuses, data sources, record states, and request reasons as text protected by named check constraints rather than native PostgreSQL enums.
+- Rationale: Keep value changes and Alembic upgrades/downgrades straightforward while preserving database validation.
+- Date: 2026-07-27
+- Status: implemented
 
 ### No Redis at the start
 
@@ -167,31 +204,34 @@ Alembic and database model directories have not been created yet.
 
 ## Database Model
 
-No application tables, constraints, indexes, SQLAlchemy models, or Alembic migrations have been implemented.
+Alembic revision `20260727_0001` implements the backfill control plane:
 
-The proposed design is documented in `docs/DATABASE_DESIGN.md`. Its planned migration phases are:
+- `seasons`: One row per season. `year` is a `SMALLINT` primary key constrained to `>= 1950`. Coverage timestamps support future freshness derivation.
+- `events`: Championship events keyed internally by `BIGINT IDENTITY`, linked to `seasons`, and unique by `(season_year, round_number)`.
+- `sessions`: Event sessions keyed internally by `BIGINT IDENTITY`, linked to `events`, and unique by `(event_id, session_key)`.
+- `session_ingestions`: One persistent ingestion-state row per session, including status, source, provisional/finalized state, attempts, lifecycle timestamps, retry eligibility, heartbeat, and sanitized error fields.
+- `backfill_jobs`: UUID year-level jobs linked to a season. A partial unique index on `season_year` for `pending` and `running` rows prevents two active jobs for one year.
+- `backfill_job_sessions`: Per-job, per-session progress with composite primary key `(job_id, session_id)`, attempt and lifecycle fields, and worker-claim/progress indexes.
 
-1. Backfill control plane: `seasons`, `events`, `sessions`, `session_ingestions`, `backfill_jobs`, and `backfill_job_sessions`.
-2. Sporting data: `drivers`, `session_entries`, `session_results`, and `laps`.
-3. Telemetry: deferred until storage volume and query patterns are measured.
+Implemented constraints and indexes:
 
-Key proposed constraints:
+- Foreign keys restrict deletion from seasons through sessions and ingestion state.
+- Deleting a backfill job cascades only to its `backfill_job_sessions`.
+- Status values are `pending`, `running`, `completed`, or `failed`.
+- Sources are `live_signalr`, `fastf1_archive`, or `jolpica`.
+- Record states are `provisional` or `finalized`.
+- Backfill request reasons are `missing`, `partial`, `stale`, or `manual`.
+- Attempt counts must be non-negative.
+- Deterministic names are generated for primary keys, foreign keys, unique constraints, checks, and indexes.
 
-- Unique event identity by `(season_year, round_number)`.
-- Unique session identity by `(event_id, session_key)`.
-- A partial unique index allowing only one `pending` or `running` backfill job per year.
-- Composite job-session identity by `(job_id, session_id)`.
-- Named check constraints for status, source, record state, and non-negative attempt counts.
+The accepted next migration phase contains `drivers`, `session_entries`, `session_results`, and `laps`. No sporting-data or telemetry table exists yet.
 
-Key proposed behavior:
+Planned but not implemented behavior:
 
-- Persist session ingestion state independently from job history.
 - Derive year status from coverage, active jobs, and session state.
 - Claim session work with `FOR UPDATE SKIP LOCKED`.
-- Use session-level retries, heartbeats, and lease-based crash recovery.
-- Keep TimescaleDB and the telemetry table shape outside the first migration.
-
-All items in this subsection remain proposed until explicitly approved and implemented.
+- Apply session-level retries, heartbeats, and lease-based crash recovery.
+- Keep TimescaleDB and telemetry table shape outside the initial relational migrations.
 
 ## API Contract
 
@@ -242,7 +282,7 @@ Accepted behavior:
 13. FastF1 cache must be used, and aggressive parallel requests must be avoided.
 14. Telemetry must be queried separately by session, driver, and lap.
 
-Retry counts, backoff, leases, heartbeats, and crash recovery have not been accepted yet. FastF1 is not yet installed, and the worker does not process jobs.
+The schema fields required for retries, leases, heartbeats, and crash recovery exist, but their timing policies and worker behavior remain undecided and unimplemented. FastF1 is not yet installed, and the worker does not process jobs.
 
 ## Live Timing Design
 
@@ -270,26 +310,30 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Verified the frontend production build.
 - Verified Docker Compose configuration parsing.
 - Created the proposed Alembic and database model design document.
+- Accepted the phased database design, synchronous SQLAlchemy layer, one-shot migration service, derived season status, championship-round scope, and text-backed checked states.
+- Added the SQLAlchemy metadata, connection layer, and synchronous session factory.
+- Added Alembic configuration and Revision 1 for all six backfill control-plane tables.
+- Added database metadata and PostgreSQL integration tests.
+- Verified fresh upgrade, schema/metadata drift check, constraint enforcement, downgrade, re-upgrade, and a second no-op upgrade.
+- Verified the full five-service Compose stack starts with healthy database, API, worker, and frontend services after migration completes.
 
-No application database schema, Alembic migration, FastF1 backfill, or live timing feature has been completed.
+No FastF1 backfill execution, sporting data, telemetry, or live timing feature has been completed.
 
 ## Work in Progress
 
-- Review and approval of the proposed Alembic and database model design.
+- No active implementation is in progress after Revision 1.
 
 ## Next Steps
 
-1. Review and approve or revise `docs/DATABASE_DESIGN.md`.
-2. Resolve the open decisions listed in that document.
-3. Add SQLAlchemy and Alembic dependencies after design approval.
-4. Create the model and migration directory structure.
-5. Implement and verify the control-plane migration.
-6. Implement and verify the sporting-data migration.
-7. Implement one idempotent FastF1 session backfill vertical slice.
-8. Add season coverage and job-progress REST APIs.
-9. Add the basic season selection and progress UI.
-10. Measure telemetry volume before deciding on TimescaleDB.
-11. Design SignalR live timing and reconciliation separately.
+1. Inspect representative FastF1 session data and settle stable driver identity.
+2. Review and implement the sporting-data migration for `drivers`, `session_entries`, `session_results`, and `laps`.
+3. Define retry count, backoff, heartbeat, lease, and current-season freshness policies before worker orchestration.
+4. Decide whether manual backfill cancellation belongs in the first phase.
+5. Implement one idempotent FastF1 session backfill vertical slice.
+6. Add season coverage and job-progress REST APIs.
+7. Add the basic season selection and progress UI.
+8. Measure telemetry volume before deciding on TimescaleDB.
+9. Design SignalR live timing and reconciliation separately.
 
 ## Run and Test Commands
 
@@ -298,36 +342,44 @@ Verified:
 ```bash
 npm run build --prefix frontend
 docker compose config --quiet
+docker compose up --build --detach
+docker compose run --rm migrate /opt/venv/bin/alembic upgrade head
+docker compose run --rm migrate /opt/venv/bin/alembic current
+docker compose run --rm migrate /opt/venv/bin/alembic check
+docker compose run --rm migrate /opt/venv/bin/alembic downgrade base
 ```
 
-Documented but not yet fully verified in this workspace:
+Backend lint and tests are verified in the pinned uv container without using the ignored host virtual environment:
 
 ```bash
-docker compose up --build
-docker compose down
+docker run --rm -e UV_PROJECT_ENVIRONMENT=/tmp/formula1-dashboard-venv -v "$PWD/backend:/workspace" -w /workspace ghcr.io/astral-sh/uv:0.11.29-python3.13-trixie-slim uv run --frozen ruff check .
+docker run --rm -e UV_PROJECT_ENVIRONMENT=/tmp/formula1-dashboard-venv -v "$PWD/backend:/workspace" -w /workspace ghcr.io/astral-sh/uv:0.11.29-python3.13-trixie-slim uv run --frozen pytest
 ```
 
-The checked-in backend unit test exists, but the current ignored host `.venv` is not portable and did not execute successfully from the host. Container-based backend test execution still needs to be verified.
+Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The full suite passed with eight tests against the isolated Compose database.
 
 ## Known Issues and Technical Debt
 
-- No application database schema or Alembic environment exists.
 - The worker is only a readiness scaffold and cannot claim or process jobs.
 - FastF1 is not installed.
 - TimescaleDB usage has not been decided.
-- Job recovery, retry, lease, heartbeat, and locking behavior have not been finalized.
+- Job recovery, retry, lease, heartbeat, and locking fields exist, but policies and processing behavior have not been finalized.
 - Season/backfill API paths and response schemas have not been finalized.
 - FastF1 ingestion time and storage volume have not been measured.
 - Live SignalR protocol and reconciliation rules have not been designed.
 - PostgreSQL trust authentication is suitable only for the current loopback-bound local environment.
-- Backend tests still need container-based verification.
+- The ignored host `.venv` is not portable; use the verified container-based backend commands.
 
 ## Important Files
 
 - `AGENTS.md`: Mandatory context, safety, language, and user-change preservation rules.
 - `docs/PROJECT_CONTEXT.md`: Authoritative record of current behavior, accepted decisions, and next steps.
-- `docs/DATABASE_DESIGN.md`: Proposed Alembic layout, relational model, migration phases, idempotency, locking, and recovery design.
+- `docs/DATABASE_DESIGN.md`: Accepted Alembic layout, relational model, migration phases, idempotency, locking, and recovery design.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
+- `backend/alembic/versions/20260727_0001_backfill_control_plane.py`: Reviewed Revision 1 schema and downgrade.
+- `backend/app/db/base.py`: Shared SQLAlchemy metadata and timestamp mixin.
+- `backend/app/db/models/`: Revision 1 SQLAlchemy control-plane models.
+- `backend/tests/test_database_integration.py`: PostgreSQL constraint and index integration coverage.
 - `backend/app/main.py`: FastAPI scaffold and health endpoints.
 - `backend/app/worker.py`: Placeholder worker lifecycle.
 - `backend/tests/test_health.py`: Backend health endpoint unit tests.
@@ -336,6 +388,7 @@ The checked-in backend unit test exists, but the current ignored host `.venv` is
 
 ## Change Log
 
+- 2026-07-27 — Accepted the database proposal and implemented and verified Alembic Revision 1 with six backfill control-plane tables.
 - 2026-07-27 — Added the proposed Alembic and database model design with phased migrations and explicit open decisions.
 - 2026-07-27 — Corrected repository documentation to English and recorded the implemented local scaffold.
 - 2026-07-27 — Created persistent project memory and recorded the initial architecture, backfill requirements, and live timing goals.

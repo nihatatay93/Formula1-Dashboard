@@ -4,8 +4,10 @@ version = "0.1.0"
 description = "Backend API and ingestion worker for Formula1 Dashboard"
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    "alembic>=1.16,<2.0",
     "fastapi>=0.116,<1.0",
     "psycopg[binary]>=3.2,<4.0",
+    "sqlalchemy>=2.0,<3.0",
     "uvicorn[standard]>=0.35,<1.0",
 ]
 
