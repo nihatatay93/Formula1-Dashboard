@@ -367,7 +367,9 @@ The exact precedence will be implemented once API response tests are written.
   ownership or an existing `running` state, increments `attempt_count`, and commits
   `running` before upstream work begins.
 - First and latest attempt start timestamps are retained.
-- Successful replacement writes `completed` atomically with the sporting snapshot.
+- Direct successful replacement writes persistent session completion atomically
+  with the sporting snapshot. Claim-aware replacement also completes the owning
+  job-session in that same transaction.
 - Failure writes `failed` in a separate transaction and preserves any earlier
   completed snapshot and completion metadata.
 - Pending and running retain the most recent sanitized failure; successful
@@ -377,6 +379,8 @@ The exact precedence will be implemented once API response tests are written.
 - Direct managed archive attempts leave `heartbeat_at` and `next_retry_at`
   unset. Orchestrated claims set an initial shared heartbeat, and synchronized
   failures clear it while assigning the same retry timestamp when eligible.
+- Ownership-fenced heartbeat calls refresh the parent job, job-session, and
+  persistent session with one PostgreSQL timestamp.
 
 ## Retry and Crash Recovery
 
@@ -390,6 +394,9 @@ Implemented behavior:
   failure transitions.
 - Failure transitions require the claimed job attempt and monotonic persistent
   session-attempt token.
+- Heartbeat and archive completion validate both ownership tokens.
+- Claim-aware completion changes both session states to completed atomically
+  with archive sporting-data replacement.
 - Error fields contain sanitized summaries only and never contain credentials,
   cookies, raw authorization headers, or raw exception text.
 
@@ -398,8 +405,9 @@ Accepted but not implemented:
 - Running rows with an expired heartbeat become eligible for recovery.
 - Recovery must not reset a completed session.
 - The initial worker processes one FastF1 session at a time.
-- Periodic heartbeat, completion fencing, and lease recovery follow
-  `docs/BACKFILL_RUNTIME_POLICY.md`.
+- The worker must schedule the implemented heartbeat transaction every 30
+  seconds.
+- Lease recovery follows `docs/BACKFILL_RUNTIME_POLICY.md`.
 
 ## Data Source and Finalization
 

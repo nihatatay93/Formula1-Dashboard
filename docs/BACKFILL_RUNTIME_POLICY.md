@@ -1,6 +1,6 @@
 # Backfill Runtime Policy
 
-Status: **accepted; settings, backoff, claiming, and failure transitions implemented**
+Status: **accepted; settings through fenced completion implemented**
 Date: **2026-07-28**
 
 ## Purpose
@@ -19,8 +19,9 @@ It covers:
 It does not define job aggregation, cancellation, REST APIs, or UI behavior.
 Typed settings, exception classification, deterministic backoff calculation,
 transactional job-session claiming, and synchronized retry/terminal failure
-transitions are implemented. Periodic heartbeat, lease recovery, completion
-fencing, job aggregation, and freshness evaluation remain unimplemented.
+transitions are implemented. Ownership-fenced heartbeat writes and claim-aware
+atomic completion are also implemented. Worker heartbeat scheduling, lease
+recovery, job aggregation, and freshness evaluation remain unimplemented.
 
 ## Recommended Configuration
 
@@ -163,6 +164,11 @@ Each heartbeat transaction must:
 If either conditional update affects zero rows, the worker has lost ownership and
 must stop without persisting.
 
+The implemented `heartbeat_archive_job_session` transaction performs one
+ownership-checked refresh of all three heartbeat fields using PostgreSQL time.
+The future worker must schedule this operation every 30 seconds and stop work if
+ownership validation fails.
+
 ## Lease Expiry and Recovery
 
 A running attempt is stale when its heartbeat is older than five minutes according
@@ -202,6 +208,13 @@ ownership values.
 Archive persistence must verify the expected session-attempt token and `running`
 state inside its locked replacement transaction. A stale worker whose token no
 longer matches must abort and cannot overwrite a newer attempt.
+
+Heartbeat and failure transactions validate both tokens before committing.
+Claim-aware archive persistence locks and validates the job-session, parent job,
+target session, and persistent session ingestion before sporting writes. It marks
+the job-session and persistent session completed in the same transaction as the
+replacement snapshot. The direct non-job persistence path remains available for
+controlled one-session operations.
 
 The existing schema already contains the required counters and timestamps, so this
 policy does not require a migration.
@@ -268,7 +281,8 @@ session reaches seven days.
    backoff tests with injectable randomness and database time.
 3. Implemented: job-session and persistent-session claim synchronization,
    retry/terminal failure transitions, and failure-write fencing.
-4. Add heartbeat ownership updates and completion fencing to persistence.
+4. Implemented: ownership-fenced heartbeat updates and claim-aware completion
+   fencing inside archive persistence.
 5. Add stale-lease recovery.
 6. Add current-season coverage and correction-checkpoint eligibility functions.
 7. Connect the placeholder worker only after the above behavior is covered by

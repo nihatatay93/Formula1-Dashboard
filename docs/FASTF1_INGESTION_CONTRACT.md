@@ -233,6 +233,10 @@ Implemented:
 - Driver, entry, result, and bounded-batch lap upserts.
 - Stale archive row deletion without deleting global drivers.
 - Atomic `completed` and `finalized` ingestion-state updates.
+- Optional claim-aware persistence that validates job and persistent-session
+  ownership before writes and completes both session states with the snapshot.
+- Ownership-fenced heartbeat transactions for parent job, job-session, and
+  persistent session ingestion.
 - Idempotent pending state and single-increment running attempts.
 - Overlapping-running and non-archive state protection.
 - Separate failed-state transactions with fixed secret-free diagnostics.
@@ -241,5 +245,5 @@ Implemented:
 
 Not implemented:
 
-- Backfill job and job-session state synchronization.
-- Retry timing, heartbeat, lease recovery, and worker execution.
+- Worker heartbeat scheduling, lease recovery, job aggregation, and worker
+  execution.

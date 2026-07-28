@@ -65,6 +65,12 @@ class ArchiveJobFailureTransition:
     failure: SanitizedArchiveFailure
 
 
+@dataclass(frozen=True, slots=True)
+class ArchiveJobHeartbeat:
+    claim: ClaimedArchiveJobSession
+    heartbeat_at: datetime
+
+
 def claim_next_archive_job_session(
     database: Session,
     *,
@@ -178,6 +184,46 @@ def claim_next_archive_job_session(
             job_attempt_count=job_attempt_count,
             session_attempt_token=session_attempt_token,
             claimed_at=claimed_at,
+        )
+
+
+def heartbeat_archive_job_session(
+    database: Session,
+    *,
+    claim: ClaimedArchiveJobSession,
+) -> ArchiveJobHeartbeat:
+    """Refresh all heartbeat fields while the claim still owns both states."""
+
+    _require_new_transaction(database)
+
+    with database.begin():
+        job_session = _get_job_session_for_update(database, claim)
+        job = _get_job_for_update(database, claim.job_id)
+        if job is None or job.status != "running":
+            raise BackfillClaimOwnershipError(
+                f"backfill job {claim.job_id} no longer owns the claim"
+            )
+
+        ingestion = _get_ingestion_for_update(database, claim.session_id)
+        if (
+            ingestion is None
+            or ingestion.source != ARCHIVE_SOURCE
+            or ingestion.status != "running"
+            or ingestion.attempt_count != claim.session_attempt_token
+        ):
+            raise BackfillClaimOwnershipError(
+                f"session attempt {claim.session_attempt_token} no longer "
+                f"owns session {claim.session_id}"
+            )
+
+        heartbeat_at = _database_now(database)
+        job_session.heartbeat_at = heartbeat_at
+        job.heartbeat_at = heartbeat_at
+        ingestion.heartbeat_at = heartbeat_at
+
+        return ArchiveJobHeartbeat(
+            claim=claim,
+            heartbeat_at=heartbeat_at,
         )
 
 

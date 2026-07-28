@@ -20,6 +20,7 @@ two database migrations:
 - Observable pending/running/completed/failed archive attempts with sanitized errors
 - Validated runtime settings, retry classification, and equal-jitter backoff calculations
 - Transactional job-session claiming and synchronized archive retry transitions
+- Ownership-fenced heartbeat updates and atomic claimed archive completion
 - Docker Compose health checks
 
 End-to-end year-level FastF1 backfill orchestration and worker execution,

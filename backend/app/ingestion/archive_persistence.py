@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 from sqlalchemy import delete, func, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    BackfillJob,
+    BackfillJobSession,
     Driver,
     Event,
     Lap,
@@ -55,6 +58,17 @@ class ArchiveSourceConflictError(ArchivePersistenceError):
     """Raised when another data source already owns session ingestion data."""
 
 
+class ArchivePersistenceOwnershipError(ArchivePersistenceError):
+    """Raised when an orchestrated claim no longer owns completion."""
+
+
+class ArchiveClaimProtocol(Protocol):
+    job_id: uuid.UUID
+    session_id: int
+    job_attempt_count: int
+    session_attempt_token: int
+
+
 @dataclass(frozen=True, slots=True)
 class ArchiveSessionIdentity:
     session_id: int
@@ -83,6 +97,7 @@ def replace_archive_session(
     completed_at: datetime | None = None,
     source_updated_at: datetime | None = None,
     expected_identity: ArchiveSessionIdentity | None = None,
+    claim: ArchiveClaimProtocol | None = None,
 ) -> ArchivePersistenceSummary:
     """Atomically replace one session's FastF1 archive-owned sporting snapshot."""
 
@@ -101,10 +116,20 @@ def replace_archive_session(
         raise ArchivePersistenceContractError(
             "expected archive identity must match session_id"
         )
-
-    completion_time = completed_at or datetime.now(UTC)
+    if claim is not None and claim.session_id != session_id:
+        raise ArchivePersistenceContractError(
+            "archive claim must match session_id"
+        )
 
     with database.begin():
+        claimed_job_session: BackfillJobSession | None = None
+        claimed_job: BackfillJob | None = None
+        if claim is not None:
+            claimed_job_session, claimed_job = _lock_claim_job_state(
+                database,
+                claim,
+            )
+
         locked_identity = _lock_target_session(database, session_id)
         if (
             expected_identity is not None
@@ -113,6 +138,11 @@ def replace_archive_session(
             raise ArchivePersistenceTargetChangedError(
                 f"database session {session_id} identity changed before persistence"
             )
+        if claim is not None:
+            _lock_and_validate_claimed_ingestion(database, claim)
+
+        database_time = _database_now(database)
+        completion_time = completed_at or database_time
         _ensure_archive_ownership(database, session_id)
 
         driver_ids = _upsert_drivers(database, snapshot.drivers)
@@ -148,6 +178,13 @@ def replace_archive_session(
             completed_at=completion_time,
             source_updated_at=source_updated_at,
         )
+        if claimed_job_session is not None and claimed_job is not None:
+            _mark_claim_completed(
+                claimed_job_session,
+                claimed_job,
+                completed_at=completion_time,
+                heartbeat_at=database_time,
+            )
 
     return ArchivePersistenceSummary(
         session_id=session_id,
@@ -243,6 +280,61 @@ def _lock_target_session(
         round_number=row.round_number,
         session_name=row.session_name,
     )
+
+
+def _lock_claim_job_state(
+    database: Session,
+    claim: ArchiveClaimProtocol,
+) -> tuple[BackfillJobSession, BackfillJob]:
+    job_session = database.scalar(
+        select(BackfillJobSession)
+        .where(
+            BackfillJobSession.job_id == claim.job_id,
+            BackfillJobSession.session_id == claim.session_id,
+        )
+        .with_for_update()
+    )
+    if (
+        job_session is None
+        or job_session.status != "running"
+        or job_session.attempt_count != claim.job_attempt_count
+    ):
+        raise ArchivePersistenceOwnershipError(
+            f"job attempt {claim.job_attempt_count} no longer owns "
+            f"session {claim.session_id}"
+        )
+
+    job = database.scalar(
+        select(BackfillJob)
+        .where(BackfillJob.id == claim.job_id)
+        .with_for_update()
+    )
+    if job is None or job.status != "running":
+        raise ArchivePersistenceOwnershipError(
+            f"backfill job {claim.job_id} no longer owns completion"
+        )
+    return job_session, job
+
+
+def _lock_and_validate_claimed_ingestion(
+    database: Session,
+    claim: ArchiveClaimProtocol,
+) -> None:
+    ingestion = database.scalar(
+        select(SessionIngestion)
+        .where(SessionIngestion.session_id == claim.session_id)
+        .with_for_update()
+    )
+    if (
+        ingestion is None
+        or ingestion.source != ARCHIVE_SOURCE
+        or ingestion.status != "running"
+        or ingestion.attempt_count != claim.session_attempt_token
+    ):
+        raise ArchivePersistenceOwnershipError(
+            f"session attempt {claim.session_attempt_token} no longer "
+            f"owns session {claim.session_id}"
+        )
 
 
 def _ensure_archive_ownership(database: Session, session_id: int) -> None:
@@ -621,6 +713,35 @@ def _mark_ingestion_completed(
             set_=update_values,
         )
     )
+
+
+def _mark_claim_completed(
+    job_session: BackfillJobSession,
+    job: BackfillJob,
+    *,
+    completed_at: datetime,
+    heartbeat_at: datetime,
+) -> None:
+    job_session.status = "completed"
+    job_session.heartbeat_at = None
+    job_session.next_retry_at = None
+    job_session.completed_at = completed_at
+    job_session.last_error_code = None
+    job_session.last_error_message = None
+    job.heartbeat_at = heartbeat_at
+
+
+def _database_now(database: Session) -> datetime:
+    value = database.scalar(select(func.clock_timestamp()))
+    if not isinstance(value, datetime):
+        raise ArchivePersistenceError(
+            "PostgreSQL did not return a timestamp"
+        )
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ArchivePersistenceError(
+            "PostgreSQL returned a timestamp without a timezone"
+        )
+    return value.astimezone(UTC)
 
 
 def _batches(

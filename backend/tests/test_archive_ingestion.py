@@ -10,7 +10,13 @@ from sqlalchemy import Engine, create_engine, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.engine import sqlalchemy_database_url
-from app.db.models import Lap, SessionEntry, SessionIngestion, SessionResult
+from app.db.models import (
+    BackfillJobSession,
+    Lap,
+    SessionEntry,
+    SessionIngestion,
+    SessionResult,
+)
 from app.ingestion.archive_attempt import (
     ArchiveIngestionAlreadyRunningError,
     ArchiveIngestionStateError,
@@ -25,6 +31,9 @@ from app.ingestion.archive_persistence import (
     ArchivePersistenceTargetChangedError,
     ArchiveSessionNotFoundError,
     ArchiveSourceConflictError,
+)
+from app.ingestion.backfill_orchestration import (
+    claim_next_archive_job_session,
 )
 from app.ingestion.fastf1_loader import (
     FastF1SessionLoadError,
@@ -250,6 +259,15 @@ def ingestion_target() -> Any:
             connection.execute(
                 text(
                     """
+                    DELETE FROM backfill_jobs
+                    WHERE season_year = :season_year
+                    """
+                ),
+                {"season_year": season_year},
+            )
+            connection.execute(
+                text(
+                    """
                     DELETE FROM session_results
                     WHERE session_entry_id IN (
                         SELECT id
@@ -456,6 +474,85 @@ def test_managed_attempt_exposes_running_and_completes_atomically(
         assert ingestion.completed_at == completed_at
         assert ingestion.last_error_code is None
         assert ingestion.last_error_message is None
+
+
+def test_claimed_vertical_slice_completes_the_owned_job_session(
+    ingestion_target: IngestionTarget,
+) -> None:
+    job_id = uuid.uuid4()
+    with ingestion_target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO backfill_jobs (
+                    id,
+                    season_year,
+                    status,
+                    request_reason
+                )
+                VALUES (
+                    :job_id,
+                    :season_year,
+                    'pending',
+                    'missing'
+                )
+                """
+            ),
+            {
+                "job_id": job_id,
+                "season_year": ingestion_target.season_year,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO backfill_job_sessions (
+                    job_id,
+                    session_id
+                )
+                VALUES (
+                    :job_id,
+                    :session_id
+                )
+                """
+            ),
+            {
+                "job_id": job_id,
+                "session_id": ingestion_target.session_id,
+            },
+        )
+
+    with ingestion_target.session_factory() as database:
+        claim = claim_next_archive_job_session(database)
+    assert claim is not None
+
+    results, laps = archive_tables(ingestion_target)
+    completed_at = datetime(2026, 7, 28, 16, 30, tzinfo=UTC)
+    summary = ingest_fastf1_archive_session(
+        session_id=ingestion_target.session_id,
+        session_factory=ingestion_target.session_factory,
+        loader=StubLoader(results=results, laps=laps),
+        completed_at=completed_at,
+        claim=claim,
+    )
+
+    assert summary.persistence.session_id == ingestion_target.session_id
+    with ingestion_target.session_factory() as database:
+        job_session = database.get(
+            BackfillJobSession,
+            (job_id, ingestion_target.session_id),
+        )
+        ingestion = database.get(
+            SessionIngestion,
+            ingestion_target.session_id,
+        )
+
+        assert job_session is not None
+        assert job_session.status == "completed"
+        assert job_session.completed_at == completed_at
+        assert ingestion is not None
+        assert ingestion.status == "completed"
+        assert ingestion.completed_at == completed_at
 
 
 def test_managed_failure_records_only_fixed_sanitized_diagnostics(

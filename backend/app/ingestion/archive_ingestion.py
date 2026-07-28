@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Event, RaceSession
 from app.ingestion.archive_persistence import (
+    ArchiveClaimProtocol,
     ArchivePersistenceSummary,
     ArchiveSessionIdentity,
     ArchiveSessionNotFoundError,
@@ -51,6 +52,7 @@ def ingest_fastf1_archive_session(
     loader: FastF1SessionLoaderProtocol,
     completed_at: datetime | None = None,
     source_updated_at: datetime | None = None,
+    claim: ArchiveClaimProtocol | None = None,
 ) -> ArchiveIngestionSummary:
     """Load, normalize, and atomically persist one database session."""
 
@@ -77,6 +79,7 @@ def ingest_fastf1_archive_session(
             completed_at=completed_at,
             source_updated_at=source_updated_at,
             expected_identity=target,
+            claim=claim,
         )
 
     return ArchiveIngestionSummary(

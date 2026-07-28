@@ -16,6 +16,7 @@ from app.ingestion.backfill_orchestration import (
     BackfillOrchestrationTransactionError,
     BackfillPersistentStateConflictError,
     claim_next_archive_job_session,
+    heartbeat_archive_job_session,
     transition_archive_job_failure,
 )
 from app.ingestion.fastf1_loader import FastF1SessionLoadError
@@ -375,6 +376,88 @@ def test_retryable_failure_synchronizes_pending_state_and_preserves_snapshot(
         assert "SECRET-UPSTREAM-DETAIL" not in (
             ingestion.last_error_message or ""
         )
+
+
+def test_heartbeat_synchronizes_all_owned_rows(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    session_id = orchestration_target.session_ids[0]
+    queue_session(orchestration_target, session_id)
+
+    with orchestration_target.session_factory() as database:
+        claim = claim_next_archive_job_session(database)
+    assert claim is not None
+
+    with orchestration_target.session_factory() as database:
+        heartbeat = heartbeat_archive_job_session(
+            database,
+            claim=claim,
+        )
+
+    assert heartbeat.claim == claim
+    assert heartbeat.heartbeat_at >= claim.claimed_at
+
+    with orchestration_target.session_factory() as database:
+        job = database.get(BackfillJob, orchestration_target.job_id)
+        job_session = database.get(
+            BackfillJobSession,
+            (orchestration_target.job_id, session_id),
+        )
+        ingestion = database.get(SessionIngestion, session_id)
+
+        assert job is not None
+        assert job.heartbeat_at == heartbeat.heartbeat_at
+        assert job_session is not None
+        assert job_session.heartbeat_at == heartbeat.heartbeat_at
+        assert ingestion is not None
+        assert ingestion.heartbeat_at == heartbeat.heartbeat_at
+
+
+@pytest.mark.parametrize(
+    "ownership_field",
+    ["job_attempt_count", "session_attempt_token"],
+)
+def test_heartbeat_rejects_stale_ownership_without_partial_updates(
+    orchestration_target: OrchestrationTarget,
+    ownership_field: str,
+) -> None:
+    session_id = orchestration_target.session_ids[0]
+    queue_session(orchestration_target, session_id)
+
+    with orchestration_target.session_factory() as database:
+        claim = claim_next_archive_job_session(database)
+    assert claim is not None
+    stale_claim = replace(
+        claim,
+        **{
+            ownership_field: getattr(claim, ownership_field) + 1,
+        },
+    )
+
+    with orchestration_target.session_factory() as database:
+        with pytest.raises(
+            BackfillClaimOwnershipError,
+            match="no longer owns",
+        ):
+            heartbeat_archive_job_session(
+                database,
+                claim=stale_claim,
+            )
+
+    with orchestration_target.session_factory() as database:
+        job = database.get(BackfillJob, orchestration_target.job_id)
+        job_session = database.get(
+            BackfillJobSession,
+            (orchestration_target.job_id, session_id),
+        )
+        ingestion = database.get(SessionIngestion, session_id)
+
+        assert job is not None
+        assert job.heartbeat_at == claim.claimed_at
+        assert job_session is not None
+        assert job_session.heartbeat_at == claim.claimed_at
+        assert ingestion is not None
+        assert ingestion.heartbeat_at == claim.claimed_at
 
 
 def test_terminal_failure_synchronizes_failed_state(

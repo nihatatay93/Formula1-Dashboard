@@ -11,11 +11,24 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.engine import sqlalchemy_database_url
-from app.db.models import Driver, Lap, SessionEntry, SessionIngestion, SessionResult
+from app.db.models import (
+    BackfillJob,
+    BackfillJobSession,
+    Driver,
+    Lap,
+    SessionEntry,
+    SessionIngestion,
+    SessionResult,
+)
 from app.ingestion.archive_persistence import (
+    ArchivePersistenceOwnershipError,
     ArchivePersistenceTransactionError,
     ArchiveSourceConflictError,
     replace_archive_session,
+)
+from app.ingestion.backfill_orchestration import (
+    ClaimedArchiveJobSession,
+    claim_next_archive_job_session,
 )
 from app.ingestion.fastf1_normalization import (
     NormalizedDriver,
@@ -140,6 +153,15 @@ def persistence_target() -> Any:
                     """
                 ),
                 {"session_id": session_id},
+            )
+            connection.execute(
+                text(
+                    """
+                    DELETE FROM backfill_jobs
+                    WHERE season_year = :season_year
+                    """
+                ),
+                {"season_year": season_year},
             )
             connection.execute(
                 text(
@@ -326,6 +348,246 @@ def make_lap(
         fastf1_generated=False,
         is_accurate=True,
     )
+
+
+def claim_persistence_target(
+    target: PersistenceTarget,
+) -> ClaimedArchiveJobSession:
+    job_id = uuid.uuid4()
+    with target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO backfill_jobs (
+                    id,
+                    season_year,
+                    status,
+                    request_reason
+                )
+                VALUES (
+                    :job_id,
+                    :season_year,
+                    'pending',
+                    'missing'
+                )
+                """
+            ),
+            {
+                "job_id": job_id,
+                "season_year": target.season_year,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO backfill_job_sessions (
+                    job_id,
+                    session_id
+                )
+                VALUES (
+                    :job_id,
+                    :session_id
+                )
+                """
+            ),
+            {
+                "job_id": job_id,
+                "session_id": target.session_id,
+            },
+        )
+
+    with Session(target.engine) as database:
+        claim = claim_next_archive_job_session(database)
+    assert claim is not None
+    assert claim.job_id == job_id
+    assert claim.session_id == target.session_id
+    return claim
+
+
+def test_claimed_completion_is_atomic_with_archive_replacement(
+    persistence_target: PersistenceTarget,
+) -> None:
+    claim = claim_persistence_target(persistence_target)
+    completed_at = datetime(2026, 7, 28, 21, 0, tzinfo=UTC)
+    source_updated_at = datetime(2026, 7, 28, 20, 30, tzinfo=UTC)
+
+    with persistence_target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE backfill_job_sessions
+                SET last_error_code = 'previous_failure',
+                    last_error_message = 'Previous fixed failure.'
+                WHERE job_id = :job_id
+                  AND session_id = :session_id
+                """
+            ),
+            {
+                "job_id": claim.job_id,
+                "session_id": claim.session_id,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                UPDATE session_ingestions
+                SET last_error_code = 'previous_failure',
+                    last_error_message = 'Previous fixed failure.'
+                WHERE session_id = :session_id
+                """
+            ),
+            {"session_id": claim.session_id},
+        )
+
+    with Session(persistence_target.engine) as database:
+        summary = replace_archive_session(
+            database,
+            session_id=persistence_target.session_id,
+            snapshot=make_snapshot(persistence_target),
+            completed_at=completed_at,
+            source_updated_at=source_updated_at,
+            claim=claim,
+        )
+
+    assert summary.session_id == persistence_target.session_id
+    with Session(persistence_target.engine) as database:
+        job = database.get(BackfillJob, claim.job_id)
+        job_session = database.get(
+            BackfillJobSession,
+            (claim.job_id, claim.session_id),
+        )
+        ingestion = database.get(SessionIngestion, claim.session_id)
+
+        assert job is not None
+        assert job.status == "running"
+        assert job.heartbeat_at is not None
+        assert job.heartbeat_at >= claim.claimed_at
+
+        assert job_session is not None
+        assert job_session.status == "completed"
+        assert job_session.attempt_count == claim.job_attempt_count
+        assert job_session.completed_at == completed_at
+        assert job_session.heartbeat_at is None
+        assert job_session.next_retry_at is None
+        assert job_session.last_error_code is None
+        assert job_session.last_error_message is None
+
+        assert ingestion is not None
+        assert ingestion.status == "completed"
+        assert ingestion.attempt_count == claim.session_attempt_token
+        assert ingestion.completed_at == completed_at
+        assert ingestion.source_updated_at == source_updated_at
+        assert ingestion.heartbeat_at is None
+        assert ingestion.next_retry_at is None
+        assert ingestion.last_error_code is None
+        assert ingestion.last_error_message is None
+        assert database.scalar(
+            select(func.count(SessionEntry.id)).where(
+                SessionEntry.session_id == claim.session_id
+            )
+        ) == 2
+
+
+@pytest.mark.parametrize(
+    "ownership_field",
+    ["job_attempt_count", "session_attempt_token"],
+)
+def test_claimed_completion_rejects_stale_ownership_before_writes(
+    persistence_target: PersistenceTarget,
+    ownership_field: str,
+) -> None:
+    claim = claim_persistence_target(persistence_target)
+    stale_claim = replace(
+        claim,
+        **{
+            ownership_field: getattr(claim, ownership_field) + 1,
+        },
+    )
+
+    with Session(persistence_target.engine) as database:
+        with pytest.raises(
+            ArchivePersistenceOwnershipError,
+            match="no longer owns",
+        ):
+            replace_archive_session(
+                database,
+                session_id=persistence_target.session_id,
+                snapshot=make_snapshot(persistence_target),
+                claim=stale_claim,
+            )
+
+    with Session(persistence_target.engine) as database:
+        job_session = database.get(
+            BackfillJobSession,
+            (claim.job_id, claim.session_id),
+        )
+        ingestion = database.get(SessionIngestion, claim.session_id)
+
+        assert job_session is not None
+        assert job_session.status == "running"
+        assert job_session.completed_at is None
+        assert ingestion is not None
+        assert ingestion.status == "running"
+        assert ingestion.completed_at is None
+        assert database.scalar(
+            select(func.count(SessionEntry.id)).where(
+                SessionEntry.session_id == claim.session_id
+            )
+        ) == 0
+        assert database.scalar(
+            select(func.count(Driver.id)).where(
+                Driver.jolpica_driver_id.in_(
+                    [
+                        driver.jolpica_driver_id
+                        for driver in make_snapshot(persistence_target).drivers
+                    ]
+                )
+            )
+        ) == 0
+
+
+def test_claimed_database_failure_rolls_back_snapshot_and_completion(
+    persistence_target: PersistenceTarget,
+) -> None:
+    claim = claim_persistence_target(persistence_target)
+    snapshot = make_snapshot(persistence_target)
+    invalid_snapshot = replace(
+        snapshot,
+        results=(
+            replace(snapshot.results[0], points=Decimal("-1")),
+            snapshot.results[1],
+        ),
+    )
+
+    with Session(persistence_target.engine) as database:
+        with pytest.raises(IntegrityError):
+            replace_archive_session(
+                database,
+                session_id=persistence_target.session_id,
+                snapshot=invalid_snapshot,
+                claim=claim,
+            )
+
+    with Session(persistence_target.engine) as database:
+        job_session = database.get(
+            BackfillJobSession,
+            (claim.job_id, claim.session_id),
+        )
+        ingestion = database.get(SessionIngestion, claim.session_id)
+
+        assert job_session is not None
+        assert job_session.status == "running"
+        assert job_session.completed_at is None
+        assert job_session.heartbeat_at == claim.claimed_at
+        assert ingestion is not None
+        assert ingestion.status == "running"
+        assert ingestion.completed_at is None
+        assert ingestion.heartbeat_at == claim.claimed_at
+        assert database.scalar(
+            select(func.count(SessionEntry.id)).where(
+                SessionEntry.session_id == claim.session_id
+            )
+        ) == 0
 
 
 def test_persists_and_idempotently_updates_one_snapshot(
