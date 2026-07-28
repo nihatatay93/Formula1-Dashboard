@@ -41,6 +41,7 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en", {
 });
 
 type ApiState = "checking" | "ready" | "unavailable";
+type DashboardView = "overview" | "calendar" | "session";
 
 function humanize(value: string): string {
   return value
@@ -479,6 +480,7 @@ function App() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
+  const [activeView, setActiveView] = useState<DashboardView>("overview");
   const [now, setNow] = useState(() => Date.now());
 
   const supportedYears = useMemo(
@@ -572,6 +574,7 @@ function App() {
     setJobError(null);
     setPollingJobId(null);
     setSelectedSessionId(null);
+    setActiveView("overview");
 
     refreshSeason(selectedYear, controller.signal)
       .catch((error: unknown) => {
@@ -636,6 +639,7 @@ function App() {
     setCommandPending(true);
     setSeasonError(null);
     setNotice(null);
+    setActiveView("overview");
 
     try {
       const result = await ensureSeasonBackfill(selectedYear, controller.signal);
@@ -707,260 +711,357 @@ function App() {
 
   function handleSessionSelection(sessionId: string) {
     setSelectedSessionId(sessionId);
-    window.requestAnimationFrame(() => {
-      const reduceMotion = window.matchMedia(
-        "(prefers-reduced-motion: reduce)",
-      ).matches;
-      document.getElementById("session-explorer")?.scrollIntoView({
-        behavior: reduceMotion ? "auto" : "smooth",
-        block: "start",
-      });
-    });
+    setActiveView("session");
   }
 
-  return (
-    <div className="app-shell">
-      <header className="masthead">
-        <a className="brand" href="/" aria-label="Formula1 Dashboard home">
-          <span className="brand__mark" aria-hidden="true">
-            F<span>1</span>
-          </span>
-          <span>
-            Formula One
-            <small>Data archive</small>
-          </span>
-        </a>
-        <div className={`api-status api-status--${apiState}`} aria-live="polite">
-          <span aria-hidden="true" />
-          <span className="api-status__label">System</span>
-          API {apiState}
-        </div>
-      </header>
+  const workspaceTitle =
+    activeView === "overview"
+      ? `${selectedYear} season control`
+      : activeView === "calendar"
+        ? `${selectedYear} season sessions`
+        : selectedSession
+          ? `${selectedSession.event.event_name} workspace`
+          : "Session workspace";
+  const workspaceDescription =
+    activeView === "overview"
+      ? "Coverage, synchronization health, and background ingestion at a glance."
+      : activeView === "calendar"
+        ? "Open any event and session without leaving the season archive."
+        : selectedSession
+          ? `${selectedSession.session.session_name} · round ${selectedSession.event.round_number}`
+          : "Choose a session from the season calendar to inspect its archive.";
 
-      <main>
-        <section className="season-hero" aria-labelledby="dashboard-title">
-          <span className="season-hero__ghost" aria-hidden="true">
-            {selectedYear}
-          </span>
-          <div className="season-hero__intro">
+  return (
+    <div className="dashboard-frame">
+      <aside className="dashboard-rail">
+        <div className="rail-topline">
+          <a className="brand" href="/" aria-label="Formula1 Dashboard home">
+            <span className="brand__mark" aria-hidden="true">
+              F<span>1</span>
+            </span>
+            <span>
+              Formula One
+              <small>Data archive</small>
+            </span>
+          </a>
+          <div className={`api-status api-status--${apiState}`} aria-live="polite">
+            <span aria-hidden="true" />
+            <span className="api-status__label">System</span>
+            API {apiState}
+          </div>
+        </div>
+
+        <nav className="rail-nav" aria-label="Dashboard sections">
+          <button
+            aria-current={activeView === "overview" ? "page" : undefined}
+            className={activeView === "overview" ? "rail-nav__active" : ""}
+            onClick={() => setActiveView("overview")}
+            type="button"
+          >
+            <span>01</span>
+            <strong>Overview</strong>
+            {job && (job.status === "pending" || job.status === "running") ? (
+              <i aria-label="Active ingestion job" />
+            ) : null}
+          </button>
+          <button
+            aria-current={activeView === "calendar" ? "page" : undefined}
+            className={activeView === "calendar" ? "rail-nav__active" : ""}
+            onClick={() => setActiveView("calendar")}
+            type="button"
+          >
+            <span>02</span>
+            <strong>Season sessions</strong>
+            <small>{season?.events.length ?? 0}</small>
+          </button>
+          <button
+            aria-current={activeView === "session" ? "page" : undefined}
+            className={activeView === "session" ? "rail-nav__active" : ""}
+            disabled={!selectedSession}
+            onClick={() => setActiveView("session")}
+            type="button"
+          >
+            <span>03</span>
+            <strong>Session workspace</strong>
+            <small>{selectedSession ? "Open" : "—"}</small>
+          </button>
+        </nav>
+
+        <aside className="season-control" aria-label="Season controls">
+          <label htmlFor="season-select">Championship season</label>
+          <div className="season-control__select">
+            <select
+              disabled={commandPending || seasonLoading}
+              id="season-select"
+              onChange={(event) => setSelectedYear(Number(event.target.value))}
+              value={selectedYear}
+            >
+              {supportedYears.map((year) => (
+                <option key={year} value={year}>
+                  {year}
+                </option>
+              ))}
+            </select>
+            <span aria-hidden="true">⌄</span>
+          </div>
+          <button
+            className="primary-action"
+            disabled={commandPending || seasonLoading || apiState === "unavailable"}
+            onClick={() => void handleBackfill()}
+            type="button"
+          >
+            {commandPending ? "Checking calendar…" : "Check & sync season"}
+            <span aria-hidden="true">↗</span>
+          </button>
+          <button
+            className="text-action"
+            disabled={seasonLoading}
+            onClick={() => void handleRefresh()}
+            type="button"
+          >
+            Refresh data
+          </button>
+        </aside>
+
+        {season ? (
+          <div className="rail-season-state">
+            <div>
+              <span>Season state</span>
+              <StatusPill status={season.status} />
+            </div>
+            <p>
+              <strong>{counts?.data_available ?? 0}</strong>
+              <span> / {counts?.sessions ?? 0} sessions ready</span>
+            </p>
+          </div>
+        ) : null}
+
+        <p className="rail-footnote">
+          FastF1 · PostgreSQL
+          <span>Session-safe local ingestion</span>
+        </p>
+      </aside>
+
+      <div className="dashboard-workspace">
+        <header className="workspace-header">
+          <div>
             <p className="eyebrow">
               <span>Archive / Championship</span>
               2018—{currentUtcYear}
             </p>
-            <h1 id="dashboard-title">
-              The <span>{selectedYear}</span>
-              <small>season</small>
-            </h1>
-            <p>
-              Discover the calendar, monitor archive ingestion, and see which
-              sessions are ready without pulling full telemetry into the browser.
-            </p>
+            <h1 id="dashboard-title">{workspaceTitle}</h1>
+            <p>{workspaceDescription}</p>
           </div>
+          <span className="workspace-header__year" aria-hidden="true">
+            {selectedYear}
+          </span>
+        </header>
 
-          <aside className="season-control" aria-label="Season controls">
-            <label htmlFor="season-select">Championship season</label>
-            <div className="season-control__select">
-              <select
-                disabled={commandPending || seasonLoading}
-                id="season-select"
-                onChange={(event) => setSelectedYear(Number(event.target.value))}
-                value={selectedYear}
-              >
-                {supportedYears.map((year) => (
-                  <option key={year} value={year}>
-                    {year}
-                  </option>
-                ))}
-              </select>
-              <span aria-hidden="true">⌄</span>
+        <main className="workspace-content" aria-labelledby="dashboard-title">
+          {seasonError ? (
+            <div className="inline-alert inline-alert--danger" role="alert">
+              <strong>Dashboard unavailable</strong>
+              <span>{seasonError}</span>
             </div>
-            <button
-              className="primary-action"
-              disabled={commandPending || seasonLoading || apiState === "unavailable"}
-              onClick={() => void handleBackfill()}
-              type="button"
-            >
-              {commandPending ? "Checking calendar…" : "Check & sync season"}
-              <span aria-hidden="true">↗</span>
-            </button>
-            <button
-              className="text-action"
-              disabled={seasonLoading}
-              onClick={() => void handleRefresh()}
-              type="button"
-            >
-              Refresh dashboard
-            </button>
-          </aside>
-        </section>
+          ) : null}
 
-        {seasonError ? (
-          <div className="inline-alert inline-alert--danger" role="alert">
-            <strong>Dashboard unavailable</strong>
-            <span>{seasonError}</span>
-          </div>
-        ) : null}
+          {notice ? (
+            <div className="inline-alert inline-alert--success" role="status">
+              <strong>Season updated</strong>
+              <span>{notice}</span>
+            </div>
+          ) : null}
 
-        {notice ? (
-          <div className="inline-alert inline-alert--success" role="status">
-            <strong>Season updated</strong>
-            <span>{notice}</span>
-          </div>
-        ) : null}
-
-        {seasonLoading ? (
-          <section className="dashboard-loading" aria-live="polite">
-            <span />
-            <p>Loading {selectedYear} season coverage…</p>
-          </section>
-        ) : season ? (
-          <>
-            {season.deferred_future_events.length > 0 ? (
-              <div className="inline-alert inline-alert--warning" role="status">
-                <strong>Future calendar awaiting exact timing</strong>
-                <span>
-                  {season.deferred_future_events.length} future event
-                  {season.deferred_future_events.length === 1 ? "" : "s"},
-                  starting with{" "}
-                  {season.deferred_future_events[0].event_name} on{" "}
-                  {formatDateTime(
-                    season.deferred_future_events[0].scheduled_start_at,
-                  )}, will appear when FastF1 publishes exact session
-                  boundaries.
-                </span>
-              </div>
-            ) : null}
-            <section className="overview-panel" aria-labelledby="overview-title">
-              <div className="section-heading">
-                <div>
-                  <p className="section-kicker">Season coverage</p>
-                  <h2 id="overview-title">Archive overview</h2>
-                </div>
-                <div className="season-state">
-                  <span>Season state</span>
-                  <StatusPill status={season.status} />
-                </div>
-              </div>
-
-              <div className="metric-grid">
-                <MetricCard
-                  detail="Championship rounds discovered"
-                  label="Events"
-                  value={counts?.events ?? 0}
-                />
-                <MetricCard
-                  detail="Practice, qualifying and races"
-                  label="Sessions"
-                  value={counts?.sessions ?? 0}
-                />
-                <MetricCard
-                  detail="Finalized archive snapshots"
-                  label="Data ready"
-                  value={counts?.data_available ?? 0}
-                />
-                <MetricCard
-                  detail="Sessions currently due to ingest"
-                  label="Archive eligible"
-                  value={counts?.archive_eligible ?? 0}
-                />
-              </div>
-
-              <div className="season-progress">
-                <div className="season-progress__heading">
-                  <strong>Session archive coverage</strong>
-                  <span>
-                    {counts?.data_available ?? 0} / {progressTotal} available
-                  </span>
-                </div>
-                <ProgressTrack
-                  completed={counts?.completed ?? 0}
-                  failed={counts?.failed ?? 0}
-                  pending={progressPending}
-                  running={counts?.running ?? 0}
-                  total={progressTotal}
-                />
-                <div className="coverage-meta">
-                  <span>
-                    Coverage checked: {formatDateTime(season.coverage.checked_at)}
-                  </span>
-                  <span>
-                    Valid until: {formatDateTime(season.coverage.valid_until)}
-                  </span>
-                </div>
-              </div>
+          {seasonLoading ? (
+            <section className="dashboard-loading" aria-live="polite">
+              <span />
+              <p>Loading {selectedYear} season coverage…</p>
             </section>
-
-            {requestBudget ? (
-              <RequestBudgetPanel budget={requestBudget} now={now} />
-            ) : null}
-            {requestBudgetError ? (
-              <p className="inline-alert inline-alert--danger" role="alert">
-                {requestBudgetError}
-              </p>
-            ) : null}
-
-            {job ? <JobPanel job={job} now={now} /> : null}
-            {jobError ? (
-              <p className="inline-alert inline-alert--danger" role="alert">
-                {jobError}
-              </p>
-            ) : null}
-
-            {selectedSession ? (
-              <SessionExplorer
-                event={selectedSession.event}
-                key={`${selectedSession.session.id}:${selectedSession.session.ingestion?.completed_at ?? "unavailable"}`}
-                onClose={() => setSelectedSessionId(null)}
-                session={selectedSession.session}
-              />
-            ) : null}
-
-            <section className="calendar-section" aria-labelledby="calendar-title">
-              <div className="section-heading">
-                <div>
-                  <p className="section-kicker">Event by event</p>
-                  <h2 id="calendar-title">Season calendar</h2>
+          ) : season ? (
+            <>
+              {season.deferred_future_events.length > 0 ? (
+                <div className="inline-alert inline-alert--warning" role="status">
+                  <strong>Future calendar awaiting exact timing</strong>
+                  <span>
+                    {season.deferred_future_events.length} future event
+                    {season.deferred_future_events.length === 1 ? "" : "s"},
+                    starting with{" "}
+                    {season.deferred_future_events[0].event_name} on{" "}
+                    {formatDateTime(
+                      season.deferred_future_events[0].scheduled_start_at,
+                    )}, will appear when FastF1 publishes exact session
+                    boundaries.
+                  </span>
                 </div>
-                <span className="calendar-count">
-                  {season.events.length} round
-                  {season.events.length === 1 ? "" : "s"}
-                </span>
-              </div>
+              ) : null}
 
-              {season.events.length > 0 ? (
-                <div className="event-grid">
-                  {season.events.map((event) => (
-                    <EventCard
-                      event={event}
-                      key={event.id}
-                      onSelectSession={(session) =>
-                        handleSessionSelection(session.id)
-                      }
-                      selectedSessionId={selectedSessionId}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className="empty-state">
-                  <span className="empty-state__number">{selectedYear}</span>
-                  <div>
-                    <h3>No calendar coverage yet</h3>
-                    <p>
-                      Run the season check to discover events and queue archive
-                      sessions that are ready for ingestion.
+              {activeView === "overview" ? (
+                <div className="workspace-view" data-view="overview">
+                  <section
+                    className="overview-panel"
+                    aria-labelledby="overview-title"
+                  >
+                    <div className="section-heading">
+                      <div>
+                        <p className="section-kicker">Season coverage</p>
+                        <h2 id="overview-title">Archive overview</h2>
+                      </div>
+                      <div className="season-state">
+                        <span>Season state</span>
+                        <StatusPill status={season.status} />
+                      </div>
+                    </div>
+
+                    <div className="metric-grid">
+                      <MetricCard
+                        detail="Championship rounds discovered"
+                        label="Events"
+                        value={counts?.events ?? 0}
+                      />
+                      <MetricCard
+                        detail="Practice, qualifying and races"
+                        label="Sessions"
+                        value={counts?.sessions ?? 0}
+                      />
+                      <MetricCard
+                        detail="Finalized archive snapshots"
+                        label="Data ready"
+                        value={counts?.data_available ?? 0}
+                      />
+                      <MetricCard
+                        detail="Sessions currently due to ingest"
+                        label="Archive eligible"
+                        value={counts?.archive_eligible ?? 0}
+                      />
+                    </div>
+
+                    <div className="season-progress">
+                      <div className="season-progress__heading">
+                        <strong>Session archive coverage</strong>
+                        <span>
+                          {counts?.data_available ?? 0} / {progressTotal} available
+                        </span>
+                      </div>
+                      <ProgressTrack
+                        completed={counts?.completed ?? 0}
+                        failed={counts?.failed ?? 0}
+                        pending={progressPending}
+                        running={counts?.running ?? 0}
+                        total={progressTotal}
+                      />
+                      <div className="coverage-meta">
+                        <span>
+                          Coverage checked:{" "}
+                          {formatDateTime(season.coverage.checked_at)}
+                        </span>
+                        <span>
+                          Valid until:{" "}
+                          {formatDateTime(season.coverage.valid_until)}
+                        </span>
+                      </div>
+                    </div>
+                  </section>
+
+                  {requestBudget ? (
+                    <RequestBudgetPanel budget={requestBudget} now={now} />
+                  ) : null}
+                  {requestBudgetError ? (
+                    <p className="inline-alert inline-alert--danger" role="alert">
+                      {requestBudgetError}
                     </p>
-                  </div>
-                </div>
-              )}
-            </section>
-          </>
-        ) : null}
-      </main>
+                  ) : null}
 
-      <footer>
-        <span>Local archive control</span>
-        <span>FastF1 · PostgreSQL · session-safe ingestion</span>
-      </footer>
+                  {job ? <JobPanel job={job} now={now} /> : null}
+                  {jobError ? (
+                    <p className="inline-alert inline-alert--danger" role="alert">
+                      {jobError}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {activeView === "calendar" ? (
+                <section
+                  className="calendar-section workspace-view"
+                  aria-labelledby="calendar-title"
+                  data-view="calendar"
+                >
+                  <div className="section-heading">
+                    <div>
+                      <p className="section-kicker">Event by event</p>
+                      <h2 id="calendar-title">Season calendar</h2>
+                    </div>
+                    <span className="calendar-count">
+                      {season.events.length} round
+                      {season.events.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+
+                  {season.events.length > 0 ? (
+                    <div className="event-grid">
+                      {season.events.map((event) => (
+                        <EventCard
+                          event={event}
+                          key={event.id}
+                          onSelectSession={(session) =>
+                            handleSessionSelection(session.id)
+                          }
+                          selectedSessionId={selectedSessionId}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="empty-state">
+                      <span className="empty-state__number">{selectedYear}</span>
+                      <div>
+                        <h3>No calendar coverage yet</h3>
+                        <p>
+                          Run the season check to discover events and queue archive
+                          sessions that are ready for ingestion.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              ) : null}
+
+              {activeView === "session" ? (
+                <div className="workspace-view" data-view="session">
+                  {selectedSession ? (
+                    <SessionExplorer
+                      event={selectedSession.event}
+                      key={`${selectedSession.session.id}:${selectedSession.session.ingestion?.completed_at ?? "unavailable"}`}
+                      onClose={() => {
+                        setSelectedSessionId(null);
+                        setActiveView("calendar");
+                      }}
+                      session={selectedSession.session}
+                    />
+                  ) : (
+                    <div className="empty-state empty-state--workspace">
+                      <span className="empty-state__number">03</span>
+                      <div>
+                        <h3>Select a session first</h3>
+                        <p>
+                          Open the season calendar, then choose a practice,
+                          qualifying, sprint, or race session.
+                        </p>
+                        <button
+                          className="secondary-action"
+                          onClick={() => setActiveView("calendar")}
+                          type="button"
+                        >
+                          Browse season sessions
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </>
+          ) : null}
+        </main>
+      </div>
     </div>
   );
 }

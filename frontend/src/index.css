@@ -2016,6 +2016,318 @@ footer {
   text-transform: uppercase;
 }
 
+.dashboard-frame {
+  display: grid;
+  width: min(112rem, 100%);
+  min-height: 100svh;
+  grid-template-columns: 18rem minmax(0, 1fr);
+  margin: 0 auto;
+}
+
+.dashboard-rail {
+  position: sticky;
+  z-index: 30;
+  top: 0;
+  display: flex;
+  height: 100svh;
+  min-height: 42rem;
+  flex-direction: column;
+  gap: 1.4rem;
+  align-self: start;
+  padding: 1.5rem;
+  border-right: 1px solid var(--line);
+  background:
+    linear-gradient(155deg, rgb(255 255 255 / 4%), transparent 32%),
+    rgb(10 10 9 / 96%);
+  box-shadow: 1.5rem 0 5rem rgb(0 0 0 / 18%);
+  backdrop-filter: blur(18px);
+}
+
+.rail-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding-bottom: 1.35rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.dashboard-rail .brand {
+  font-size: 0.92rem;
+}
+
+.dashboard-rail .brand__mark {
+  width: 2.9rem;
+  height: 2.05rem;
+}
+
+.dashboard-rail .api-status {
+  padding: 0.48rem;
+}
+
+.dashboard-rail .api-status__label {
+  display: none;
+}
+
+.rail-nav {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.rail-nav button {
+  position: relative;
+  display: grid;
+  min-height: 3.55rem;
+  grid-template-columns: 1.7rem minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.75rem 0.8rem;
+  border: 1px solid transparent;
+  border-radius: 0.75rem;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease;
+}
+
+.rail-nav button:not(:disabled):hover {
+  border-color: var(--line);
+  background: rgb(255 255 255 / 3%);
+  color: var(--ink);
+}
+
+.rail-nav button > span {
+  color: var(--muted-dark);
+  font-family: var(--display);
+  font-size: 0.67rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.rail-nav button > strong {
+  overflow: hidden;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.rail-nav button > small {
+  color: var(--muted-dark);
+  font-size: 0.58rem;
+}
+
+.rail-nav button > i {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--active);
+  box-shadow: 0 0 0 0.3rem rgb(121 185 255 / 10%);
+}
+
+.rail-nav button.rail-nav__active {
+  border-color: rgb(255 78 54 / 25%);
+  background:
+    linear-gradient(90deg, var(--accent-soft), transparent 80%),
+    rgb(255 255 255 / 2%);
+  color: var(--ink);
+}
+
+.rail-nav button.rail-nav__active::before {
+  position: absolute;
+  top: 0.7rem;
+  bottom: 0.7rem;
+  left: -1px;
+  width: 0.15rem;
+  border-radius: 99px;
+  background: var(--accent);
+  content: "";
+}
+
+.rail-nav button.rail-nav__active > span {
+  color: var(--accent);
+}
+
+.dashboard-rail .season-control {
+  padding: 1rem;
+  border-radius: 1rem 1rem 0.25rem 1rem;
+  box-shadow: none;
+}
+
+.dashboard-rail .season-control::before {
+  right: 1.25rem;
+  width: 3rem;
+}
+
+.dashboard-rail .season-control__select select {
+  font-size: 1.25rem;
+}
+
+.dashboard-rail .primary-action {
+  min-height: 3.2rem;
+  font-size: 0.6rem;
+}
+
+.rail-season-state {
+  padding: 1rem 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.rail-season-state > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.rail-season-state > div > span,
+.rail-season-state p span {
+  color: var(--muted);
+  font-size: 0.55rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.rail-season-state p {
+  margin: 0.9rem 0 0;
+}
+
+.rail-season-state p strong {
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: 1.35rem;
+}
+
+.rail-footnote {
+  display: grid;
+  gap: 0.3rem;
+  margin: auto 0 0;
+  color: var(--muted-dark);
+  font-size: 0.5rem;
+  letter-spacing: 0.11em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.dashboard-workspace {
+  min-width: 0;
+}
+
+.workspace-header {
+  position: relative;
+  display: flex;
+  min-height: 15.5rem;
+  align-items: flex-end;
+  overflow: hidden;
+  padding: 3.5rem clamp(1.5rem, 4vw, 4.5rem) 2.4rem;
+  border-bottom: 1px solid var(--line);
+  background:
+    radial-gradient(circle at 88% 32%, rgb(255 78 54 / 10%), transparent 19rem),
+    linear-gradient(135deg, rgb(255 255 255 / 2%), transparent 48%);
+}
+
+.workspace-header > div {
+  position: relative;
+  z-index: 1;
+  max-width: 55rem;
+}
+
+.workspace-header .eyebrow {
+  margin-bottom: 1.1rem;
+}
+
+.workspace-header h1 {
+  margin-bottom: 0.85rem;
+  font-family: var(--display);
+  font-size: clamp(2.8rem, 5.8vw, 5.7rem);
+  font-style: italic;
+  font-weight: 900;
+  letter-spacing: -0.055em;
+  line-height: 0.85;
+  text-transform: uppercase;
+}
+
+.workspace-header > div > p:last-child {
+  max-width: 44rem;
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.workspace-header__year {
+  position: absolute;
+  right: clamp(1rem, 3vw, 3rem);
+  bottom: -0.14em;
+  color: transparent;
+  font-family: var(--display);
+  font-size: clamp(8rem, 18vw, 18rem);
+  font-style: italic;
+  font-weight: 900;
+  letter-spacing: -0.08em;
+  line-height: 0.72;
+  opacity: 0.72;
+  pointer-events: none;
+  -webkit-text-stroke: 1px rgb(255 255 255 / 6%);
+}
+
+.workspace-content {
+  padding: 1.25rem clamp(1rem, 3vw, 3rem) 3rem;
+}
+
+.workspace-view {
+  animation: workspace-enter 180ms ease-out;
+}
+
+.workspace-view > .session-explorer,
+.workspace-view.session-explorer,
+.calendar-section.workspace-view {
+  margin-top: 0;
+}
+
+.empty-state--workspace {
+  min-height: 26rem;
+  align-content: center;
+  border: 1px solid var(--line);
+  border-radius: 1.25rem;
+  background: var(--panel-soft);
+}
+
+.secondary-action {
+  margin-top: 1rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.65rem;
+  background: rgb(255 255 255 / 4%);
+  color: var(--ink);
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.secondary-action:hover {
+  border-color: rgb(255 78 54 / 35%);
+  background: var(--accent-soft);
+}
+
+@keyframes workspace-enter {
+  from {
+    transform: translateY(0.35rem);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -2220,6 +2532,228 @@ footer {
 
   footer {
     flex-direction: column;
+  }
+}
+
+@media (max-width: 70rem) {
+  html {
+    scroll-padding-bottom: 6rem;
+  }
+
+  .dashboard-frame {
+    display: block;
+    padding-bottom: 5rem;
+  }
+
+  .dashboard-rail {
+    display: grid;
+    height: auto;
+    min-height: 0;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.75rem 1rem;
+    padding: 0.75rem 1rem;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    box-shadow: 0 1rem 3rem rgb(0 0 0 / 24%);
+  }
+
+  .rail-topline {
+    align-self: center;
+    padding: 0;
+    border: 0;
+  }
+
+  .rail-topline .api-status {
+    display: none;
+  }
+
+  .dashboard-rail .season-control {
+    display: grid;
+    grid-template-columns: minmax(7rem, 9rem) minmax(12rem, 1fr) auto;
+    gap: 0.6rem;
+    align-items: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    backdrop-filter: none;
+  }
+
+  .dashboard-rail .season-control::before,
+  .dashboard-rail .season-control label {
+    display: none;
+  }
+
+  .dashboard-rail .season-control__select,
+  .dashboard-rail .text-action {
+    margin: 0;
+  }
+
+  .dashboard-rail .season-control__select select {
+    min-height: 3.1rem;
+    padding-block: 0.6rem;
+    background: var(--panel);
+  }
+
+  .dashboard-rail .primary-action {
+    min-height: 3.1rem;
+    scroll-margin-block: 6rem;
+  }
+
+  .dashboard-rail .text-action {
+    width: auto;
+    min-height: 3.1rem;
+    padding-inline: 0.8rem;
+    border: 1px solid var(--line);
+    border-radius: 0.65rem;
+    background: var(--panel);
+  }
+
+  .rail-nav {
+    position: fixed;
+    z-index: 50;
+    right: 0.65rem;
+    bottom: 0.65rem;
+    left: 0.65rem;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.3rem;
+    padding: 0.38rem;
+    border: 1px solid var(--line-strong);
+    border-radius: 1rem;
+    background: rgb(15 15 13 / 94%);
+    box-shadow: 0 1rem 4rem rgb(0 0 0 / 55%);
+    backdrop-filter: blur(18px);
+    pointer-events: none;
+  }
+
+  .rail-nav button {
+    min-height: 3.6rem;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    pointer-events: auto;
+  }
+
+  .rail-nav button:disabled {
+    pointer-events: none;
+  }
+
+  .rail-nav button.rail-nav__active::before {
+    top: auto;
+    right: 0.8rem;
+    bottom: -1px;
+    left: 0.8rem;
+    width: auto;
+    height: 0.15rem;
+  }
+
+  .rail-season-state,
+  .rail-footnote {
+    display: none;
+  }
+
+  .workspace-header {
+    min-height: 12rem;
+    padding-top: 2.5rem;
+  }
+}
+
+@media (max-width: 48rem) {
+  .dashboard-rail {
+    grid-template-columns: 1fr;
+    gap: 0.65rem;
+  }
+
+  .rail-topline {
+    min-height: 2.5rem;
+  }
+
+  .rail-topline .api-status {
+    display: inline-flex;
+  }
+
+  .dashboard-rail .season-control {
+    grid-template-columns: minmax(6.5rem, 0.65fr) minmax(11rem, 1.35fr) auto;
+  }
+
+  .dashboard-rail .text-action {
+    font-size: 0;
+  }
+
+  .dashboard-rail .text-action::after {
+    font-size: 0.95rem;
+    content: "↻";
+  }
+
+  .workspace-header {
+    min-height: 10rem;
+    align-items: center;
+    padding: 1.6rem 1rem;
+  }
+
+  .workspace-header .eyebrow {
+    margin-bottom: 0.75rem;
+  }
+
+  .workspace-header h1 {
+    max-width: 24rem;
+    margin-bottom: 0.65rem;
+    font-size: clamp(2.35rem, 10vw, 3.5rem);
+  }
+
+  .workspace-header > div > p:last-child {
+    max-width: 85%;
+    font-size: 0.72rem;
+  }
+
+  .workspace-header__year {
+    right: 0;
+    font-size: 34vw;
+  }
+
+  .workspace-content {
+    padding: 0.75rem 0.65rem 1.5rem;
+  }
+
+  .rail-nav button {
+    grid-template-columns: 1fr auto;
+    gap: 0.35rem;
+    padding-inline: 0.65rem;
+  }
+
+  .rail-nav button > span {
+    display: none;
+  }
+
+  .rail-nav button > strong {
+    font-size: 0.58rem;
+  }
+}
+
+@media (max-width: 30rem) {
+  .dashboard-rail .season-control {
+    grid-template-columns: minmax(5.8rem, 0.7fr) minmax(0, 1.3fr);
+  }
+
+  .dashboard-rail .text-action {
+    display: none;
+  }
+
+  .dashboard-rail .primary-action {
+    padding-inline: 0.75rem;
+  }
+
+  .dashboard-rail .primary-action > span {
+    display: none;
+  }
+
+  .rail-nav button > small,
+  .rail-nav button > i {
+    display: none;
+  }
+
+  .rail-nav button {
+    display: flex;
+    justify-content: center;
+    text-align: center;
   }
 }
 

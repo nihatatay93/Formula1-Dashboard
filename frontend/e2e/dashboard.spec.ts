@@ -110,10 +110,21 @@ test("opens a completed session and traverses bounded lap pages", async ({
 }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: /The 2026 season/ })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "2026 season control" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: /Season sessions/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "2026 season sessions" }),
+  ).toBeVisible();
   await expect(page.getByText("Australian Grand Prix")).toBeVisible();
   await page.getByRole("button", { name: /Mar 08.*Race/ }).click();
 
+  await expect(
+    page.getByRole("heading", {
+      name: "Australian Grand Prix workspace",
+    }),
+  ).toBeVisible();
   await expect(
     page.getByRole("heading", { level: 2, name: "Australian Grand Prix" }),
   ).toBeVisible();
@@ -147,7 +158,10 @@ test("opens a completed session and traverses bounded lap pages", async ({
   ).toBeVisible();
 
   await page.getByRole("button", { name: /Close view/ }).click();
-  await expect(page.getByText("Session workspace")).toBeHidden();
+  await expect(page.locator("#session-explorer")).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: /Season sessions/ }),
+  ).toHaveAttribute("aria-current", "page");
 });
 
 test("changes season, starts synchronization, and displays job progress", async ({
@@ -156,11 +170,17 @@ test("changes season, starts synchronization, and displays job progress", async 
   await page.goto("/");
 
   await page.getByLabel("Championship season").selectOption("2025");
-  await expect(page.getByRole("heading", { name: /The 2025 season/ })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "2025 season control" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: /Season sessions/ }).click();
   await expect(page.getByText("No calendar coverage yet")).toBeVisible();
 
   await page.getByRole("button", { name: /Check & sync season/ }).click();
 
+  await expect(
+    page.getByRole("button", { name: /Overview/ }),
+  ).toHaveAttribute("aria-current", "page");
   await expect(page.getByText("1 session queued for ingestion.")).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Backfill progress" }),
@@ -171,11 +191,13 @@ test("changes season, starts synchronization, and displays job progress", async 
 
 test("keeps the primary dashboard within the viewport", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByText("Australian Grand Prix")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Dashboard sections" })).toBeVisible();
   await expect(
     page.getByText("Future calendar awaiting exact timing"),
   ).toBeVisible();
   await expect(page.getByText(/starting with Dutch Grand Prix/)).toBeVisible();
+  await page.getByRole("button", { name: /Season sessions/ }).click();
+  await expect(page.getByText("Australian Grand Prix")).toBeVisible();
 
   const dimensions = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,

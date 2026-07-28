@@ -28,6 +28,12 @@ are persisted against the successful coverage snapshot and included in the
 read-only season overview. Idempotent telemetry command and
 sample-index-keyset read endpoints expose state and at most 1,000 samples per
 page; telemetry remains absent from season/session/result/lap-summary payloads.
+The web dashboard uses a responsive workspace shell instead of one continuous
+page: persistent desktop rail navigation and fixed mobile navigation switch
+between Overview, Season Sessions, and Session Workspace views. Season
+selection and synchronization controls remain available without searching
+through unrelated content, and selecting a session opens its workspace
+directly.
 Live timing remains unimplemented.
 
 ### Architecture baseline through Milestone 3
@@ -313,6 +319,19 @@ Formula1-Dashboard/
 - Rationale: Make completed sessions useful without loading laps for an entire
   season, preserve session-entry identity, keep payloads bounded, and prevent
   one visible lap series from silently combining two archive snapshots.
+- Date: 2026-07-28
+- Status: implemented
+
+### Responsive dashboard workspace navigation
+
+- Decision: Present the existing dashboard behavior in three mutually exclusive
+  views—Overview, Season Sessions, and Session Workspace—with a sticky desktop
+  control rail, compact mobile controls, and fixed mobile section navigation.
+  Automatically open Session Workspace when a calendar session is selected and
+  return to Season Sessions when it is closed.
+- Rationale: Prevent season metrics, synchronization state, full calendars, and
+  detailed session analysis from forming one long page that requires repeated
+  scrolling to find the next task.
 - Date: 2026-07-28
 - Status: implemented
 
@@ -1415,6 +1434,15 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Added an Alembic-head compatibility guard to API readiness and worker
   initialization, documented the bind-mounted migration command, and verified
   all 420 backend tests against a fresh isolated PostgreSQL 17 database.
+- Fast-forwarded the complete reviewed five-milestone feature branch into
+  `main` without pushing.
+- Replaced the long stacked dashboard with responsive Overview, Season
+  Sessions, and Session Workspace views, persistent desktop controls, fixed
+  mobile navigation, direct session-to-workspace transitions, and mobile
+  navigation clearance that never blocks actions.
+- Verified nine frontend unit/component tests, six desktop/mobile Playwright
+  workflows, the TypeScript/Vite production build, and horizontal viewport
+  containment after the navigation redesign.
 
 No live timing feature has been completed. Saved analyses and automatic
 race-run classification remain intentionally unimplemented.
@@ -1682,8 +1710,8 @@ repair. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
   analysis-field contract coverage.
 - `frontend/src/App.tsx`: Season selection, coverage metrics, request-budget
   visualization, detailed execution/countdown progress, event-grouped session
-  states, backfill command, active-job polling, and session-workspace
-  navigation.
+  states, backfill command, active-job polling, and the responsive three-view
+  workspace shell.
 - `frontend/src/SessionExplorer.tsx`: Session metadata and availability,
   entry/result classification, participant selection, compound-colored
   loaded-lap pace profile, detailed lap table, snapshot-safe keyset pagination,
@@ -1695,20 +1723,23 @@ repair. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
 - `frontend/src/contracts.ts`: TypeScript representation of the implemented
   historical season, job, session, result, and lap API contracts.
 - `frontend/src/index.css`: Responsive editorial motorsport layout, surface,
-  typography, interaction, progress, event-card, result-table, lap-chart, and
-  visual-state system.
+  typography, persistent desktop rail, fixed mobile navigation, interaction,
+  progress, event-card, result-table, lap-chart, and visual-state system.
 - `frontend/src/SessionExplorer.test.tsx`: Component coverage for historical
   session availability, errors, participant laps, pagination, and snapshot
   replacement.
 - `frontend/e2e/dashboard.spec.ts`: Intercepted desktop/mobile Chromium
-  workflows for seasons, synchronization, session exploration, pagination,
-  and viewport containment.
+  workflows for workspace navigation, seasons, synchronization, session
+  exploration, pagination, mobile action clearance, and viewport containment.
 - `frontend/playwright.config.ts`: Deterministic desktop/mobile browser project
   and local Vite server configuration.
 - `README.md`: Local development overview and commands.
 
 ## Change Log
 
+- 2026-07-28 — Fast-forwarded the reviewed feature branch into `main` and
+  replaced the single long dashboard page with tested responsive Overview,
+  Season Sessions, and Session Workspace navigation.
 - 2026-07-28 — Repaired the local Revision 5/Revision 7 schema mismatch,
   restored season endpoints, and added tested Alembic-head guards to API
   readiness and worker startup.
