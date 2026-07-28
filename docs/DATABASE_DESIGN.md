@@ -511,10 +511,13 @@ Historical FastF1 archive imports are normally finalized. Live SignalR rows rema
 5. Text plus named check constraints instead of PostgreSQL enums.
 6. Phased migrations: control plane, sporting data, schedule discovery
    membership, then a separately designed telemetry phase.
+7. No manual job cancellation or cancellation state in the historical MVP;
+   retain the existing four-state lifecycle and use worker shutdown as the
+   operational escape hatch.
 
 ## Remaining Open Decisions
 
-1. Decide whether manual job cancellation is required in the first phase.
+No schema decision currently blocks the first historical REST API slice.
 
 ## Acceptance Criteria for the First Migration
 

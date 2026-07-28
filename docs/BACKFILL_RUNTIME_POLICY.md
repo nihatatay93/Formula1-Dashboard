@@ -16,7 +16,9 @@ It covers:
 - Crash recovery and stale-worker fencing.
 - Current-season schedule and archive freshness.
 
-It does not define cancellation, REST APIs, or UI behavior.
+It does not define REST APIs or UI behavior. Manual job cancellation is
+explicitly deferred from the historical MVP; the operational shutdown behavior
+is defined below.
 Typed settings, exception classification, deterministic backoff calculation,
 transactional job-session claiming, and synchronized retry/terminal failure
 transitions are implemented. Ownership-fenced heartbeat writes and claim-aware
@@ -401,6 +403,24 @@ text. SIGINT/SIGTERM stops new claims and idle waits; an in-process active attem
 is allowed to finish while its heartbeat thread continues. Local Compose grants
 the worker a two-minute stop grace period. If the container is forcibly terminated
 after that period, normal lease recovery handles the abandoned claim.
+
+## Manual Cancellation Scope
+
+Manual cancellation is not part of the historical MVP:
+
+- Jobs and job-sessions retain only `pending`, `running`, `completed`, and
+  `failed` states.
+- No cancellation endpoint, cancellation state, or cancellation migration is
+  introduced.
+- An active synchronous FastF1 attempt is not interrupted because its cache,
+  upstream request, and persistence boundaries do not provide a safe
+  per-attempt cancellation point.
+- Stopping the worker remains the operational escape hatch. Graceful shutdown
+  allows an active attempt to finish; forced termination is repaired by normal
+  lease recovery.
+
+Job-level cancellation will be reconsidered after real ingestion durations are
+measured or before production or multi-user operation requires it.
 
 ## Implementation Sequence
 

@@ -114,6 +114,7 @@ Formula1-Dashboard/
 │   ├── BACKFILL_RUNTIME_POLICY.md
 │   ├── DATABASE_DESIGN.md
 │   ├── FASTF1_INGESTION_CONTRACT.md
+│   ├── HISTORICAL_API_DESIGN.md
 │   ├── PROJECT_CONTEXT.md
 │   ├── SCHEDULE_DISCOVERY_DESIGN.md
 │   └── SPORTING_DATA_DESIGN.md
@@ -135,6 +136,7 @@ Formula1-Dashboard/
 - `docs/BACKFILL_RUNTIME_POLICY.md`: Accepted retry, backoff, heartbeat, lease recovery, fencing, current-season freshness, parent aggregation, and worker execution policy.
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic conventions, migration phases, tables, constraints, indexes, and recovery behavior.
 - `docs/FASTF1_INGESTION_CONTRACT.md`: Accepted one-session validation, identity, atomic replacement, failure, and idempotency contract.
+- `docs/HISTORICAL_API_DESIGN.md`: Accepted, unimplemented first historical season and backfill REST API contract.
 - `docs/SCHEDULE_DISCOVERY_DESIGN.md`: Implemented FastF1 schedule source, atomic calendar snapshot, membership, and active-job planning contract.
 - `docs/SPORTING_DATA_DESIGN.md`: Evidence-based implemented Revision 2 driver, entry, result, and lap schema.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
@@ -471,6 +473,13 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: implemented
 
+### Manual backfill cancellation scope
+
+- Decision: Defer manual job cancellation from the historical MVP. Retain only `pending`, `running`, `completed`, and `failed` states; add no cancellation endpoint or migration. Worker shutdown remains the operational escape hatch, and cancellation will be reconsidered after real duration measurements or before production or multi-user operation requires it.
+- Rationale: A synchronous FastF1 attempt has no safe interruption boundary, while graceful shutdown and lease recovery already cover the operational need without introducing partially defined state transitions.
+- Date: 2026-07-28
+- Status: accepted
+
 ## Database Model
 
 Alembic revision `20260727_0001` implements the backfill control plane:
@@ -545,6 +554,9 @@ Implemented endpoints:
 
 No season, session, backfill, lap, telemetry, or WebSocket endpoints have been implemented.
 
+The accepted, unimplemented first historical API contract is documented in
+`docs/HISTORICAL_API_DESIGN.md`.
+
 Accepted future behavior:
 
 - Historical data will be served over REST.
@@ -571,6 +583,8 @@ Accepted behavior:
 12. The current season may be served while missing or new sessions are checked in the background.
 13. FastF1 cache must be used, and aggressive parallel requests must be avoided.
 14. Telemetry must be queried separately by session, driver, and lap.
+15. Manual job cancellation is deferred from the historical MVP; no cancellation
+    state or endpoint is added in this phase.
 
 The accepted one-session replacement and attempt contract is documented in `docs/FASTF1_INGESTION_CONTRACT.md`. A managed archive attempt commits running state and increments its attempt count before calling the vertical slice. The slice derives one request from database session identity, loads through the persistent serialized cache, verifies loaded identity, normalizes results and laps, and atomically replaces the target archive snapshot. Success marks ingestion completed/finalized with the snapshot. Failure is re-raised after a separate owning-attempt transaction stores only a fixed sanitized code and message; a previous completed snapshot and its timestamps remain available. The runtime policy in `docs/BACKFILL_RUNTIME_POLICY.md` is accepted. Its validated settings, original-exception retry classification, retry-budget validation, deterministic equal-jitter schedule calculations, and pure freshness eligibility decisions are implemented. The orchestration layer atomically claims eligible job-session and persistent-session state, starts the parent job, increments the two distinct attempt counters, records an initial database-clock heartbeat, synchronizes retryable or terminal failures, and exposes an ownership-fenced heartbeat transaction. The one-session vertical slice accepts an optional claim and a pre-persistence heartbeat guard. Claim-aware persistence validates both ownership tokens before sporting writes and completes the job-session and persistent session in the same transaction as the archive snapshot. Bounded stale-lease recovery moves abandoned synchronized state to pending with normal backoff or to failed after attempt four, while preserving any prior completed snapshot and fencing the original worker. Parent aggregation locks child rows before the job, applies monotonic status precedence, preserves terminal timestamps, records fixed aggregate diagnostics, and returns all progress counts. The worker composes these operations sequentially, heartbeats active blocking work, runs recovery/active-parent maintenance, and handles graceful shutdown. The schedule contract in `docs/SCHEDULE_DISCOVERY_DESIGN.md` connects freshness decisions to a pinned FastF1 season-index snapshot, atomic current-membership persistence, and advisory-locked job creation/reuse. The direct non-job path remains supported. No REST endpoint invokes the season planner yet.
 
@@ -663,17 +677,20 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Implemented atomic calendar refresh and advisory-locked season planning that rechecks freshness, reuses one active job, and queues only missing eligible sessions.
 - Added 23 schedule/planner/schema tests, including concurrent job reuse, worker claim compatibility, removed-session preservation, correction planning, source-conflict rollback, and empty-job prevention; verified the complete 214-test suite against PostgreSQL 17.
 - Verified Revision 3 upgrade, downgrade to Revision 2, re-upgrade, Alembic head, and zero model/schema drift.
+- Accepted deferral of manual backfill cancellation from the historical MVP without changing the existing lifecycle states or database schema.
+- Created and accepted the unimplemented first historical season and backfill REST API contract.
 
 No season/backfill REST API, telemetry, or live timing feature has been completed.
 
 ## Work in Progress
 
-- No development change remains in progress after schedule discovery and season job planning.
+- The accepted first historical API contract is ready for incremental
+  implementation; no endpoint implementation has started.
 
 ## Next Steps
 
-1. Decide whether manual backfill cancellation belongs in the first phase.
-2. Add season coverage and job-progress REST APIs that invoke the implemented planner.
+1. Implement the accepted historical API foundation and derived season-status policy.
+2. Implement the accepted season overview, backfill command, and job-progress database services and endpoints.
 3. Add the basic season selection and progress UI.
 4. Measure telemetry volume before deciding on TimescaleDB.
 5. Design SignalR live timing and reconciliation separately.
@@ -727,7 +744,8 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - Recovery deliberately skips inconsistent rows whose persistent session is missing, owned by another source, completed, non-running, or has a fresh heartbeat. Such rows can remain running at job-session level until a future reconciliation policy is implemented.
 - The worker does not invoke season planning; a future REST season request must call the implemented planner before the worker can process newly eligible rows.
 - Graceful shutdown waits for active in-process FastF1 work; local Compose allows two minutes before forced termination, after which lease recovery applies.
-- Season/backfill API paths and response schemas have not been finalized.
+- Manual job cancellation is intentionally deferred from the historical MVP.
+- Season/backfill API paths and response schemas are accepted but not implemented.
 - FastF1 ingestion time and storage volume have not been measured.
 - Live SignalR protocol and reconciliation rules have not been designed.
 - PostgreSQL trust authentication is suitable only for the current loopback-bound local environment.
@@ -740,6 +758,7 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `docs/BACKFILL_RUNTIME_POLICY.md`: Accepted runtime retry, backoff, heartbeat, lease recovery, fencing, and freshness decisions.
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic layout, relational model, migration phases, idempotency, locking, and recovery design.
 - `docs/FASTF1_INGESTION_CONTRACT.md`: Accepted one-session archive snapshot identity, validation, atomic replacement, and failure behavior.
+- `docs/HISTORICAL_API_DESIGN.md`: Accepted, unimplemented versioned season overview, backfill command, job progress, and error contract.
 - `docs/SCHEDULE_DISCOVERY_DESIGN.md`: Implemented FastF1 schedule source, normalized snapshot, atomic membership persistence, and season job-planning contract.
 - `docs/SPORTING_DATA_DESIGN.md`: Implemented Revision 2 schema, FastF1 inspection evidence, normalization rules, and decisions.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
@@ -780,6 +799,8 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 
 ## Change Log
 
+- 2026-07-28 — Accepted the first versioned historical season and backfill REST API contract for incremental implementation.
+- 2026-07-28 — Deferred manual cancellation from the historical MVP and proposed the first versioned season and backfill REST API contract.
 - 2026-07-28 — Implemented and verified cache-backed FastF1 schedule discovery, latest-snapshot calendar persistence, and idempotent season job planning.
 - 2026-07-28 — Implemented and verified the single-concurrency archive worker with scheduled heartbeat, recovery, fenced outcomes, and parent reconciliation.
 - 2026-07-28 — Implemented and verified transactional parent-job aggregation with monotonic state and progress counts.
