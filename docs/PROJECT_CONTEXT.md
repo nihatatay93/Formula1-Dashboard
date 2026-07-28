@@ -16,7 +16,7 @@ The system is intended to:
 
 ## Current Architecture
 
-The local-development scaffold, four database migrations, locked FastF1 runtime, schedule discovery and season job planner, a managed database-bound one-session FastF1 archive worker, the first historical API slice, and the first product dashboard milestone are implemented. The API slice provides `POST /api/v1/seasons/{season_year}/backfill`, `GET /api/v1/seasons/{season_year}`, and `GET /api/v1/backfill-jobs/{job_id}` with strict response/error contracts, 2018-through-current-UTC-year validation, JavaScript-safe decimal-string database identifiers, UTC timestamp normalization, dynamic `200/202` command behavior, and client-safe failures. The season overview reads one repeatable PostgreSQL snapshot and never writes or contacts FastF1. The job-progress endpoint reads one repeatable snapshot, derives internally consistent counts, preserves deterministic round/session ordering, and never runs parent aggregation. The idempotent backfill command synchronously checks schedule coverage through the persistent FastF1 cache, delegates all planning and concurrency control to the season planner, creates or reuses one active job, and exposes its polling location without performing session ingestion in the API process. The managed ingestion flow adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. Validated runtime settings, retryable/terminal exception classification, deterministic equal-jitter backoff calculations, transactional job-session claiming, synchronized retry/terminal failure transitions, ownership-fenced heartbeat writes, claim-aware atomic completion, bounded stale-lease recovery, deterministic season/session freshness eligibility, transactional parent-job aggregation, and single-concurrency worker execution are implemented. Claims use a persistent PostgreSQL FastF1 request gate plus row locking and return job-attempt and monotonic session-attempt ownership tokens; heartbeat, failure, and completion writes validate both tokens. Archive session starts are paced at least 90 seconds apart across workers. FastF1's explicit rate-limit exception closes the global gate for one hour without consuming the job-session retry budget. Recovery fences the lost claim by leaving running state before a retry can be claimed. Freshness functions evaluate UTC coverage expiry, archive grace, and correction checkpoints. The season planner loads real FastF1 schedule start/end boundaries outside database locks, reconciles duplicate private-index round assignments through a strict curated event-name mapping, persists the latest calendar snapshot atomically, and creates or reuses one active year job under a season advisory lock. Aggregation locks all child rows before the parent, preserves monotonic job state, and returns progress counts. The worker polls eligible jobs, maintains heartbeats during blocking FastF1 work, runs recovery/parent reconciliation every 30 seconds, applies fenced outcomes, and stops gracefully without taking new work. The React dashboard selects supported seasons, presents coverage and session-state visualizations, starts or reuses backfill jobs, and polls active job progress through the backend only. The database contains the backfill control plane, request coordination, schedule membership markers, and normalized sporting-data tables. Historical result/lap views, telemetry, and live timing ingestion are not yet implemented.
+The local-development scaffold, four database migrations, locked FastF1 runtime, schedule discovery and season job planner, a managed database-bound one-session FastF1 archive worker, the first historical API slice, and the first product dashboard milestone are implemented. The API slice provides `POST /api/v1/seasons/{season_year}/backfill`, `GET /api/v1/seasons/{season_year}`, and `GET /api/v1/backfill-jobs/{job_id}` with strict response/error contracts, 2018-through-current-UTC-year validation, JavaScript-safe decimal-string database identifiers, UTC timestamp normalization, dynamic `200/202` command behavior, and client-safe failures. The season overview reads one repeatable PostgreSQL snapshot and never writes or contacts FastF1. The job-progress endpoint reads one repeatable snapshot, derives internally consistent counts, preserves deterministic round/session ordering, and never runs parent aggregation. The idempotent backfill command synchronously checks schedule coverage through the persistent FastF1 cache, delegates all planning and concurrency control to the season planner, creates or reuses one active job, and exposes its polling location without performing session ingestion in the API process. The managed ingestion flow adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. Validated runtime settings, retryable/terminal exception classification, deterministic equal-jitter backoff calculations, transactional job-session claiming, synchronized retry/terminal failure transitions, ownership-fenced heartbeat writes, claim-aware atomic completion, bounded stale-lease recovery, deterministic season/session freshness eligibility, transactional parent-job aggregation, and single-concurrency worker execution are implemented. Claims use a persistent PostgreSQL FastF1 request gate plus row locking and return job-attempt and monotonic session-attempt ownership tokens; heartbeat, failure, and completion writes validate both tokens. Archive session starts are paced at least 90 seconds apart across workers. FastF1's explicit rate-limit exception closes the global gate for one hour without consuming the job-session retry budget. Recovery fences the lost claim by leaving running state before a retry can be claimed. Freshness functions evaluate UTC coverage expiry, archive grace, and correction checkpoints. The season planner uses FastF1's curated schedule as the championship membership and round-number authority, retains exact private-index boundaries for matched events, hydrates missing events from exact per-session timing metadata, persists the latest calendar snapshot atomically, and creates or reuses one active year job under a season advisory lock. Aggregation locks all child rows before the parent, preserves monotonic job state, and returns progress counts. The worker polls eligible jobs, maintains heartbeats during blocking FastF1 work, runs recovery/parent reconciliation every 30 seconds, applies fenced outcomes, and stops gracefully without taking new work. The React dashboard selects supported seasons, presents coverage and session-state visualizations, starts or reuses backfill jobs, and polls active job progress through the backend only. The database contains the backfill control plane, request coordination, schedule membership markers, and normalized sporting-data tables. Historical result/lap views, telemetry, and live timing ingestion are not yet implemented.
 
 Implemented services in `compose.yaml`:
 
@@ -406,10 +406,10 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: implemented
 
-### Duplicate private schedule-round reconciliation
+### Curated schedule membership and exact missing-event hydration
 
-- Decision: When FastF1's private season index assigns one positive round number to multiple championship events, use the curated public FastF1 schedule only as a strict event-name-to-round authority while retaining private-index session start/end boundaries. Reject missing, duplicate, or ambiguous curated mappings.
-- Rationale: The cached 2026 private index assigned round 6 to both Miami and Monaco. The public schedule has authoritative round numbering but lacks the session end boundaries required by freshness policy.
+- Decision: Use the curated public FastF1 schedule as the championship membership and round-number authority. Match private-index events strictly by normalized name and retain their session boundaries. For a curated event absent from the private index, resolve every session and require exact F1 timing `session_info` start, end, and offset metadata; never estimate a duration.
+- Rationale: The cached 2026 private index assigned round 6 to both Miami and Monaco, and the cached 2018 private index omitted the Australian Grand Prix entirely. The curated schedule corrects membership/rounds but lacks end boundaries, while exact per-session timing metadata supplies them safely.
 - Date: 2026-07-28
 - Status: implemented
 
@@ -740,9 +740,10 @@ before session state and reserves the next archive start at least 90 seconds
 later. An explicit FastF1 rate-limit failure returns the session to pending,
 restores its job-session retry budget, retains the monotonic lifetime ingestion
 token, and closes the shared gate for one hour. Schedule discovery retains raw
-session boundaries but can repair duplicate private-index round assignments
-through a strict curated event-name mapping. Historical laps with an unknown
-`IsPersonalBest` value are stored as null.
+session boundaries for matched events, uses the curated schedule for complete
+championship membership, and hydrates a missing event only through exact
+per-session timing metadata. Historical laps with an unknown `IsPersonalBest`
+value are stored as null.
 
 ## Live Timing Design
 
@@ -859,17 +860,22 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Implemented cross-worker 90-second archive pacing, a distinct secret-free FastF1 rate-limit failure, one-hour global cooldown, and job-session retry-budget preservation.
 - Implemented strict 2026 duplicate-round reconciliation using the curated public schedule for round numbers while retaining private-index session boundaries.
 - Verified 303 backend tests against an isolated PostgreSQL 17 database, Revision 4 downgrade/re-upgrade, local development migration, healthy services, and preservation of all 51 completed sessions and 23,928 stored laps.
+- Diagnosed the missing 2018 Australian Grand Prix as an omission in FastF1's private F1 timing season index rather than a dashboard, API, or persistence defect.
+- Made the curated FastF1 schedule authoritative for complete championship membership and added exact per-session metadata hydration for curated events missing from the private index.
+- Verified the corrected real cached 2018 loader returns 21 events and exact boundaries for all five Australian sessions; verified the complete 304-test backend suite.
+- Atomically repaired the local 2018 schedule snapshot without creating a job; the live API now returns 21 events beginning with Australian Grand Prix and 105 sessions.
 
 No historical result/lap detail view, telemetry feature, or live timing feature has been completed.
 
 ## Work in Progress
 
-- Investigate why the latest persisted 2018 schedule membership begins at round
-  2 even though the authoritative season calendar contains round 1.
+- No development change is currently in progress.
 
 ## Next Steps
 
-1. Determine and correct the missing 2018 Australian Grand Prix root cause.
+1. Decide the semantics and API/UI contract for an observable local FastF1
+   request-budget estimate without presenting it as an authoritative upstream
+   quota.
 2. Start a new idempotent 2018 backfill request when the user is ready and monitor its deliberately paced recovery; the failed pre-fix job remains immutable history.
 3. Design historical session result and lap-summary read contracts before adding their API and UI views.
 4. Measure telemetry volume before deciding on TimescaleDB.
@@ -912,12 +918,12 @@ uv sync --frozen
 .venv/bin/pytest tests/test_archive_attempt.py
 ```
 
-Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The complete suite passed with 303 tests against an isolated PostgreSQL 17 database after request-gate pacing, rate-limit cooldown, historical-null, and schedule-reconciliation coverage were added.
+Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The complete suite passed with 304 tests against an isolated PostgreSQL 17 database after curated-membership and exact missing-event hydration coverage were added.
 
 ## Known Issues and Technical Debt
 
 - Loader tests use controlled FastF1 doubles and do not perform an upstream network smoke test.
-- Schedule discovery wraps FastF1 3.8.3's private, cache-decorated F1 timing season-index function because the public schedule frame omits end timestamps. The exact FastF1 pin and focused contract tests contain that compatibility risk.
+- Schedule discovery combines FastF1 3.8.3's curated public schedule with its private, cache-decorated F1 timing APIs because neither source alone supplies both complete membership and exact end timestamps. The exact FastF1 pin and focused contract tests contain that compatibility risk.
 - Failure recording requires a separate database transaction; if the database is unavailable, the original exception is re-raised with a diagnostic note but failed state cannot be persisted.
 - Session-row locking serializes callers that use persistence, recovery, aggregation, and worker services.
 - FastF1 loading and cache activation remain serialized only within each process. Archive session starts are now cross-process paced through PostgreSQL, but API schedule discovery and cache file access do not yet share a cross-process mutex.
@@ -967,7 +973,7 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `backend/app/ingestion/backfill_orchestration.py`: Transactional job-session claiming, synchronized persistent state, fenced heartbeat updates, retry/terminal failure transitions, stale-lease recovery, parent-job aggregation, and ownership-token validation.
 - `backend/app/ingestion/archive_ingestion.py`: Database-target lookup, FastF1 request derivation, loaded-identity validation, normalization, and persistence composition.
 - `backend/app/ingestion/fastf1_loader.py`: Deterministic, cache-backed, process-serialized one-session FastF1 loading.
-- `backend/app/ingestion/fastf1_schedule.py`: Pinned cache-backed schedule loading and pure strict season/event/session normalization.
+- `backend/app/ingestion/fastf1_schedule.py`: Curated championship membership, private-index reconciliation, exact missing-event timing hydration, and pure strict normalization.
 - `backend/app/ingestion/season_backfill.py`: Atomic latest-snapshot persistence and advisory-locked active-job creation/reuse.
 - `backend/app/ingestion/fastf1_normalization.py`: Pure FastF1 results-and-laps normalization and validation.
 - `backend/app/ingestion/freshness_policy.py`: Pure UTC season-coverage, archive-grace, and correction-checkpoint eligibility decisions.
@@ -990,7 +996,7 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `backend/tests/test_sporting_data_integration.py`: Revision 2 identity, constraint, number-reuse, nullable-field, and idempotency integration coverage.
 - `backend/tests/test_fastf1_loader.py`: FastF1 loader cache, configuration, flags, errors, and serialization tests.
 - `backend/tests/test_fastf1_normalization.py`: FastF1 normalization happy-path and rejection coverage.
-- `backend/tests/test_fastf1_schedule.py`: Schedule source, cache, serialization, UTC boundary, canonical-key, and snapshot-rejection tests.
+- `backend/tests/test_fastf1_schedule.py`: Schedule source, cache, serialization, curated membership, missing-event hydration, UTC boundary, canonical-key, and rejection tests.
 - `backend/tests/test_season_backfill.py`: PostgreSQL calendar persistence, freshness, job reuse, concurrency, cancellation preservation, and rollback tests.
 - `backend/tests/test_freshness_policy.py`: Coverage TTL, UTC year, exact grace/checkpoint, late-scan, stability, and timestamp validation coverage.
 - `backend/tests/test_runtime_policy.py`: Runtime setting, environment parsing, retry classification, and backoff boundary coverage.
@@ -1006,6 +1012,8 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 
 ## Change Log
 
+- 2026-07-28 — Reviewed and approved the curated-membership fix for the missing 2018 Australian Grand Prix.
+- 2026-07-28 — Fixed the missing 2018 Australian Grand Prix by combining curated membership with exact F1 timing metadata and repaired the local schedule snapshot.
 - 2026-07-28 — Diagnosed the real backfill failures and implemented verified global FastF1 pacing/cooldown, historical lap-null handling, and strict duplicate-round reconciliation.
 - 2026-07-28 — Implemented and verified the first season archive dashboard with coverage, event/session, command, and job-progress visualization.
 - 2026-07-28 — Implemented and verified the idempotent backfill command, API schedule-cache mount, and API-to-worker database handoff; prioritized the first dashboard visualization.

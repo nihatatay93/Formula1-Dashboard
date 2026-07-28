@@ -11,10 +11,11 @@ responses, UI behavior, manual cancellation, or sporting-data replacement.
 
 ## FastF1 Source Boundary
 
-FastF1 3.8.3's public `EventSchedule` contains session start timestamps but drops
-the session end timestamps required by archive eligibility. The implemented
-loader therefore wraps FastF1 3.8.3's cache-decorated F1 timing season index,
-which retains `StartDate`, `EndDate`, and `GmtOffset`.
+FastF1 3.8.3's curated public `EventSchedule` is the authority for championship
+membership and round numbers, but it drops the session end timestamps required
+by archive eligibility. The implemented loader also wraps FastF1 3.8.3's
+cache-decorated F1 timing season index, which normally retains `StartDate`,
+`EndDate`, and `GmtOffset`.
 
 This is an explicitly pinned upstream boundary:
 
@@ -25,11 +26,18 @@ This is an explicitly pinned upstream boundary:
 - FastF1 cache-version checks and HTTP request caching remain enabled.
 - No estimated duration is invented when an end timestamp is missing.
 - An incomplete or ambiguous snapshot fails before database writes.
-- If the private season index assigns the same positive round number to two
-  championship events, the loader obtains only the authoritative round mapping
-  from FastF1's curated public schedule. Matching is strict by normalized event
-  name; raw session boundaries remain authoritative, and any missing,
-  duplicated, or ambiguous mapping still fails before database writes.
+- Curated and private events are matched strictly by normalized event name.
+- Private session boundaries remain authoritative for matched events.
+- If a curated event is absent from the private season index, each of its
+  sessions is resolved through FastF1 and its exact cached F1 timing
+  `session_info` metadata supplies `StartDate`, `EndDate`, and `GmtOffset`.
+- Missing exact metadata, duplicate curated names/rounds, or an unmatched
+  private event fails before database writes.
+
+This split is required for 2018: the private season index begins at Bahrain
+(round 2), while the curated schedule correctly includes the Australian Grand
+Prix as round 1. All five Australian sessions expose exact F1 timing metadata,
+so no duration is estimated.
 
 The loader is isolated behind a protocol and controlled doubles in tests. No live
 upstream request is part of the automated suite.

@@ -90,46 +90,59 @@ class FastF1ScheduleLoader:
         _validate_season_year(season_year)
 
         # FastF1 3.8.3's public EventSchedule drops session EndDate values.
-        # Its pinned, cache-wrapped season index retains both boundaries.
+        # Its pinned, cache-wrapped season index retains both boundaries but
+        # can omit supported events. The curated schedule defines membership
+        # and round numbers; exact timing metadata fills any missing event.
         with serialized_fastf1_access(self._cache_client):
             try:
                 meetings = fastf1._api.season_schedule(
                     f"/static/{season_year}/"
+                )
+                public_schedule = fastf1.get_event_schedule(
+                    season_year,
+                    include_testing=False,
+                    backend="fastf1",
                 )
             except Exception as error:
                 raise FastF1ScheduleLoadError(
                     f"FastF1 failed to load the {season_year} schedule"
                 ) from error
 
-            try:
-                return normalize_fastf1_schedule(
-                    season_year=season_year,
-                    meetings=meetings,
-                )
-            except FastF1ScheduleRoundConflictError:
+            round_numbers_by_event_name = (
+                curated_round_numbers_by_event_name(public_schedule)
+            )
+            missing_events = _missing_curated_events(
+                public_schedule,
+                meetings,
+            )
+            reconciled_meetings = list(meetings)
+            for missing_event in missing_events:
                 try:
-                    public_schedule = fastf1.get_event_schedule(
-                        season_year,
-                        include_testing=False,
-                        backend="fastf1",
-                    )
-                    round_numbers_by_event_name = (
-                        curated_round_numbers_by_event_name(
-                            public_schedule
+                    reconciled_meetings.append(
+                        _load_missing_curated_event(
+                            season_year,
+                            missing_event,
                         )
                     )
+                except FastF1ScheduleNormalizationError:
+                    raise
                 except Exception as error:
+                    event_name = _required_text(
+                        missing_event.get("EventName"),
+                        "curated event EventName",
+                    )
                     raise FastF1ScheduleLoadError(
-                        f"FastF1 failed to reconcile the {season_year} schedule"
+                        f"FastF1 failed to load exact session metadata "
+                        f"for {season_year} {event_name}"
                     ) from error
 
-                return normalize_fastf1_schedule(
-                    season_year=season_year,
-                    meetings=meetings,
-                    round_numbers_by_event_name=(
-                        round_numbers_by_event_name
-                    ),
+            return normalize_fastf1_schedule(
+                season_year=season_year,
+                meetings=reconciled_meetings,
+                round_numbers_by_event_name=(
+                    round_numbers_by_event_name
                 )
+            )
 
 
 def create_fastf1_schedule_loader(
@@ -367,6 +380,120 @@ def curated_round_numbers_by_event_name(
             "FastF1 curated schedule has no championship events"
         )
     return round_numbers
+
+
+def _missing_curated_events(
+    schedule: object,
+    meetings: object,
+) -> tuple[pd.Series, ...]:
+    if not isinstance(schedule, pd.DataFrame):
+        raise FastF1ScheduleNormalizationError(
+            "FastF1 curated schedule must be a DataFrame"
+        )
+    if not isinstance(meetings, Sequence) or isinstance(
+        meetings,
+        str | bytes,
+    ):
+        raise FastF1ScheduleNormalizationError(
+            "FastF1 schedule meetings must be a sequence"
+        )
+
+    private_event_keys: set[str] = set()
+    for raw_event in meetings:
+        if not isinstance(raw_event, Mapping):
+            raise FastF1ScheduleNormalizationError(
+                "FastF1 schedule event must be a mapping"
+            )
+        event_name = _required_text(
+            raw_event.get("Name"),
+            "event Name",
+        )
+        if "test" not in event_name.casefold():
+            private_event_keys.add(_event_name_key(event_name))
+
+    missing_events = []
+    for row_number, row in schedule.iterrows():
+        round_number = _positive_integer(
+            row.get("RoundNumber"),
+            f"curated schedule row {row_number} RoundNumber",
+        )
+        if round_number == 0:
+            continue
+        event_name = _required_text(
+            row.get("EventName"),
+            f"curated schedule row {row_number} EventName",
+        )
+        if _event_name_key(event_name) not in private_event_keys:
+            missing_events.append(row)
+    return tuple(missing_events)
+
+
+def _load_missing_curated_event(
+    season_year: int,
+    event: pd.Series,
+) -> dict[str, object]:
+    round_number = _positive_integer(
+        event.get("RoundNumber"),
+        "curated event RoundNumber",
+    )
+    event_name = _required_text(
+        event.get("EventName"),
+        "curated event EventName",
+    )
+    session_names = tuple(
+        session_name
+        for index in range(1, 6)
+        if (
+            session_name := _optional_text(
+                event.get(f"Session{index}")
+            )
+        )
+        is not None
+    )
+    if not session_names:
+        raise FastF1ScheduleNormalizationError(
+            f"curated event {event_name!r} has no usable sessions"
+        )
+
+    sessions = []
+    for session_name in session_names:
+        session = fastf1.get_session(
+            season_year,
+            round_number,
+            session_name,
+            backend="fastf1",
+        )
+        api_path = _required_text(
+            getattr(session, "api_path", None),
+            f"round {round_number} session {session_name!r} API path",
+        )
+        session_info = fastf1._api.session_info(api_path)
+        if not isinstance(session_info, Mapping):
+            raise FastF1ScheduleNormalizationError(
+                f"round {round_number} session {session_name!r} "
+                "metadata must be a mapping"
+            )
+        sessions.append(
+            {
+                "Key": session_info.get("Key"),
+                "Name": session_name,
+                "StartDate": session_info.get("StartDate"),
+                "EndDate": session_info.get("EndDate"),
+                "GmtOffset": session_info.get("GmtOffset"),
+                "Path": api_path,
+            }
+        )
+
+    return {
+        "Number": round_number,
+        "Name": event_name,
+        "OfficialName": _optional_text(
+            event.get("OfficialEventName")
+        ),
+        "Country": _optional_text(event.get("Country")),
+        "Location": _optional_text(event.get("Location")),
+        "Sessions": sessions,
+    }
 
 
 def _validate_season_year(value: object) -> None:

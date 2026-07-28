@@ -2,6 +2,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Lock
+from types import SimpleNamespace
 from typing import Any
 
 import pandas as pd
@@ -22,6 +23,18 @@ from app.ingestion.fastf1_schedule import (
 @pytest.fixture(autouse=True)
 def reset_active_cache_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fastf1_loader, "_active_cache_path", None)
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1,
+        "get_event_schedule",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            [
+                {
+                    "EventName": "Bahrain Grand Prix",
+                    "RoundNumber": 1,
+                }
+            ]
+        ),
+    )
 
 
 def session(
@@ -294,6 +307,132 @@ def test_loader_reconciles_duplicate_private_rounds_by_curated_event_name(
     assert loaded.events[1].sessions[0].scheduled_end_at.isoformat() == (
         "2024-03-01T13:00:00+00:00"
     )
+
+
+def test_loader_hydrates_event_missing_from_private_season_index(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        fastf1_loader.fastf1.Cache,
+        "enable_cache",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1._api,
+        "season_schedule",
+        lambda _path: [meeting(2)],
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1,
+        "get_event_schedule",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            [
+                {
+                    "RoundNumber": 1,
+                    "Country": "Australia",
+                    "Location": "Melbourne",
+                    "OfficialEventName": (
+                        "FORMULA 1 2018 ROLEX AUSTRALIAN GRAND PRIX"
+                    ),
+                    "EventName": "Australian Grand Prix",
+                    "Session1": "Practice 1",
+                    "Session2": "Practice 2",
+                    "Session3": "Practice 3",
+                    "Session4": "Qualifying",
+                    "Session5": "Race",
+                },
+                {
+                    "RoundNumber": 2,
+                    "EventName": "Bahrain Grand Prix",
+                },
+            ]
+        ),
+    )
+
+    session_requests: list[tuple[int, int, str, str]] = []
+    metadata_paths: list[str] = []
+
+    def get_session(
+        year: int,
+        round_number: int,
+        session_name: str,
+        *,
+        backend: str,
+    ) -> SimpleNamespace:
+        session_requests.append(
+            (year, round_number, session_name, backend)
+        )
+        path_name = session_name.replace(" ", "_")
+        return SimpleNamespace(
+            api_path=f"/static/2018/australia/{path_name}/"
+        )
+
+    def session_info(path: str) -> dict[str, object]:
+        metadata_paths.append(path)
+        session_name = path.rstrip("/").rsplit("/", 1)[-1].replace(
+            "_",
+            " ",
+        )
+        starts = {
+            "Practice 1": "2018-03-23T12:00:00",
+            "Practice 2": "2018-03-23T16:00:00",
+            "Practice 3": "2018-03-24T14:00:00",
+            "Qualifying": "2018-03-24T17:00:00",
+            "Race": "2018-03-25T16:10:00",
+        }
+        ends = {
+            "Practice 1": "2018-03-23T13:30:00",
+            "Practice 2": "2018-03-23T17:30:00",
+            "Practice 3": "2018-03-24T15:00:00",
+            "Qualifying": "2018-03-24T18:00:00",
+            "Race": "2018-03-25T18:10:00",
+        }
+        return {
+            "Key": 1,
+            "StartDate": starts[session_name],
+            "EndDate": ends[session_name],
+            "GmtOffset": "11:00:00",
+        }
+
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1,
+        "get_session",
+        get_session,
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1._api,
+        "session_info",
+        session_info,
+    )
+
+    loaded = FastF1ScheduleLoader(tmp_path / "cache").load(2018)
+
+    assert [
+        (event.round_number, event.event_name)
+        for event in loaded.events
+    ] == [
+        (1, "Australian Grand Prix"),
+        (2, "Bahrain Grand Prix"),
+    ]
+    australian = loaded.events[0]
+    assert australian.country == "Australia"
+    assert australian.location == "Melbourne"
+    assert len(australian.sessions) == 5
+    assert australian.sessions[0].scheduled_start_at.isoformat() == (
+        "2018-03-23T01:00:00+00:00"
+    )
+    assert australian.sessions[-1].scheduled_end_at.isoformat() == (
+        "2018-03-25T07:10:00+00:00"
+    )
+    assert [request[2] for request in session_requests] == [
+        "Practice 1",
+        "Practice 2",
+        "Practice 3",
+        "Qualifying",
+        "Race",
+    ]
+    assert len(metadata_paths) == 5
 
 
 def test_curated_round_authority_rejects_ambiguous_events() -> None:
