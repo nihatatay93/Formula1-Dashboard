@@ -1,6 +1,6 @@
 # FastF1 One-Session Ingestion Contract
 
-Status: **accepted; normalization and persistence implemented**
+Status: **accepted; loader, normalization, and persistence implemented**
 Date: **2026-07-28**
 
 ## Purpose
@@ -78,6 +78,33 @@ The normalized snapshot must satisfy:
 
 Any validation failure rejects the complete candidate snapshot.
 
+## Archive Session Loading
+
+The implemented loader accepts one deterministic request containing:
+
+- A season year of 2018 or later.
+- A positive championship round number.
+- A non-empty FastF1 session identifier.
+
+Round numbers are used instead of fuzzy event-name matching. The loader creates and
+activates an absolute persistent cache directory, retains FastF1's cache-version
+validation, enables the raw HTTP requests cache, and does not force cache renewal.
+
+FastF1 loading is explicitly configured with:
+
+- `laps=True`
+- `telemetry=False`
+- `weather=False`
+- `messages=True`
+
+Loading race-control messages allows FastF1 to populate deleted-lap state and
+reason. FastF1 uses process-global cache state, so cache activation and session
+loading are serialized with one process-local lock. Cross-process job concurrency
+remains worker-orchestration work.
+
+The loader returns only the loaded session name, results table, laps table, and
+original request. It does not normalize or persist data itself.
+
 ## Atomic Replacement
 
 After validation succeeds, persistence uses one database transaction:
@@ -139,6 +166,10 @@ Implemented:
 - Null, scalar, integer, duration, decimal, boolean, and speed validation.
 - Race/sprint result-time normalization.
 - Lap-to-entry association and natural-key duplicate detection.
+- Deterministic 2018+ year/round/session archive requests.
+- Persistent FastF1 cache directory creation and activation.
+- Process-local serialization of FastF1 cache activation and session loading.
+- Explicit laps/messages loading with telemetry and weather disabled.
 - Transaction ownership and target-session row locking.
 - Non-archive entry, result, lap, and ingestion-state protection.
 - Driver, entry, result, and bounded-batch lap upserts.
@@ -148,7 +179,7 @@ Implemented:
 
 Not implemented:
 
-- FastF1 session loading and cache activation.
+- Composition of loading, normalization, and persistence into one vertical slice.
 - Pending/running/failed ingestion state transitions.
 - Failure recording after persistence rollback.
 - Worker execution and retry behavior.
