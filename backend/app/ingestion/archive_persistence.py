@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import (
     Driver,
+    Event,
     Lap,
     RaceSession,
     SessionEntry,
@@ -46,8 +47,20 @@ class ArchiveSessionNotFoundError(ArchivePersistenceError):
     """Raised when the target database session does not exist."""
 
 
+class ArchivePersistenceTargetChangedError(ArchivePersistenceError):
+    """Raised when the locked database target no longer matches its request."""
+
+
 class ArchiveSourceConflictError(ArchivePersistenceError):
     """Raised when another data source already owns session ingestion data."""
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveSessionIdentity:
+    session_id: int
+    season_year: int
+    round_number: int
+    session_name: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +82,7 @@ def replace_archive_session(
     snapshot: NormalizedSession,
     completed_at: datetime | None = None,
     source_updated_at: datetime | None = None,
+    expected_identity: ArchiveSessionIdentity | None = None,
 ) -> ArchivePersistenceSummary:
     """Atomically replace one session's FastF1 archive-owned sporting snapshot."""
 
@@ -80,11 +94,25 @@ def replace_archive_session(
     _validate_snapshot(snapshot)
     _validate_timestamp(completed_at, "completed_at")
     _validate_timestamp(source_updated_at, "source_updated_at")
+    if (
+        expected_identity is not None
+        and expected_identity.session_id != session_id
+    ):
+        raise ArchivePersistenceContractError(
+            "expected archive identity must match session_id"
+        )
 
     completion_time = completed_at or datetime.now(UTC)
 
     with database.begin():
-        _lock_target_session(database, session_id)
+        locked_identity = _lock_target_session(database, session_id)
+        if (
+            expected_identity is not None
+            and locked_identity != expected_identity
+        ):
+            raise ArchivePersistenceTargetChangedError(
+                f"database session {session_id} identity changed before persistence"
+            )
         _ensure_archive_ownership(database, session_id)
 
         driver_ids = _upsert_drivers(database, snapshot.drivers)
@@ -190,16 +218,31 @@ def _validate_timestamp(value: datetime | None, field: str) -> None:
         raise ArchivePersistenceContractError(f"{field} must include a timezone")
 
 
-def _lock_target_session(database: Session, session_id: int) -> None:
-    locked_session_id = database.scalar(
-        select(RaceSession.id)
+def _lock_target_session(
+    database: Session,
+    session_id: int,
+) -> ArchiveSessionIdentity:
+    row = database.execute(
+        select(
+            RaceSession.id,
+            Event.season_year,
+            Event.round_number,
+            RaceSession.session_name,
+        )
+        .join(Event, Event.id == RaceSession.event_id)
         .where(RaceSession.id == session_id)
         .with_for_update()
-    )
-    if locked_session_id is None:
+    ).one_or_none()
+    if row is None:
         raise ArchiveSessionNotFoundError(
             f"database session {session_id} does not exist"
         )
+    return ArchiveSessionIdentity(
+        session_id=row.id,
+        season_year=row.season_year,
+        round_number=row.round_number,
+        session_name=row.session_name,
+    )
 
 
 def _ensure_archive_ownership(database: Session, session_id: int) -> None:

@@ -3,7 +3,7 @@
 Status: **accepted; schema implemented**
 Date: **2026-07-28**
 
-This document defines the accepted Revision 2 database model. It is based on direct inspection of representative FastF1 3.8.3 data and the official FastF1 data reference. The SQLAlchemy models, Alembic revision, locked FastF1 runtime dependency, cache-backed one-session loader, pure normalization layer, and atomic one-session archive persistence are implemented. End-to-end backfill and worker execution are not implemented yet.
+This document defines the accepted Revision 2 database model. It is based on direct inspection of representative FastF1 3.8.3 data and the official FastF1 data reference. The SQLAlchemy models, Alembic revision, locked FastF1 runtime dependency, database-bound one-session loader orchestration, pure normalization layer, and atomic one-session archive persistence are implemented. Year-level backfill and worker execution are not implemented yet.
 
 ## Scope
 
@@ -266,6 +266,8 @@ Cache-backed one-session loading is implemented in
 `backend/app/ingestion/fastf1_loader.py`.
 Atomic archive snapshot persistence is implemented in
 `backend/app/ingestion/archive_persistence.py`.
+Their database-bound one-session composition is implemented in
+`backend/app/ingestion/archive_ingestion.py`.
 
 ## Idempotency
 

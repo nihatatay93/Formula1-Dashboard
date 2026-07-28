@@ -1,6 +1,6 @@
 # FastF1 One-Session Ingestion Contract
 
-Status: **accepted; loader, normalization, and persistence implemented**
+Status: **accepted and implemented for one-session execution**
 Date: **2026-07-28**
 
 ## Purpose
@@ -105,25 +105,41 @@ remains worker-orchestration work.
 The loader returns only the loaded session name, results table, laps table, and
 original request. It does not normalize or persist data itself.
 
+## Database Target Binding
+
+The one-session vertical slice accepts a database `session_id`. Before contacting
+FastF1, it reads the target session together with its event and derives the loader
+request from the stored season year, championship round number, and upstream
+session name. Callers therefore do not independently supply an archive identity
+that could disagree with the persistence target.
+
+After loading, the returned request must equal the derived request and the loaded
+FastF1 session name must match the stored session name after whitespace and
+case normalization. An identity mismatch fails before normalization and before the
+replacement transaction. The expected identity is checked again after the target
+session and event rows are locked, so a concurrent metadata change aborts the
+replacement.
+
 ## Atomic Replacement
 
 After validation succeeds, persistence uses one database transaction:
 
-1. Lock the target `sessions` row with `SELECT ... FOR UPDATE`.
-2. Verify that the session does not contain sporting rows or ingestion state owned
+1. Lock the target `sessions` and `events` rows with `SELECT ... FOR UPDATE`.
+2. Verify that the locked season, round, and session name still match the request.
+3. Verify that the session does not contain sporting rows or ingestion state owned
    by another source.
-3. Upsert global drivers by verified Jolpica driver ID.
-4. Temporarily clear archive entry driver links and racing numbers inside the
+4. Upsert global drivers by verified Jolpica driver ID.
+5. Temporarily clear archive entry driver links and racing numbers inside the
    transaction so corrected number assignments and fallback-to-verified key
    transitions cannot violate partial unique indexes.
-5. Upsert session entries by `(session_id, entry_key)`.
-6. Upsert results by `session_entry_id`.
-7. Upsert laps by `(session_entry_id, lap_number)` in bounded batches.
-8. Delete archive-owned results and laps absent from the new snapshot.
-9. Delete archive-owned session entries absent from the new snapshot, after their
+6. Upsert session entries by `(session_id, entry_key)`.
+7. Upsert results by `session_entry_id`.
+8. Upsert laps by `(session_entry_id, lap_number)` in bounded batches.
+9. Delete archive-owned results and laps absent from the new snapshot.
+10. Delete archive-owned session entries absent from the new snapshot, after their
    children have been removed.
-10. Mark the session ingestion `completed` and `finalized`.
-11. Commit once.
+11. Mark the session ingestion `completed` and `finalized`.
+12. Commit once.
 
 Global driver rows are not session-owned and must never be deleted by session
 replacement.
@@ -170,6 +186,11 @@ Implemented:
 - Persistent FastF1 cache directory creation and activation.
 - Process-local serialization of FastF1 cache activation and session loading.
 - Explicit laps/messages loading with telemetry and weather disabled.
+- Database-derived season, round, and session-name loader requests.
+- Loaded-request and loaded-session-name verification before persistence.
+- Locked target-identity revalidation inside the replacement transaction.
+- Composition of loading, normalization, and persistence into one callable
+  database-session vertical slice.
 - Transaction ownership and target-session row locking.
 - Non-archive entry, result, lap, and ingestion-state protection.
 - Driver, entry, result, and bounded-batch lap upserts.
@@ -179,7 +200,6 @@ Implemented:
 
 Not implemented:
 
-- Composition of loading, normalization, and persistence into one vertical slice.
 - Pending/running/failed ingestion state transitions.
 - Failure recording after persistence rollback.
 - Worker execution and retry behavior.

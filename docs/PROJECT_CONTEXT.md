@@ -16,7 +16,7 @@ The system is intended to:
 
 ## Current Architecture
 
-The local-development scaffold, first two database migrations, locked FastF1 runtime, serialized cache-backed one-session loader, pure sporting-data normalization, and atomic one-session archive persistence are implemented. The database contains the backfill control plane and normalized sporting-data tables. End-to-end FastF1 backfill execution, worker job processing, telemetry, and live timing ingestion are not yet implemented.
+The local-development scaffold, first two database migrations, locked FastF1 runtime, and a database-bound one-session FastF1 archive vertical slice are implemented. The vertical slice composes serialized cache-backed loading, pure sporting-data normalization, and atomic one-session archive persistence. The database contains the backfill control plane and normalized sporting-data tables. Year-level backfill orchestration, worker job processing, telemetry, and live timing ingestion are not yet implemented.
 
 Implemented services in `compose.yaml`:
 
@@ -30,6 +30,7 @@ Implemented supporting infrastructure:
 
 - A persistent `fastf1_cache` Docker volume is declared for the worker.
 - FastF1 cache activation and session loads are serialized within one process.
+- One-session archive requests are derived from stored session and event identity, checked against the loaded FastF1 session, and revalidated under database row locks before replacement.
 - The backend uses Python 3.13, `uv`, FastAPI, FastF1 3.8.3, pandas, SQLAlchemy 2, Alembic, psycopg, Uvicorn, pytest, and Ruff.
 - The frontend uses Node.js 24, npm, React, TypeScript, and Vite.
 - PostgreSQL trust authentication is restricted to loopback-bound local development and must not be reused for production.
@@ -67,12 +68,14 @@ Formula1-Dashboard/
 │   │   │   └── session.py
 │   │   ├── ingestion/
 │   │   │   ├── archive_persistence.py
+│   │   │   ├── archive_ingestion.py
 │   │   │   ├── fastf1_loader.py
 │   │   │   └── fastf1_normalization.py
 │   │   ├── main.py
 │   │   └── worker.py
 │   ├── tests/
 │   │   ├── test_archive_persistence.py
+│   │   ├── test_archive_ingestion.py
 │   │   ├── test_database_integration.py
 │   │   ├── test_database_metadata.py
 │   │   ├── test_fastf1_loader.py
@@ -98,7 +101,7 @@ Formula1-Dashboard/
 
 - `backend/app/`: FastAPI and worker process source.
 - `backend/app/db/`: SQLAlchemy metadata, connection configuration, session factory, and Revision 1 and 2 models.
-- `backend/app/ingestion/`: Cache-backed one-session loading, pure upstream-to-domain normalization, and atomic archive persistence.
+- `backend/app/ingestion/`: Database-bound one-session orchestration, cache-backed loading, pure upstream-to-domain normalization, and atomic archive persistence.
 - `backend/alembic/`: Alembic environment and reviewed migration revisions.
 - `backend/tests/`: Backend tests.
 - `frontend/src/`: React dashboard source.
@@ -321,6 +324,13 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: implemented
 
+### Database-bound archive session identity
+
+- Decision: Start one-session archive ingestion from a database `session_id`, derive the FastF1 request from its stored season, championship round, and upstream session name, verify the loaded identity, and revalidate the target identity under row locks before replacement.
+- Rationale: Prevent caller-supplied identity drift or a concurrent target metadata change from writing one FastF1 session's data into another database session.
+- Date: 2026-07-28
+- Status: implemented
+
 ## Database Model
 
 Alembic revision `20260727_0001` implements the backfill control plane:
@@ -417,7 +427,7 @@ Accepted behavior:
 13. FastF1 cache must be used, and aggressive parallel requests must be avoided.
 14. Telemetry must be queried separately by session, driver, and lap.
 
-The accepted one-session replacement contract is documented in `docs/FASTF1_INGESTION_CONTRACT.md`. FastF1 3.8.3 and pandas are locked runtime dependencies. The loader creates and activates the persistent cache, serializes one-session loads, enables laps/messages, and disables telemetry/weather. Results-and-laps normalization and transactional archive persistence are implemented. Persistence locks the target session row, rejects non-archive ownership, upserts natural-key records, removes stale archive rows, preserves global drivers, and marks ingestion completed/finalized atomically. The loader, normalizer, and persistence service are not yet composed into one vertical slice. Pending/running/failed transitions, failure recording, and worker processing are not implemented.
+The accepted one-session replacement contract is documented in `docs/FASTF1_INGESTION_CONTRACT.md`. FastF1 3.8.3 and pandas are locked runtime dependencies. The implemented vertical slice derives one request from database session identity, loads through the persistent serialized cache, verifies loaded identity, normalizes results and laps, and atomically replaces the target archive snapshot. Persistence locks and revalidates the target session and event identity, rejects non-archive ownership, upserts natural-key records, removes stale archive rows, preserves global drivers, and marks ingestion completed/finalized atomically. Pending/running/failed transitions, failure recording, year-level job orchestration, and worker processing are not implemented.
 
 ## Live Timing Design
 
@@ -472,23 +482,25 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Implemented a deterministic cache-backed one-session loader with process-local serialization, race-control messages enabled, and telemetry and weather disabled.
 - Added loader tests for cache lifecycle, exact FastF1 flags, request validation, environment configuration, failure wrapping, required tables, and concurrent-call serialization without upstream network access.
 - Verified the complete 44-test suite against an isolated PostgreSQL 17 Compose database.
+- Implemented a database-bound one-session vertical slice that derives the FastF1 request from stored session identity, validates the loaded identity, normalizes the candidate snapshot, and invokes transactional replacement.
+- Added PostgreSQL integration coverage for vertical-slice idempotency, stable natural-key rows, target-derived requests, missing or concurrently changed targets, loaded identity mismatches, and no-write loading and normalization failures.
+- Verified the complete 50-test suite against an isolated PostgreSQL 17 database.
 
-No FastF1 backfill execution, telemetry, or live timing feature has been completed.
+No year-level FastF1 backfill orchestration, worker job execution, telemetry, or live timing feature has been completed.
 
 ## Work in Progress
 
-- No implementation is currently in progress after the cache-backed one-session loader.
+- No implementation is currently in progress after the database-bound one-session archive vertical slice.
 
 ## Next Steps
 
-1. Connect loading, normalization, and persistence into one idempotent single-session vertical slice.
-2. Define pending/running/failed state transitions and sanitized failure recording around the vertical slice.
-3. Define retry count, backoff, heartbeat, lease, and current-season freshness policies before worker orchestration.
-4. Decide whether manual backfill cancellation belongs in the first phase.
-5. Add season coverage and job-progress REST APIs.
-6. Add the basic season selection and progress UI.
-7. Measure telemetry volume before deciding on TimescaleDB.
-8. Design SignalR live timing and reconciliation separately.
+1. Define pending/running/failed state transitions and sanitized failure recording around the vertical slice.
+2. Define retry count, backoff, heartbeat, lease, and current-season freshness policies before worker orchestration.
+3. Decide whether manual backfill cancellation belongs in the first phase.
+4. Add season coverage and job-progress REST APIs.
+5. Add the basic season selection and progress UI.
+6. Measure telemetry volume before deciding on TimescaleDB.
+7. Design SignalR live timing and reconciliation separately.
 
 ## Run and Test Commands
 
@@ -512,12 +524,12 @@ docker run --rm -e UV_PROJECT_ENVIRONMENT=/tmp/formula1-dashboard-venv -v "$PWD/
 docker run --rm -e UV_PROJECT_ENVIRONMENT=/tmp/formula1-dashboard-venv -v "$PWD/backend:/workspace" -w /workspace ghcr.io/astral-sh/uv:0.11.29-python3.13-trixie-slim uv run --frozen pytest
 ```
 
-Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The complete suite passed with 44 tests against an isolated PostgreSQL 17 Compose database after the FastF1 loader was added.
+Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The complete suite passed with 50 tests against an isolated PostgreSQL 17 database after the one-session archive vertical slice was added.
 
 ## Known Issues and Technical Debt
 
 - The worker is only a readiness scaffold and cannot claim or process jobs.
-- Loading, normalization, and persistence are implemented separately but are not connected into an executable backfill vertical slice.
+- The one-session vertical slice is callable but is not yet invoked by the placeholder worker or a job orchestration service.
 - Loader tests use controlled FastF1 doubles and do not perform an upstream network smoke test.
 - Pending/running/failed ingestion transitions and sanitized failure recording are not implemented around persistence.
 - Session-row locking serializes callers that use the persistence service; worker claiming and lease recovery remain unimplemented.
@@ -542,10 +554,12 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `backend/alembic/versions/20260728_0002_sporting_data.py`: Reviewed Revision 2 sporting-data schema and downgrade.
 - `backend/app/db/base.py`: Shared SQLAlchemy metadata and timestamp mixin.
 - `backend/app/db/models/`: Revision 1 control-plane and Revision 2 sporting-data SQLAlchemy models.
+- `backend/app/ingestion/archive_ingestion.py`: Database-target lookup, FastF1 request derivation, loaded-identity validation, normalization, and persistence composition.
 - `backend/app/ingestion/fastf1_loader.py`: Deterministic, cache-backed, process-serialized one-session FastF1 loading.
 - `backend/app/ingestion/fastf1_normalization.py`: Pure FastF1 results-and-laps normalization and validation.
-- `backend/app/ingestion/archive_persistence.py`: Atomic normalized archive upserts, stale-row replacement, source guard, row lock, and ingestion completion.
+- `backend/app/ingestion/archive_persistence.py`: Atomic normalized archive upserts, stale-row replacement, source and locked-target identity guards, and ingestion completion.
 - `backend/tests/test_archive_persistence.py`: PostgreSQL transactional persistence, idempotency, stale replacement, source protection, and rollback coverage.
+- `backend/tests/test_archive_ingestion.py`: PostgreSQL one-session vertical-slice identity, idempotency, and pre-persistence failure coverage.
 - `backend/tests/test_database_integration.py`: PostgreSQL constraint and index integration coverage.
 - `backend/tests/test_sporting_data_integration.py`: Revision 2 identity, constraint, number-reuse, nullable-field, and idempotency integration coverage.
 - `backend/tests/test_fastf1_loader.py`: FastF1 loader cache, configuration, flags, errors, and serialization tests.
@@ -558,6 +572,7 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 
 ## Change Log
 
+- 2026-07-28 — Implemented and verified the database-bound one-session FastF1 loading, normalization, and transactional persistence vertical slice.
 - 2026-07-28 — Implemented and verified the serialized cache-backed FastF1 one-session loader with messages enabled and telemetry/weather disabled.
 - 2026-07-28 — Implemented and verified atomic persistence and stale-row replacement for one normalized FastF1 archive session.
 - 2026-07-28 — Accepted the one-session archive replacement contract, locked FastF1 3.8.3, and implemented and verified the pure normalization layer.

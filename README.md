@@ -16,9 +16,10 @@ two database migrations:
 - Locked FastF1 runtime and pure results-and-laps normalization
 - Serialized, cache-backed FastF1 one-session loader
 - Atomic persistence and stale-row replacement for one normalized archive session
+- A database-bound one-session loading, normalization, and persistence vertical slice
 - Docker Compose health checks
 
-The end-to-end FastF1 backfill workflow and worker execution, telemetry, and live
+Year-level FastF1 backfill orchestration and worker execution, telemetry, and live
 timing ingestion are not implemented yet.
 
 ## Requirements
