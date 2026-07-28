@@ -352,9 +352,9 @@ The exact precedence will be implemented once API response tests are written.
 - A partial unique index prevents two active year jobs.
 - The implemented one-session wrapper locks the target session and persistent
   ingestion row before changing it to `running`.
-- Future workers will claim eligible `backfill_job_sessions` rows with
-  `FOR UPDATE SKIP LOCKED` and synchronize job-session state with persistent
-  session-ingestion state.
+- The implemented orchestration service claims eligible
+  `backfill_job_sessions` rows with `FOR UPDATE SKIP LOCKED` and synchronizes
+  job-session state with persistent session-ingestion state.
 - A completed session is committed independently, so later sessions failing does not hide completed data.
 - Re-running a completed session updates/upserts its owned rows instead of blindly inserting duplicates.
 - Destructive replacement of a session dataset, if required, must happen inside one transaction after the replacement data has been validated.
@@ -374,23 +374,32 @@ The exact precedence will be implemented once API response tests are written.
   completion clears it atomically.
 - Failure codes and messages come from fixed mappings; raw exception content is
   never persisted.
-- `heartbeat_at` and `next_retry_at` remain unset until retry and lease policies are
-  accepted and implemented.
+- Direct managed archive attempts leave `heartbeat_at` and `next_retry_at`
+  unset. Orchestrated claims set an initial shared heartbeat, and synchronized
+  failures clear it while assigning the same retry timestamp when eligible.
 
 ## Retry and Crash Recovery
 
-Accepted target behavior:
+Implemented behavior:
 
 - Retry is scoped to a session, never to the entire season from the beginning.
 - `attempt_count` increments when a worker successfully claims a session.
 - Retryable failures set `next_retry_at`; permanent validation failures remain failed.
 - Maximum attempts and backoff are configuration values, not schema constants.
+- Job-session and persistent session states change atomically during claims and
+  failure transitions.
+- Failure transitions require the claimed job attempt and monotonic persistent
+  session-attempt token.
+- Error fields contain sanitized summaries only and never contain credentials,
+  cookies, raw authorization headers, or raw exception text.
+
+Accepted but not implemented:
+
 - Running rows with an expired heartbeat become eligible for recovery.
 - Recovery must not reset a completed session.
-- Error fields contain sanitized summaries only and must never contain credentials, cookies, or raw authorization headers.
 - The initial worker processes one FastF1 session at a time.
-
-Exact lease duration, heartbeat interval, retry count, and backoff schedule remain open decisions.
+- Periodic heartbeat, completion fencing, and lease recovery follow
+  `docs/BACKFILL_RUNTIME_POLICY.md`.
 
 ## Data Source and Finalization
 

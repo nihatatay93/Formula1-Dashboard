@@ -19,10 +19,11 @@ two database migrations:
 - A database-bound one-session loading, normalization, and persistence vertical slice
 - Observable pending/running/completed/failed archive attempts with sanitized errors
 - Validated runtime settings, retry classification, and equal-jitter backoff calculations
+- Transactional job-session claiming and synchronized archive retry transitions
 - Docker Compose health checks
 
-Year-level FastF1 backfill orchestration and worker execution, telemetry, and live
-timing ingestion are not implemented yet.
+End-to-end year-level FastF1 backfill orchestration and worker execution,
+telemetry, and live timing ingestion are not implemented yet.
 
 ## Requirements
 

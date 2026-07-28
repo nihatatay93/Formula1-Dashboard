@@ -1,6 +1,6 @@
 # Backfill Runtime Policy
 
-Status: **accepted; typed settings, retry classification, and backoff implemented**
+Status: **accepted; settings, backoff, claiming, and failure transitions implemented**
 Date: **2026-07-28**
 
 ## Purpose
@@ -17,10 +17,10 @@ It covers:
 - Current-season schedule and archive freshness.
 
 It does not define job aggregation, cancellation, REST APIs, or UI behavior.
-Typed settings, exception classification, and deterministic backoff calculation
-are implemented. Worker claiming, synchronized retry transitions, heartbeat,
-lease recovery, fencing enforcement, and freshness evaluation remain
-unimplemented.
+Typed settings, exception classification, deterministic backoff calculation,
+transactional job-session claiming, and synchronized retry/terminal failure
+transitions are implemented. Periodic heartbeat, lease recovery, completion
+fencing, job aggregation, and freshness evaluation remain unimplemented.
 
 ## Recommended Configuration
 
@@ -266,8 +266,9 @@ session reaches seven days.
 1. Implemented: typed runtime settings and validation for the accepted values.
 2. Implemented: retryable/terminal exception classification and deterministic
    backoff tests with injectable randomness and database time.
-3. Add job-session and persistent-session claim synchronization.
-4. Add heartbeat ownership updates and session-attempt fencing to persistence.
+3. Implemented: job-session and persistent-session claim synchronization,
+   retry/terminal failure transitions, and failure-write fencing.
+4. Add heartbeat ownership updates and completion fencing to persistence.
 5. Add stale-lease recovery.
 6. Add current-season coverage and correction-checkpoint eligibility functions.
 7. Connect the placeholder worker only after the above behavior is covered by
