@@ -12,3 +12,6 @@ These rules apply to the entire repository.
 8. A task is not complete until `docs/PROJECT_CONTEXT.md` has been updated.
 9. Every Git commit must use a concise subject and an explanatory body that
    records the scope, rationale, and relevant verification.
+10. Keep the approved first-five-milestone implementation commits on
+    `feature/historical-analysis-telemetry`; do not commit them to `main` or
+    move `main` unless the user explicitly requests it.

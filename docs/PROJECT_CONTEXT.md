@@ -16,7 +16,7 @@ The system is intended to:
 
 ## Current Architecture
 
-The local-development scaffold, five database migrations, locked FastF1 runtime, schedule discovery and season job planner, a managed database-bound one-session FastF1 archive worker, the historical season and session API slices, and the season plus session-exploration dashboard milestones are implemented. The API provides `POST /api/v1/seasons/{season_year}/backfill`, `GET /api/v1/seasons/{season_year}`, `GET /api/v1/backfill-jobs/{job_id}`, `GET /api/v1/upstreams/fastf1/usage`, `GET /api/v1/sessions/{session_id}`, `GET /api/v1/sessions/{session_id}/results`, and `GET /api/v1/sessions/{session_id}/entries/{session_entry_id}/laps` with strict response/error contracts, JavaScript-safe decimal-string database identifiers, UTC timestamp normalization, bounded query validation, and client-safe failures. Strict session-detail, entry/result, lap-summary, lap-filter, and page-cursor Pydantic models, their repeatable-read PostgreSQL query services, and thin no-store HTTP routes are implemented. The season overview reads one repeatable PostgreSQL snapshot and never writes or contacts FastF1. The job-progress endpoint reads one repeatable snapshot, derives internally consistent counts and an execution phase with current/next/last-completed session references, preserves deterministic round/session ordering, and never runs parent aggregation. The idempotent backfill command synchronously checks schedule coverage through the persistent FastF1 cache, delegates all planning and concurrency control to the season planner, creates or reuses one active job, and exposes its polling location without performing session ingestion in the API process. The managed ingestion flow adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. Validated runtime settings, retryable/terminal exception classification, deterministic equal-jitter backoff calculations, transactional job-session claiming, synchronized retry/terminal failure transitions, ownership-fenced heartbeat writes, claim-aware atomic completion, bounded stale-lease recovery, deterministic season/session freshness eligibility, transactional parent-job aggregation, and single-concurrency worker execution are implemented. Claims use a persistent PostgreSQL FastF1 request gate plus row locking and return job-attempt and monotonic session-attempt ownership tokens; heartbeat, failure, and completion writes validate both tokens. Archive session starts retain a one-second safety gap. Real cache-miss FastF1 HTTP sends are recorded in a shared rolling PostgreSQL ledger; the application warns at 400 and pauses at 450 observed requests per hour, below the library's 500-request threshold. FastF1's explicit rate-limit exception closes the global gate for one hour without consuming the job-session retry budget. Recovery fences the lost claim by leaving running state before a retry can be claimed. Freshness functions evaluate UTC coverage expiry, archive grace, and correction checkpoints. The season planner uses FastF1's curated schedule as the championship membership and round-number authority, retains exact private-index boundaries for matched events, hydrates missing historical or already-started events from exact per-session timing metadata, defers unpublished current-season future events without blocking available work, persists the available exact-boundary calendar snapshot atomically, and creates or reuses one active year job under a season advisory lock. Aggregation locks all child rows before the parent, preserves monotonic job state, and returns progress counts. The worker polls eligible jobs, maintains heartbeats during blocking FastF1 work, runs recovery/parent reconciliation every 30 seconds, applies fenced outcomes, and stops gracefully without taking new work. The React dashboard selects supported seasons, presents coverage and session-state visualizations, starts or reuses backfill jobs, polls active job progress, identifies the GP/session currently fetching, displays deferred future-event notices, and shows local request usage and cooldown countdowns through the backend only. Every calendar session can open an in-page workspace backed only by the historical session API; it shows metadata and availability, a complete entry/result table, participant selection, a compound-colored loaded-lap pace profile, detailed lap summaries, and 50-row keyset pagination with snapshot-change restart protection. The database contains the backfill control plane, request coordination and accounting, schedule membership markers, and normalized sporting-data tables. Manual lap selection/averaging, telemetry, and live timing ingestion are not yet implemented.
+The local-development scaffold, five database migrations, locked FastF1 runtime, schedule discovery and season job planner, a managed database-bound one-session FastF1 archive worker, the historical season and session API slices, and the season plus session-exploration dashboard milestones are implemented. The API provides `POST /api/v1/seasons/{season_year}/backfill`, `GET /api/v1/seasons/{season_year}`, `GET /api/v1/backfill-jobs/{job_id}`, `GET /api/v1/upstreams/fastf1/usage`, `GET /api/v1/sessions/{session_id}`, `GET /api/v1/sessions/{session_id}/results`, and `GET /api/v1/sessions/{session_id}/entries/{session_entry_id}/laps` with strict response/error contracts, JavaScript-safe decimal-string database identifiers, UTC timestamp normalization, bounded query validation, and client-safe failures. Strict session-detail, entry/result, lap-summary, lap-filter, and page-cursor Pydantic models, their repeatable-read PostgreSQL query services, and thin no-store HTTP routes are implemented. The season overview reads one repeatable PostgreSQL snapshot and never writes or contacts FastF1. The job-progress endpoint reads one repeatable snapshot, derives internally consistent counts and an execution phase with current/next/last-completed session references, preserves deterministic round/session ordering, and never runs parent aggregation. The idempotent backfill command synchronously checks schedule coverage through the persistent FastF1 cache, delegates all planning and concurrency control to the season planner, creates or reuses one active job, and exposes its polling location without performing session ingestion in the API process. The managed ingestion flow adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. Validated runtime settings, retryable/terminal exception classification, deterministic equal-jitter backoff calculations, transactional job-session claiming, synchronized retry/terminal failure transitions, ownership-fenced heartbeat writes, claim-aware atomic completion, bounded stale-lease recovery, deterministic season/session freshness eligibility, transactional parent-job aggregation, and single-concurrency worker execution are implemented. Claims use a persistent PostgreSQL FastF1 request gate plus row locking and return job-attempt and monotonic session-attempt ownership tokens; heartbeat, failure, and completion writes validate both tokens. Archive session starts retain a one-second safety gap. Real cache-miss FastF1 HTTP sends are recorded in a shared rolling PostgreSQL ledger; the application warns at 400 and pauses at 450 observed requests per hour, below the library's 500-request threshold. FastF1's explicit rate-limit exception closes the global gate for one hour without consuming the job-session retry budget. Recovery fences the lost claim by leaving running state before a retry can be claimed. Freshness functions evaluate UTC coverage expiry, archive grace, and correction checkpoints. The season planner uses FastF1's curated schedule as the championship membership and round-number authority, retains exact private-index boundaries for matched events, hydrates missing historical or already-started events from exact per-session timing metadata, defers unpublished current-season future events without blocking available work, persists the available exact-boundary calendar snapshot atomically, and creates or reuses one active year job under a season advisory lock. Aggregation locks all child rows before the parent, preserves monotonic job state, and returns progress counts. The worker polls eligible jobs, maintains heartbeats during blocking FastF1 work, runs recovery/parent reconciliation every 30 seconds, applies fenced outcomes, and stops gracefully without taking new work. The React dashboard selects supported seasons, presents coverage and session-state visualizations, starts or reuses backfill jobs, polls active job progress, identifies the GP/session currently fetching, displays deferred future-event notices, and shows local request usage and cooldown countdowns through the backend only. Every calendar session can open an in-page workspace backed only by the historical session API; it shows metadata and availability, a complete entry/result table, participant selection, a compound-colored loaded-lap pace profile, detailed lap summaries, and 50-row keyset pagination with snapshot-change restart protection. Vitest and React Testing Library protect session loading, unavailable/error states, participant lap traversal, and snapshot-change behavior; Playwright protects primary season, synchronization, session, pagination, and responsive workflows in desktop and mobile Chromium. The database contains the backfill control plane, request coordination and accounting, schedule membership markers, and normalized sporting-data tables. Manual lap selection/averaging, telemetry, and live timing ingestion are not yet implemented.
 
 Implemented services in `compose.yaml`:
 
@@ -199,6 +199,26 @@ Formula1-Dashboard/
   body describing the change scope, rationale, and relevant verification.
 - Rationale: Preserve useful project history so future reviews can understand
   not only what changed, but why it changed and how it was checked.
+- Date: 2026-07-28
+- Status: implemented
+
+### First-five-milestone feature branch
+
+- Decision: Implement and commit the first five approved roadmap milestones on
+  `feature/historical-analysis-telemetry`, keeping `main` fixed at `70176ea`
+  until the user explicitly requests a merge or other movement.
+- Rationale: Isolate the multi-milestone work for review and preserve the
+  current stable mainline exactly as requested.
+- Date: 2026-07-28
+- Status: implemented
+
+### Frontend test stack
+
+- Decision: Use Vitest, React Testing Library, `user-event`, `jest-dom`, and
+  jsdom for deterministic frontend tests, plus Playwright Chromium with
+  intercepted backend responses for desktop and mobile browser workflows.
+- Rationale: Cover component state and real interaction/responsive behavior
+  without depending on live FastF1 traffic or mutable local database contents.
 - Date: 2026-07-28
 - Status: implemented
 
@@ -1179,41 +1199,46 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
   and archive-snapshot change protection without adding dependencies.
 - Verified the frontend TypeScript/Vite production build, the running local
   Vite module, and live local session-detail, result, and lap API responses.
+- Created the approved five-milestone execution plan and isolated the work on
+  `feature/historical-analysis-telemetry` while preserving `main` at `70176ea`.
+- Added the frontend Vitest/React Testing Library and Playwright foundations,
+  deterministic historical API fixtures, four session-workspace component
+  tests, and six desktop/mobile Chromium workflow tests.
+- Verified all four frontend component tests, all six browser tests, and the
+  TypeScript/Vite production build.
 
 No manual lap-selection/average analysis, telemetry feature, or live timing
 feature has been completed.
 
 ## Work in Progress
 
-- No implementation phase is currently active. Dedicated frontend
-  component/browser-interaction coverage is the next planned milestone.
+- Manual selected-lap pace analysis is the active milestone. It will remain
+  ephemeral and snapshot-bound, support two participant/team selections, and
+  will not claim automatic race-run classification.
 
 ## Next Steps
 
-1. Add dedicated frontend component and browser-interaction coverage for the
-   implemented dashboard workflows and responsive states.
-2. Design the future manual lap-selection analysis workflow after the base
-   session views are usable, including selected-lap averages, driver/team
-   comparison, snapshot-change handling, and whether analyses need backend
-   persistence for sharing between web and iOS.
-3. Measure representative FastF1 telemetry volume and access patterns before
+1. Implement the accepted ephemeral manual lap-selection analysis workflow,
+   including selected-lap averages, two participant/team comparison, quality
+   visibility, and snapshot-change handling.
+2. Measure representative FastF1 telemetry volume and access patterns before
    deciding whether PostgreSQL alone or TimescaleDB should own telemetry.
-4. Design and implement bounded telemetry ingestion and APIs queried by session,
+3. Design and implement bounded telemetry ingestion and APIs queried by session,
    driver, and lap; never include season-wide telemetry in overview responses.
-5. Add automatic current-season planning so newly published event/session
+4. Add automatic current-season planning so newly published event/session
    boundaries and correction checkpoints do not depend indefinitely on a manual
    dashboard command. Revisit persistent deferred-event metadata at this point.
-6. Design the SignalR live-timing protocol boundary, reconnect/resume,
+5. Design the SignalR live-timing protocol boundary, reconnect/resume,
    deduplication, provisional schema, and FastF1 finalization/reconciliation
    rules before implementing live ingestion.
-7. Implement the live collector, provisional persistence, backend WebSocket
+6. Implement the live collector, provisional persistence, backend WebSocket
    fan-out, session finalization, and dashboard live views.
-8. Stabilize the shared API for the SwiftUI client, then implement the iOS
-    application without exposing upstream credentials.
-9. Before production, add authentication/authorization, secret management,
-    secure PostgreSQL configuration, observability, backups, CI, deployment,
-    and any demonstrated background-job infrastructure. Reconsider manual job
-    cancellation and Redis only when measurements justify them.
+7. Stabilize the shared API for the SwiftUI client, then implement the iOS
+   application without exposing upstream credentials.
+8. Before production, add authentication/authorization, secret management,
+   secure PostgreSQL configuration, observability, backups, CI, deployment,
+   and any demonstrated background-job infrastructure. Reconsider manual job
+   cancellation and Redis only when measurements justify them.
 
 ## Run and Test Commands
 
@@ -1221,6 +1246,8 @@ Verified:
 
 ```bash
 npm run build --prefix frontend
+npm test --prefix frontend
+npm run test:e2e --prefix frontend
 docker compose config --quiet
 docker compose up --detach
 docker compose up --build --detach
@@ -1292,7 +1319,8 @@ routes and endpoint tests were added.
   workflow; no saved-analysis model or automatic race-run classifier has been
   designed.
 - The dashboard has build and live local smoke coverage but no dedicated
-  frontend unit, component, or browser-interaction test suite yet.
+  coverage threshold yet. Dedicated component and desktop/mobile browser
+  interaction suites are implemented, but CI execution remains future work.
 - Docker registry metadata timed out during the latest image rebuild attempt; the existing images and bind-mounted source started successfully, and the local dashboard/API health checks passed.
 - FastF1 ingestion time and storage volume have not been measured.
 - Live SignalR protocol and reconciliation rules have not been designed.
@@ -1302,6 +1330,9 @@ routes and endpoint tests were added.
 ## Important Files
 
 - `AGENTS.md`: Mandatory context, safety, language, and user-change preservation rules.
+- `docs/FIRST_FIVE_MILESTONES_PLAN.md`: Approved detailed deliverables,
+  acceptance criteria, verification, and commit boundaries for the active
+  five-milestone feature branch.
 - `docs/PROJECT_CONTEXT.md`: Authoritative record of current behavior, accepted decisions, and next steps.
 - `docs/BACKFILL_RUNTIME_POLICY.md`: Accepted runtime retry, backoff,
   heartbeat, lease recovery, fencing, freshness, and request-budget decisions.
@@ -1420,10 +1451,21 @@ routes and endpoint tests were added.
 - `frontend/src/index.css`: Responsive editorial motorsport layout, surface,
   typography, interaction, progress, event-card, result-table, lap-chart, and
   visual-state system.
+- `frontend/src/SessionExplorer.test.tsx`: Component coverage for historical
+  session availability, errors, participant laps, pagination, and snapshot
+  replacement.
+- `frontend/e2e/dashboard.spec.ts`: Intercepted desktop/mobile Chromium
+  workflows for seasons, synchronization, session exploration, pagination,
+  and viewport containment.
+- `frontend/playwright.config.ts`: Deterministic desktop/mobile browser project
+  and local Vite server configuration.
 - `README.md`: Local development overview and commands.
 
 ## Change Log
 
+- 2026-07-28 — Created the protected five-milestone feature branch and detailed
+  execution plan; implemented and verified the Vitest/React Testing Library
+  component suite and Playwright desktop/mobile browser workflow foundation.
 - 2026-07-28 — Reviewed and approved the complete historical session API and
   base dashboard exploration milestone for a local commit; adopted explanatory
   commit bodies as a permanent repository rule.
