@@ -1,6 +1,6 @@
 # Backfill Runtime Policy
 
-Status: **accepted; settings through stale-lease recovery implemented**
+Status: **accepted; settings through freshness eligibility implemented**
 Date: **2026-07-28**
 
 ## Purpose
@@ -21,8 +21,9 @@ Typed settings, exception classification, deterministic backoff calculation,
 transactional job-session claiming, and synchronized retry/terminal failure
 transitions are implemented. Ownership-fenced heartbeat writes and claim-aware
 atomic completion are also implemented. Bounded stale-lease recovery is
-implemented. Worker heartbeat/recovery scheduling, job aggregation, and freshness
-evaluation remain unimplemented.
+implemented. Deterministic coverage and archive-correction eligibility evaluation
+is implemented. Worker heartbeat/recovery scheduling, job aggregation, and
+freshness-triggered job creation remain unimplemented.
 
 ## Recommended Configuration
 
@@ -283,6 +284,30 @@ session reaches seven days.
   through a later freshness-triggered or manual job; the active-job constraint and
   six-hour coverage TTL prevent tight recreation loops.
 
+### Implemented eligibility boundary
+
+The pure `evaluate_season_coverage` decision:
+
+- Determines the current season from the database timestamp's UTC calendar year.
+- Treats missing coverage as `missing`, a validity timestamp at or before database
+  time as `stale`, and a later timestamp as `fresh`.
+- Returns the configured TTL and the validity timestamp that a successful refresh
+  performed at the supplied database time would receive.
+
+The pure `evaluate_archive_ingestion` decision:
+
+- Keeps a session with no scheduled end ineligible.
+- Makes an incomplete archive eligible at the exact grace-period boundary.
+- Treats a successful completion at a correction checkpoint as satisfying that
+  checkpoint.
+- Selects only the latest due unsatisfied checkpoint when a scan happens late, so
+  missed checkpoints never cause immediate catch-up refreshes.
+- Treats a successful completion at or beyond the final checkpoint as stable.
+
+Both decisions require timezone-aware inputs and perform no database writes, job
+creation, or upstream calls. Orchestration must supply PostgreSQL time and persist
+or act on the returned decision separately.
+
 ## Implementation Sequence
 
 1. Implemented: typed runtime settings and validation for the accepted values.
@@ -294,6 +319,8 @@ session reaches seven days.
    fencing inside archive persistence.
 5. Implemented: bounded stale-lease recovery with normal backoff, terminal
    attempt exhaustion, completed-session preservation, and stale-worker fencing.
-6. Add current-season coverage and correction-checkpoint eligibility functions.
-7. Connect the placeholder worker only after the above behavior is covered by
+6. Implemented: current-season coverage and correction-checkpoint eligibility
+   functions with UTC and exact-boundary validation.
+7. Add parent-job aggregation for session outcomes.
+8. Connect the placeholder worker only after the above behavior is covered by
    PostgreSQL integration tests.
