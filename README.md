@@ -5,17 +5,18 @@ historical FastF1 data and future SignalR live timing behind a single API for
 the web dashboard and a future iOS application.
 
 The repository currently contains the local development scaffold and the first
-database migration:
+two database migrations:
 
 - FastAPI backend with liveness and PostgreSQL readiness endpoints
 - Separate worker process using the same backend image
 - React, TypeScript, and Vite frontend
 - PostgreSQL with SQLAlchemy 2 models and Alembic migrations
 - Backfill control-plane tables for seasons, sessions, ingestion state, and jobs
+- Sporting-data tables for drivers, session entries, results, and lap summaries
 - Docker Compose health checks
 
-FastF1 backfill execution, sporting data, telemetry, and live timing ingestion
-are not implemented yet.
+FastF1 backfill execution, telemetry, and live timing ingestion are not
+implemented yet.
 
 ## Requirements
 

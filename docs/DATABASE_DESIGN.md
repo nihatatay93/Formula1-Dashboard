@@ -1,6 +1,6 @@
 # Alembic and Database Model Design
 
-Status: **accepted; Revision 1 implemented**
+Status: **accepted; Revisions 1 and 2 implemented**
 Date: **2026-07-27**
 
 This document defines the accepted database and migration design for the first historical backfill phase. Revision 1 and its six control-plane tables are implemented. Sporting-data and telemetry revisions remain planned.
@@ -298,52 +298,19 @@ Constraints and indexes:
 - Worker claim index `(status, next_retry_at, queued_at)`.
 - Job progress index `(job_id, status)`.
 
-## Proposed Sporting-Data Tables
+## Accepted Sporting-Data Design
 
-### `drivers`
+Revision 2 is fully specified in `docs/SPORTING_DATA_DESIGN.md` and implemented by Alembic revision `20260728_0002`.
 
-Stores stable driver identity when the source provides it.
+Key decisions:
 
-- `id BIGINT IDENTITY` primary key.
-- `source_driver_id TEXT` nullable unique source reference.
-- `given_name`, `family_name`, `full_name`, and `country_code`.
-- Timestamps.
-
-FastF1 identity fields must be inspected before finalizing fallback matching. Names and racing numbers alone must not silently merge drivers across seasons.
-
-### `session_entries`
-
-Stores the driver/team identity as it appeared in a specific session.
-
-- `id BIGINT IDENTITY` primary key.
-- `session_id` foreign key.
-- `driver_id` foreign key.
-- `racing_number`, `abbreviation`, `team_name`, and `team_color`.
-- Unique `(session_id, driver_id)`.
-- Unique `(session_id, racing_number)` when the racing number is present.
-
-### `session_results`
-
-Stores one classification/result row per session entry.
-
-- `session_entry_id` primary key and foreign key.
-- `position`, `classified_position`, `grid_position`, `points`, `status`, and `laps_completed`.
-- Duration fields stored as integer microseconds.
-- Source and record-state fields.
-
-### `laps`
-
-Stores one normalized lap per session entry.
-
-- `id BIGINT IDENTITY` primary key.
-- `session_entry_id` foreign key.
-- `lap_number`.
-- Lap, sector, pit, and session-relative time fields stored as integer microseconds.
-- Compound, tyre life, stint, track status, deleted flag, accuracy flag, source, and record state.
-- Unique `(session_entry_id, lap_number)`.
-- Index `(session_entry_id, lap_number)`.
-
-Raw telemetry is not stored in the lap row.
+- Historical ingestion begins with 2018.
+- Global driver identity uses internal IDs and verified external identifiers.
+- Racing number belongs to a session entry and is unique only within one supported session.
+- Unresolved session entries may have a null `driver_id` and use a deterministic `entry_key`.
+- Results use explicit normalized elapsed-time and leader-gap fields.
+- Laps include timing, pit, tyre, speed-trap, position, deletion, and data-quality summaries, but no raw telemetry.
+- Future ingestion will load race-control messages for deleted-lap accuracy while keeping telemetry and weather disabled for sporting-data backfill.
 
 ## Status Derivation
 
@@ -370,7 +337,7 @@ The exact precedence will be implemented once API response tests are written.
 - Season creation uses an upsert keyed by `year`.
 - Event creation uses an upsert keyed by `(season_year, round_number)`.
 - Session creation uses an upsert keyed by `(event_id, session_key)`.
-- Session entries use an upsert keyed by `(session_id, driver_id)`.
+- Session entries use an upsert keyed by `(session_id, entry_key)`.
 - Laps use an upsert keyed by `(session_entry_id, lap_number)`.
 - A partial unique index prevents two active year jobs.
 - Workers claim eligible `backfill_job_sessions` rows with `FOR UPDATE SKIP LOCKED`.
@@ -438,8 +405,7 @@ Historical FastF1 archive imports are normally finalized. Live SignalR rows rema
 
 1. Define current-season coverage freshness.
 2. Define retry count, backoff, heartbeat, and lease defaults.
-3. Inspect actual FastF1 driver identifiers before finalizing cross-season driver uniqueness.
-4. Decide whether manual job cancellation is required in the first phase.
+3. Decide whether manual job cancellation is required in the first phase.
 
 ## Acceptance Criteria for the First Migration
 

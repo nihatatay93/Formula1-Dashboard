@@ -16,7 +16,7 @@ The system is intended to:
 
 ## Current Architecture
 
-The local-development scaffold and the first database migration are implemented. FastF1 ingestion, backfill job execution, sporting data, telemetry, and live timing ingestion are not yet implemented.
+The local-development scaffold and the first two database migrations are implemented. The database contains the backfill control plane and normalized sporting-data tables. FastF1 ingestion, backfill job execution, telemetry, and live timing ingestion are not yet implemented.
 
 Implemented services in `compose.yaml`:
 
@@ -69,14 +69,16 @@ Formula1-Dashboard/
 │   ├── tests/
 │   │   ├── test_database_integration.py
 │   │   ├── test_database_metadata.py
-│   │   └── test_health.py
+│   │   ├── test_health.py
+│   │   └── test_sporting_data_integration.py
 │   ├── alembic.ini
 │   ├── Dockerfile
 │   ├── pyproject.toml
 │   └── uv.lock
 ├── docs/
 │   ├── DATABASE_DESIGN.md
-│   └── PROJECT_CONTEXT.md
+│   ├── PROJECT_CONTEXT.md
+│   └── SPORTING_DATA_DESIGN.md
 └── frontend/
     ├── src/
     ├── Dockerfile
@@ -86,12 +88,13 @@ Formula1-Dashboard/
 ```
 
 - `backend/app/`: FastAPI and worker process source.
-- `backend/app/db/`: SQLAlchemy metadata, connection configuration, session factory, and Revision 1 models.
+- `backend/app/db/`: SQLAlchemy metadata, connection configuration, session factory, and Revision 1 and 2 models.
 - `backend/alembic/`: Alembic environment and reviewed migration revisions.
 - `backend/tests/`: Backend tests.
 - `frontend/src/`: React dashboard source.
 - `docs/`: Architecture, decisions, and persistent project context.
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic conventions, migration phases, tables, constraints, indexes, and recovery behavior.
+- `docs/SPORTING_DATA_DESIGN.md`: Evidence-based implemented Revision 2 driver, entry, result, and lap schema.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
 - `AGENTS.md`: Mandatory repository workflow and context rules.
 
@@ -202,6 +205,55 @@ Formula1-Dashboard/
 - Date: 2026-07-27
 - Status: accepted
 
+### Historical ingestion boundary
+
+- Decision: Begin historical ingestion with the 2018 season; do not fetch the complete Formula 1 history.
+- Rationale: FastF1 detailed timing support begins in 2018, and the user does not require earlier results-only coverage.
+- Date: 2026-07-28
+- Status: accepted
+
+### Driver and racing-number identity
+
+- Decision: Identify drivers with an internal database ID and a stable external driver identifier. Store racing number as a session-entry attribute and never use it as a global driver identifier.
+- Rationale: Racing number `1` follows the reigning world champion and can belong to different drivers in different seasons. Other racing numbers can also change owners over time.
+- Date: 2026-07-28
+- Status: implemented
+
+### Racing-number uniqueness scope
+
+- Decision: For supported 2018+ data, enforce uniqueness of a non-null racing number only within one session.
+- Rationale: Prevent duplicate car entries inside a modern session while allowing the same number to belong to different drivers across sessions and seasons.
+- Date: 2026-07-28
+- Status: implemented
+
+### Unresolved driver entries
+
+- Decision: Allow `session_entries.driver_id` to be null and use a deterministic session-local `entry_key` when a verified global driver identity is unavailable.
+- Rationale: Preserve provisional or incomplete entries without incorrectly merging drivers by name, abbreviation, or racing number.
+- Date: 2026-07-28
+- Status: implemented
+
+### Result time normalization
+
+- Decision: Store `elapsed_time_us`, `gap_to_leader_us`, and `gap_to_leader_laps` rather than one source-shaped result time.
+- Rationale: FastF1 uses total elapsed time for the winner and leader gaps for following finishers, so one undifferentiated time field would be ambiguous.
+- Date: 2026-07-28
+- Status: implemented
+
+### Lap summary breadth
+
+- Decision: Store lap-level speed-trap and data-quality fields in addition to timing, pit, tyre, and position summaries.
+- Rationale: These values are useful low-volume lap summaries and are not high-frequency telemetry.
+- Date: 2026-07-28
+- Status: implemented
+
+### Deleted-lap accuracy
+
+- Decision: Load race-control messages for 2018+ sporting backfills while leaving telemetry and weather disabled.
+- Rationale: FastF1 requires race-control messages to populate deleted-lap state and reason reliably.
+- Date: 2026-07-28
+- Status: accepted
+
 ## Database Model
 
 Alembic revision `20260727_0001` implements the backfill control plane:
@@ -224,7 +276,23 @@ Implemented constraints and indexes:
 - Attempt counts must be non-negative.
 - Deterministic names are generated for primary keys, foreign keys, unique constraints, checks, and indexes.
 
-The accepted next migration phase contains `drivers`, `session_entries`, `session_results`, and `laps`. No sporting-data or telemetry table exists yet.
+Alembic revision `20260728_0002` implements the accepted sporting-data schema:
+
+- `drivers`: Global internal driver identity with nullable unique Jolpica and live-reference identifiers plus name and country fields.
+- `session_entries`: Session-specific driver, racing-number, display, team, source, and finalization snapshots. Unresolved entries can have a null `driver_id`.
+- `session_results`: One result per session entry with positions, points, completed laps, qualifying times, normalized elapsed time, leader gaps, source, and finalization state.
+- `laps`: One lap summary per session entry and lap number with timing, pit, sector, speed-trap, tyre, track-status, position, deletion, generation, accuracy, source, and finalization fields.
+
+Revision 2 constraints include:
+
+- Unique non-null Jolpica driver IDs and live references.
+- Unique `(session_id, entry_key)`.
+- Partial uniqueness of non-null `(session_id, driver_id)` and `(session_id, racing_number)`.
+- Unique `(session_entry_id, lap_number)`.
+- Restricted foreign-key deletion.
+- Named source, record-state, non-negative, and positive-value checks.
+
+The implemented Revision 2 model is documented in `docs/SPORTING_DATA_DESIGN.md`. No telemetry table exists.
 
 Planned but not implemented behavior:
 
@@ -316,20 +384,30 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Added database metadata and PostgreSQL integration tests.
 - Verified fresh upgrade, schema/metadata drift check, constraint enforcement, downgrade, re-upgrade, and a second no-op upgrade.
 - Verified the full five-service Compose stack starts with healthy database, API, worker, and frontend services after migration completes.
+- Inspected FastF1 3.8.3 result schemas across modern race, qualifying, sprint, 2018 race, and one pre-2018 boundary sample.
+- Inspected 1,129 modern race lap rows and documented type, nullability, timing, tyre, speed, deletion, and accuracy behavior.
+- Confirmed that racing numbers are not global driver identities and accepted a 2018 historical-ingestion boundary.
+- Created the proposed Revision 2 sporting-data design based on the inspected data.
+- Finalized all Revision 2 open design choices using the recommended options: nullable unresolved driver links, normalized result timing, full lap summaries, and race-control-message loading.
+- Added SQLAlchemy models for `drivers`, `session_entries`, `session_results`, and `laps`.
+- Added and verified Alembic revision `20260728_0002` for the sporting-data schema.
+- Added metadata and PostgreSQL integration coverage for sporting-data constraints, nullable identities, session-scoped number reuse, and idempotent natural-key upserts.
+- Verified Revision 2 fresh upgrade, downgrade to Revision 1, re-upgrade, second no-op upgrade, Alembic head, and zero model/schema drift.
+- Verified the full five-service Compose stack remains healthy with Revision 2 applied.
 
-No FastF1 backfill execution, sporting data, telemetry, or live timing feature has been completed.
+No FastF1 backfill execution, telemetry, or live timing feature has been completed.
 
 ## Work in Progress
 
-- No active implementation is in progress after Revision 1.
+- No implementation is currently in progress after Revision 2.
 
 ## Next Steps
 
-1. Inspect representative FastF1 session data and settle stable driver identity.
-2. Review and implement the sporting-data migration for `drivers`, `session_entries`, `session_results`, and `laps`.
-3. Define retry count, backoff, heartbeat, lease, and current-season freshness policies before worker orchestration.
-4. Decide whether manual backfill cancellation belongs in the first phase.
-5. Implement one idempotent FastF1 session backfill vertical slice.
+1. Define the one-session FastF1 ingestion and replacement contract, including deterministic fallback `entry_key` behavior.
+2. Add FastF1 as a locked runtime dependency and implement normalization unit tests.
+3. Implement one idempotent session backfill vertical slice with cache enabled, messages enabled, and telemetry and weather disabled.
+4. Define retry count, backoff, heartbeat, lease, and current-season freshness policies before worker orchestration.
+5. Decide whether manual backfill cancellation belongs in the first phase.
 6. Add season coverage and job-progress REST APIs.
 7. Add the basic season selection and progress UI.
 8. Measure telemetry volume before deciding on TimescaleDB.
@@ -346,6 +424,7 @@ docker compose up --build --detach
 docker compose run --rm migrate /opt/venv/bin/alembic upgrade head
 docker compose run --rm migrate /opt/venv/bin/alembic current
 docker compose run --rm migrate /opt/venv/bin/alembic check
+docker compose run --rm migrate /opt/venv/bin/alembic downgrade 20260727_0001
 docker compose run --rm migrate /opt/venv/bin/alembic downgrade base
 ```
 
@@ -356,12 +435,14 @@ docker run --rm -e UV_PROJECT_ENVIRONMENT=/tmp/formula1-dashboard-venv -v "$PWD/
 docker run --rm -e UV_PROJECT_ENVIRONMENT=/tmp/formula1-dashboard-venv -v "$PWD/backend:/workspace" -w /workspace ghcr.io/astral-sh/uv:0.11.29-python3.13-trixie-slim uv run --frozen pytest
 ```
 
-Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The full suite passed with eight tests against the isolated Compose database.
+Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The full suite passed with 12 tests against the isolated Compose database.
 
 ## Known Issues and Technical Debt
 
 - The worker is only a readiness scaffold and cannot claim or process jobs.
 - FastF1 is not installed.
+- Sporting-data normalization and persistence application code is not implemented.
+- The deterministic fallback `entry_key` algorithm and stale-row replacement policy require an ingestion contract before the first FastF1 vertical slice.
 - TimescaleDB usage has not been decided.
 - Job recovery, retry, lease, heartbeat, and locking fields exist, but policies and processing behavior have not been finalized.
 - Season/backfill API paths and response schemas have not been finalized.
@@ -375,11 +456,14 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `AGENTS.md`: Mandatory context, safety, language, and user-change preservation rules.
 - `docs/PROJECT_CONTEXT.md`: Authoritative record of current behavior, accepted decisions, and next steps.
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic layout, relational model, migration phases, idempotency, locking, and recovery design.
+- `docs/SPORTING_DATA_DESIGN.md`: Implemented Revision 2 schema, FastF1 inspection evidence, normalization rules, and decisions.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
 - `backend/alembic/versions/20260727_0001_backfill_control_plane.py`: Reviewed Revision 1 schema and downgrade.
+- `backend/alembic/versions/20260728_0002_sporting_data.py`: Reviewed Revision 2 sporting-data schema and downgrade.
 - `backend/app/db/base.py`: Shared SQLAlchemy metadata and timestamp mixin.
-- `backend/app/db/models/`: Revision 1 SQLAlchemy control-plane models.
+- `backend/app/db/models/`: Revision 1 control-plane and Revision 2 sporting-data SQLAlchemy models.
 - `backend/tests/test_database_integration.py`: PostgreSQL constraint and index integration coverage.
+- `backend/tests/test_sporting_data_integration.py`: Revision 2 identity, constraint, number-reuse, nullable-field, and idempotency integration coverage.
 - `backend/app/main.py`: FastAPI scaffold and health endpoints.
 - `backend/app/worker.py`: Placeholder worker lifecycle.
 - `backend/tests/test_health.py`: Backend health endpoint unit tests.
@@ -388,6 +472,9 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 
 ## Change Log
 
+- 2026-07-28 — Implemented and verified Alembic Revision 2 with drivers, session entries, normalized results, and lap summaries.
+- 2026-07-28 — Accepted all recommended Revision 2 decisions and finalized the sporting-data design for implementation.
+- 2026-07-28 — Inspected FastF1 3.8.3 sporting data, accepted the 2018 ingestion boundary and session-scoped racing-number identity, and proposed Revision 2.
 - 2026-07-27 — Accepted the database proposal and implemented and verified Alembic Revision 1 with six backfill control-plane tables.
 - 2026-07-27 — Added the proposed Alembic and database model design with phased migrations and explicit open decisions.
 - 2026-07-27 — Corrected repository documentation to English and recorded the implemented local scaffold.
