@@ -65,10 +65,15 @@ def test_reserves_real_requests_across_operations_and_pauses_at_ceiling(
         operation="schedule",
         settings=settings(),
     )
+    telemetry = FastF1RequestBudget(
+        session_factory=request_budget_factory,
+        operation="telemetry",
+        settings=settings(),
+    )
 
     archive.reserve()
-    archive.reserve()
     schedule.reserve()
+    telemetry.reserve()
 
     with pytest.raises(FastF1RequestBudgetExhaustedError) as error:
         schedule.reserve()
@@ -78,8 +83,9 @@ def test_reserves_real_requests_across_operations_and_pauses_at_ceiling(
         settings=settings(),
     )
     assert snapshot.observed_requests == 3
-    assert snapshot.archive_requests == 2
+    assert snapshot.archive_requests == 1
     assert snapshot.schedule_requests == 1
+    assert snapshot.telemetry_requests == 1
     assert snapshot.remaining_before_pause == 0
     assert snapshot.status == "paused"
     assert snapshot.cooldown_reason == "budget"

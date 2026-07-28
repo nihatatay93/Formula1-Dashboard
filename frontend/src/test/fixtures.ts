@@ -344,6 +344,7 @@ export const requestBudget: FastF1RequestBudget = {
   observed_requests: 20,
   archive_requests: 18,
   schedule_requests: 2,
+  telemetry_requests: 0,
   library_limit: 500,
   operational_ceiling: 450,
   warning_threshold: 400,

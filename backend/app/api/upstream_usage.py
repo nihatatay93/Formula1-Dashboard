@@ -68,6 +68,7 @@ def get_fastf1_usage(
         observed_requests=snapshot.observed_requests,
         archive_requests=snapshot.archive_requests,
         schedule_requests=snapshot.schedule_requests,
+        telemetry_requests=snapshot.telemetry_requests,
         library_limit=snapshot.library_limit,
         operational_ceiling=snapshot.operational_ceiling,
         warning_threshold=snapshot.warning_threshold,

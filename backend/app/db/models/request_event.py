@@ -14,7 +14,7 @@ class UpstreamRequestEvent(Base):
             name="source",
         ),
         CheckConstraint(
-            "operation IN ('archive', 'schedule')",
+            "operation IN ('archive', 'schedule', 'telemetry')",
             name="operation",
         ),
     )

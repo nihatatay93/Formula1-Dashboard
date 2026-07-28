@@ -522,6 +522,112 @@ class LapSummaryResponse(ApiModel):
         return self
 
 
+class TelemetryCommandAction(StrEnum):
+    QUEUED = "queued"
+    REUSED = "reused"
+    AVAILABLE = "available"
+
+
+class EnsureLapTelemetryResponse(ApiModel):
+    session_id: DecimalIdentifier
+    session_entry_id: DecimalIdentifier
+    lap_id: DecimalIdentifier
+    lap_number: int = Field(ge=1)
+    action: TelemetryCommandAction
+    status: IngestionStatus
+    source_snapshot_completed_at: UtcDatetime
+
+
+class LapTelemetryIngestionState(ApiModel):
+    status: IngestionStatus
+    attempt_count: int = Field(ge=0)
+    sample_count: int = Field(ge=0)
+    requested_at: UtcDatetime
+    heartbeat_at: UtcDatetime | None
+    next_retry_at: UtcDatetime | None
+    completed_at: UtcDatetime | None
+    last_error: LastError | None
+
+
+class LapTelemetrySnapshot(ApiModel):
+    compatible: bool
+    source_snapshot_completed_at: UtcDatetime
+    current_snapshot_completed_at: UtcDatetime
+
+
+class LapTelemetryPage(ApiModel):
+    limit: int = Field(ge=1, le=1000)
+    has_more: bool
+    next_after_sample: int | None = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_cursor(self) -> Self:
+        if self.has_more != (self.next_after_sample is not None):
+            raise ValueError(
+                "next sample cursor presence must agree with has_more"
+            )
+        return self
+
+
+class LapTelemetrySampleData(ApiModel):
+    sample_index: int = Field(ge=0)
+    lap_time_us: int = Field(ge=0)
+    session_time_us: int | None = Field(ge=0)
+    distance_m: float | None = Field(ge=0, allow_inf_nan=False)
+    relative_distance: float | None = Field(
+        ge=0,
+        le=1.01,
+        allow_inf_nan=False,
+    )
+    speed_kph: float | None = Field(ge=0, allow_inf_nan=False)
+    rpm: int | None = Field(ge=0)
+    gear: int | None = Field(ge=0, le=20)
+    throttle_percent: float | None = Field(
+        ge=0,
+        le=100,
+        allow_inf_nan=False,
+    )
+    brake: bool | None
+    drs: int | None = Field(ge=0, le=20)
+    x: float | None = Field(allow_inf_nan=False)
+    y: float | None = Field(allow_inf_nan=False)
+    z: float | None = Field(allow_inf_nan=False)
+
+
+class LapTelemetryResponse(ApiModel):
+    session_id: DecimalIdentifier
+    session_entry_id: DecimalIdentifier
+    lap_id: DecimalIdentifier
+    lap_number: int = Field(ge=1)
+    data_available: bool
+    snapshot: LapTelemetrySnapshot
+    ingestion: LapTelemetryIngestionState
+    page: LapTelemetryPage
+    items: tuple[LapTelemetrySampleData, ...]
+
+    @model_validator(mode="after")
+    def validate_page(self) -> Self:
+        if len(self.items) > self.page.limit:
+            raise ValueError("telemetry item count cannot exceed page limit")
+        indices = [item.sample_index for item in self.items]
+        if indices != sorted(set(indices)):
+            raise ValueError(
+                "telemetry samples must have unique ascending indices"
+            )
+        if not self.data_available and self.items:
+            raise ValueError(
+                "unavailable telemetry cannot return sample rows"
+            )
+        if self.page.has_more:
+            if not self.items:
+                raise ValueError("a continued telemetry page requires items")
+            if self.page.next_after_sample != self.items[-1].sample_index:
+                raise ValueError(
+                    "next sample cursor must equal the last returned sample"
+                )
+        return self
+
+
 class EnsureBackfillResponse(ApiModel):
     season_year: int = Field(ge=2018)
     action: BackfillAction
@@ -617,6 +723,7 @@ class FastF1RequestBudgetResponse(ApiModel):
     observed_requests: int = Field(ge=0)
     archive_requests: int = Field(ge=0)
     schedule_requests: int = Field(ge=0)
+    telemetry_requests: int = Field(ge=0)
     library_limit: int = Field(gt=0)
     operational_ceiling: int = Field(gt=0)
     warning_threshold: int = Field(gt=0)
@@ -630,7 +737,9 @@ class FastF1RequestBudgetResponse(ApiModel):
     @model_validator(mode="after")
     def validate_request_counts(self) -> Self:
         if self.observed_requests != (
-            self.archive_requests + self.schedule_requests
+            self.archive_requests
+            + self.schedule_requests
+            + self.telemetry_requests
         ):
             raise ValueError(
                 "observed requests must equal archive plus schedule requests"

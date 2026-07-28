@@ -2,6 +2,7 @@ import logging
 from datetime import timedelta
 from pathlib import Path
 from threading import Event, Thread
+from types import SimpleNamespace
 
 import pytest
 
@@ -88,6 +89,64 @@ def test_shutdown_during_maintenance_prevents_a_new_claim() -> None:
     worker.run(stop_event)
 
     assert process_called is False
+
+
+def test_worker_prioritizes_archive_before_telemetry() -> None:
+    stop_event = Event()
+    calls: list[str] = []
+
+    def process_archive():
+        calls.append("archive")
+        stop_event.set()
+        return SimpleNamespace(
+            claim=SimpleNamespace(job_id="job", session_id=1),
+            outcome="completed",
+        )
+
+    def process_telemetry():
+        calls.append("telemetry")
+        return None
+
+    worker = ArchiveBackfillWorker(
+        session_factory=unused_session_factory,  # type: ignore[arg-type]
+        loader=UnusedLoader(),
+        process_next=process_archive,
+        process_next_telemetry=process_telemetry,
+        maintenance=empty_maintenance,
+    )
+
+    worker.run(stop_event)
+
+    assert calls == ["archive"]
+
+
+def test_worker_processes_telemetry_when_archive_is_not_claimable() -> None:
+    stop_event = Event()
+    calls: list[str] = []
+
+    def process_archive():
+        calls.append("archive")
+        return None
+
+    def process_telemetry():
+        calls.append("telemetry")
+        stop_event.set()
+        return SimpleNamespace(
+            claim=SimpleNamespace(lap_id=7),
+            status="completed",
+        )
+
+    worker = ArchiveBackfillWorker(
+        session_factory=unused_session_factory,  # type: ignore[arg-type]
+        loader=UnusedLoader(),
+        process_next=process_archive,
+        process_next_telemetry=process_telemetry,
+        maintenance=empty_maintenance,
+    )
+
+    worker.run(stop_event)
+
+    assert calls == ["archive", "telemetry"]
 
 
 def test_shutdown_stops_new_claims_but_waits_for_active_processing() -> None:

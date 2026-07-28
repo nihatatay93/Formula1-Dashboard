@@ -7,10 +7,19 @@ from pathlib import Path
 import psycopg
 
 from app.db.session import create_session_factory
-from app.ingestion.backfill_worker import ArchiveBackfillWorker
+from app.ingestion.archive_ingestion import SessionFactory
+from app.ingestion.backfill_worker import (
+    ArchiveBackfillWorker,
+    WorkerMaintenanceSummary,
+    perform_worker_maintenance,
+)
 from app.ingestion.fastf1_loader import create_fastf1_session_loader
 from app.ingestion.request_budget import FastF1RequestBudget
 from app.ingestion.runtime_policy import BackfillRuntimeSettings
+from app.ingestion.telemetry_ingestion import (
+    process_next_telemetry_lap,
+    recover_stale_telemetry_leases,
+)
 
 logger = logging.getLogger("formula1_dashboard.worker")
 stop_event = threading.Event()
@@ -26,6 +35,27 @@ def verify_database(database_url: str) -> None:
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
             cursor.fetchone()
+
+
+def _perform_all_maintenance(
+    *,
+    session_factory: SessionFactory,
+    settings: BackfillRuntimeSettings,
+) -> WorkerMaintenanceSummary:
+    archive = perform_worker_maintenance(
+        session_factory=session_factory,
+        settings=settings,
+    )
+    with session_factory() as database:
+        telemetry_count = recover_stale_telemetry_leases(
+            database,
+            settings=settings,
+        )
+    return WorkerMaintenanceSummary(
+        recovered=archive.recovered,
+        aggregations=archive.aggregations,
+        recovered_telemetry=telemetry_count,
+    )
 
 
 def main() -> None:
@@ -58,10 +88,26 @@ def main() -> None:
                 settings=settings,
             )
         )
+        telemetry_loader = create_fastf1_session_loader(
+            request_budget=FastF1RequestBudget(
+                session_factory=session_factory,
+                operation="telemetry",
+                settings=settings,
+            )
+        )
         worker = ArchiveBackfillWorker(
             session_factory=session_factory,
             loader=loader,
             settings=settings,
+            process_next_telemetry=lambda: process_next_telemetry_lap(
+                session_factory=session_factory,
+                loader=telemetry_loader,
+                settings=settings,
+            ),
+            maintenance=lambda: _perform_all_maintenance(
+                session_factory=session_factory,
+                settings=settings,
+            ),
         )
         ready_file.write_text("ready\n", encoding="utf-8")
     except Exception as error:

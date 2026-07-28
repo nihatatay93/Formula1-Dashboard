@@ -12,6 +12,8 @@ def test_metadata_contains_all_migrated_tables() -> None:
         "drivers",
         "events",
         "laps",
+        "lap_telemetry_ingestions",
+        "lap_telemetry_samples",
         "seasons",
         "session_entries",
         "session_ingestions",
@@ -107,3 +109,18 @@ def test_database_url_uses_explicit_psycopg_driver() -> None:
     )
 
     assert url.drivername == "postgresql+psycopg"
+
+
+def test_lap_telemetry_metadata_is_bounded_and_cascades_with_lap() -> None:
+    ingestions = Base.metadata.tables["lap_telemetry_ingestions"]
+    samples = Base.metadata.tables["lap_telemetry_samples"]
+
+    assert ingestions.c.lap_id.primary_key is True
+    assert samples.c.sample_index.nullable is False
+    assert {
+        tuple(column.name for column in constraint.columns)
+        for constraint in samples.constraints
+        if isinstance(constraint, UniqueConstraint)
+    } >= {("lap_id", "sample_index")}
+    assert next(iter(ingestions.c.lap_id.foreign_keys)).ondelete == "CASCADE"
+    assert next(iter(samples.c.lap_id.foreign_keys)).ondelete == "CASCADE"

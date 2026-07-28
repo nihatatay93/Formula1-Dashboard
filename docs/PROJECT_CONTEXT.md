@@ -16,6 +16,18 @@ The system is intended to:
 
 ## Current Architecture
 
+Milestone 4 adds Alembic Revision 6 and bounded historical telemetry to the
+implemented architecture. One durable ingestion state is stored per requested
+lap, normalized samples are bound to the current completed sporting snapshot,
+and the existing single-concurrency worker prioritizes archive sessions before
+telemetry. FastF1 telemetry loads use the persistent serialized cache plus the
+shared archive/schedule/telemetry request ledger. Idempotent command and
+sample-index-keyset read endpoints expose state and at most 1,000 samples per
+page; telemetry remains absent from season/session/result/lap-summary payloads.
+Live timing remains unimplemented.
+
+### Architecture baseline through Milestone 3
+
 The local-development scaffold, five database migrations, locked FastF1 runtime, schedule discovery and season job planner, a managed database-bound one-session FastF1 archive worker, the historical season and session API slices, and the season plus session-exploration dashboard milestones are implemented. The API provides `POST /api/v1/seasons/{season_year}/backfill`, `GET /api/v1/seasons/{season_year}`, `GET /api/v1/backfill-jobs/{job_id}`, `GET /api/v1/upstreams/fastf1/usage`, `GET /api/v1/sessions/{session_id}`, `GET /api/v1/sessions/{session_id}/results`, and `GET /api/v1/sessions/{session_id}/entries/{session_entry_id}/laps` with strict response/error contracts, JavaScript-safe decimal-string database identifiers, UTC timestamp normalization, bounded query validation, and client-safe failures. Strict session-detail, entry/result, lap-summary, lap-filter, and page-cursor Pydantic models, their repeatable-read PostgreSQL query services, and thin no-store HTTP routes are implemented. The season overview reads one repeatable PostgreSQL snapshot and never writes or contacts FastF1. The job-progress endpoint reads one repeatable snapshot, derives internally consistent counts and an execution phase with current/next/last-completed session references, preserves deterministic round/session ordering, and never runs parent aggregation. The idempotent backfill command synchronously checks schedule coverage through the persistent FastF1 cache, delegates all planning and concurrency control to the season planner, creates or reuses one active job, and exposes its polling location without performing session ingestion in the API process. The managed ingestion flow adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. Validated runtime settings, retryable/terminal exception classification, deterministic equal-jitter backoff calculations, transactional job-session claiming, synchronized retry/terminal failure transitions, ownership-fenced heartbeat writes, claim-aware atomic completion, bounded stale-lease recovery, deterministic season/session freshness eligibility, transactional parent-job aggregation, and single-concurrency worker execution are implemented. Claims use a persistent PostgreSQL FastF1 request gate plus row locking and return job-attempt and monotonic session-attempt ownership tokens; heartbeat, failure, and completion writes validate both tokens. Archive session starts retain a one-second safety gap. Real cache-miss FastF1 HTTP sends are recorded in a shared rolling PostgreSQL ledger; the application warns at 400 and pauses at 450 observed requests per hour, below the library's 500-request threshold. FastF1's explicit rate-limit exception closes the global gate for one hour without consuming the job-session retry budget. Recovery fences the lost claim by leaving running state before a retry can be claimed. Freshness functions evaluate UTC coverage expiry, archive grace, and correction checkpoints. The season planner uses FastF1's curated schedule as the championship membership and round-number authority, retains exact private-index boundaries for matched events, hydrates missing historical or already-started events from exact per-session timing metadata, defers unpublished current-season future events without blocking available work, persists the available exact-boundary calendar snapshot atomically, and creates or reuses one active year job under a season advisory lock. Aggregation locks all child rows before the parent, preserves monotonic job state, and returns progress counts. The worker polls eligible jobs, maintains heartbeats during blocking FastF1 work, runs recovery/parent reconciliation every 30 seconds, applies fenced outcomes, and stops gracefully without taking new work. The React dashboard selects supported seasons, presents coverage and session-state visualizations, starts or reuses backfill jobs, polls active job progress, identifies the GP/session currently fetching, displays deferred future-event notices, and shows local request usage and cooldown countdowns through the backend only. Every calendar session can open an in-page workspace backed only by the historical session API; it shows metadata and availability, a complete entry/result table, participant selection, a compound-colored loaded-lap pace profile, detailed lap summaries, and 50-row keyset pagination with snapshot-change restart protection. Users can explicitly select timed laps for up to two participants, retain those selections while switching drivers, inspect average/fastest/spread and deleted/inaccurate/pit-transition facts, and compare selected averages. The analysis is ephemeral, makes no race-run inference, and is cleared when its completed archive snapshot changes. Vitest and React Testing Library protect session and analysis state; Playwright protects primary season, synchronization, session, pagination, analysis, and responsive workflows in desktop and mobile Chromium. The database contains the backfill control plane, request coordination and accounting, schedule membership markers, and normalized sporting-data tables. Telemetry and live timing ingestion are not yet implemented.
 
 Implemented services in `compose.yaml`:
@@ -23,7 +35,10 @@ Implemented services in `compose.yaml`:
 - `db`: PostgreSQL with a persistent `postgres_data` volume and a health check.
 - `migrate`: One-shot Alembic service that upgrades the database before the API and worker start.
 - `api`: FastAPI application with liveness and database-readiness endpoints.
-- `worker`: Single-concurrency archive process built from the backend image. It validates configuration/database readiness, processes existing eligible job-sessions, heartbeats active claims, and performs periodic recovery/aggregation maintenance.
+- `worker`: Single-concurrency archive and bounded-telemetry process built from
+  the backend image. It prioritizes archive job-sessions, then processes
+  explicitly requested laps, heartbeats active claims, and performs periodic
+  recovery/aggregation maintenance.
 - `frontend`: React, TypeScript, and Vite application for season selection, coverage and event/session state visualization, backfill commands, and active-job polling.
 
 Implemented supporting infrastructure:
@@ -34,7 +49,7 @@ Implemented supporting infrastructure:
 - FastF1 archive session starts are coordinated across worker processes through
   a PostgreSQL gate with a one-second safety gap and a one-hour explicit
   rate-limit cooldown.
-- Real cache-miss archive and schedule HTTP sends share a rolling PostgreSQL
+- Real cache-miss archive, schedule, and telemetry HTTP sends share a rolling PostgreSQL
   request ledger, 400-request warning threshold, and 450-request application
   pause below the FastF1 library's 500-request threshold.
 - One-session archive requests are derived from stored session and event identity, checked against the loaded FastF1 session, and revalidated under database row locks before replacement.
@@ -165,7 +180,7 @@ Formula1-Dashboard/
 
 - `backend/app/`: FastAPI and worker process source.
 - `backend/app/api/`: Versioned historical API, strict response/error models, supported-year validation, season/job/request-budget/session read models and routes, and the idempotent backfill command boundary.
-- `backend/app/db/`: SQLAlchemy metadata, connection configuration, session factory, and Revision 1–5 models.
+- `backend/app/db/`: SQLAlchemy metadata, connection configuration, session factory, and Revision 1–6 models.
 - `backend/app/ingestion/`: Managed attempt state, schedule discovery and season planning, transactional backfill claiming/failure/aggregation transitions, single-concurrency worker execution, database-bound one-session orchestration, cache-backed loading, request-level accounting, pure upstream-to-domain normalization, atomic archive persistence, and runtime/freshness policy primitives.
 - `backend/alembic/`: Alembic environment and reviewed migration revisions.
 - `backend/tests/`: Backend tests.
@@ -181,6 +196,9 @@ Formula1-Dashboard/
   implemented.
 - `docs/SCHEDULE_DISCOVERY_DESIGN.md`: Implemented FastF1 schedule source, atomic calendar snapshot, membership, and active-job planning contract.
 - `docs/SPORTING_DATA_DESIGN.md`: Evidence-based implemented Revision 2 driver, entry, result, and lap schema.
+- `docs/HISTORICAL_TELEMETRY_DESIGN.md`: Implemented Revision 6 schema,
+  idempotent command, archive-priority worker, snapshot fencing, and bounded
+  read contract.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
 - `AGENTS.md`: Mandatory repository workflow and context rules.
 
@@ -774,6 +792,18 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: implemented
 
+### Bounded historical telemetry
+
+- Decision: Store only explicitly requested lap telemetry in normalized
+  standard PostgreSQL rows, maintain one durable ingestion state per lap, bind
+  completion to a sporting snapshot, prioritize archive jobs in the shared
+  single-concurrency worker, and expose command plus sample-index-keyset read
+  endpoints with a 500-row default and 1,000-row maximum.
+- Rationale: Enable detailed post-session analysis while keeping upstream
+  traffic, database growth, worker concurrency, and client payloads bounded.
+- Date: 2026-07-28
+- Status: implemented
+
 ## Database Model
 
 Alembic revision `20260727_0001` implements the backfill control plane:
@@ -836,13 +866,20 @@ Alembic revision `20260728_0005` implements local request accounting:
 - Keeps archive and schedule processes under one transactionally reserved
   rolling-hour operational ceiling.
 
-The implemented Revision 2 model is documented in `docs/SPORTING_DATA_DESIGN.md`. No telemetry table exists.
+Alembic revision `20260728_0006` implements bounded historical telemetry:
 
-Planned but not implemented behavior:
+- `lap_telemetry_ingestions`: One pending/running/completed/failed state per
+  lap with attempts, lifecycle/heartbeat/retry timestamps, sample count, safe
+  failure fields, and the source sporting-snapshot completion timestamp.
+- `lap_telemetry_samples`: Deterministic sample-index rows with lap/session
+  time, distance, relative distance, speed, RPM, gear, throttle, brake, DRS,
+  optional X/Y/Z, source, and record state.
+- Unique `(lap_id, sample_index)`, bounded channel checks, claim/keyset
+  indexes, and cascade deletion only with the owning lap.
+- A distinct `telemetry` request-ledger operation.
 
-- Add standard PostgreSQL lap-telemetry ingestion state and sample tables in
-  the next independently reversible migration. TimescaleDB remains deferred
-  under `docs/TELEMETRY_STORAGE_DECISION.md`.
+Revision 6 is documented in `docs/HISTORICAL_TELEMETRY_DESIGN.md`.
+TimescaleDB remains deferred under `docs/TELEMETRY_STORAGE_DECISION.md`.
 
 ## API Contract
 
@@ -948,10 +985,30 @@ Implemented endpoints:
   `409 session_data_unavailable`, sanitized
   `500 server_configuration_error`, and `503 database_unavailable` responses.
 
-No telemetry or WebSocket endpoint has been implemented. The versioned
+### `POST /api/v1/sessions/{session_id}/entries/{session_entry_id}/laps/{lap_number}/telemetry`
+
+- Idempotently creates, reuses, or reports the one telemetry request for an
+  exact stored lap and completed sporting snapshot.
+- Returns `202` with `Location` and `Retry-After: 2` for queued/reused work and
+  `200` when compatible telemetry is already available.
+- Returns `Cache-Control: no-store`, stable `404 lap_not_found`,
+  `409 session_data_unavailable`, and sanitized `503 database_unavailable`.
+
+### `GET /api/v1/sessions/{session_id}/entries/{session_entry_id}/laps/{lap_number}/telemetry`
+
+- Returns lifecycle state, snapshot compatibility, sample count, and one
+  sample-index-keyset page.
+- Uses a 500-sample default and 1,000-sample hard limit. Pending/failed state
+  remains pollable with an empty `200` page.
+- Returns `Cache-Control: no-store`, stable `404 lap_not_found`,
+  `409 telemetry_not_requested`, `409 session_data_unavailable`, and sanitized
+  `503 database_unavailable`.
+
+No WebSocket endpoint has been implemented. The versioned
 `/api/v1` router, strict historical response/error models, supported-year
 validation, pure derived season-status policy, read-only season, job-progress,
-request-usage, session-detail, result, and lap-summary endpoints, and
+request-usage, session-detail, result, lap-summary, and bounded telemetry
+endpoints, and
 idempotent backfill command are implemented.
 
 The accepted first historical API contract is documented in
@@ -1010,6 +1067,10 @@ per-session timing metadata. Unpublished current-season future events are
 deferred until a later six-hour coverage refresh and do not block planning for
 available sessions.
 Historical laps with an unknown `IsPersonalBest` value are stored as null.
+When no archive job-session is claimable, the same worker may claim one
+snapshot-compatible telemetry request. Telemetry claims have independent
+attempt fencing, heartbeat, retry, lease recovery, sanitized failures, and
+atomic sample replacement. Archive work always retains priority.
 
 ## Live Timing Design
 
@@ -1260,30 +1321,36 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Verified Ruff, the measurement command, four focused measurement tests, and
   all 383 backend tests against an isolated migrated PostgreSQL 17 database;
   removed the test database and restored the healthy local worker afterward.
+- Implemented Revision 6 lap-telemetry state and normalized sample tables,
+  pure normalization, exact FastF1 lap loading, idempotent queueing,
+  archive-priority worker processing, heartbeat/retry/lease fencing, atomic
+  snapshot-bound replacement, bounded REST command/read contracts, and
+  archive/schedule/telemetry request accounting.
+- Verified Revision 6 upgrade/downgrade/re-upgrade and drift, Ruff, all 399
+  backend tests against isolated PostgreSQL 17, nine frontend tests, six
+  desktop/mobile browser tests, the production build, and Compose parsing.
 
-No telemetry feature or live timing feature has been completed. Saved analyses
-and automatic race-run classification remain intentionally unimplemented.
+No live timing feature has been completed. Saved analyses and automatic
+race-run classification remain intentionally unimplemented.
 
 ## Work in Progress
 
-- Bounded lap-scoped historical telemetry persistence, worker ingestion, and
-  REST contracts are the active milestone.
+- Automatic current-season planning and persisted deferred-event membership
+  are the active milestone.
 
 ## Next Steps
 
-1. Design and implement bounded telemetry ingestion and APIs queried by session,
-   driver, and lap; never include season-wide telemetry in overview responses.
-2. Add automatic current-season planning so newly published event/session
+1. Add automatic current-season planning so newly published event/session
    boundaries and correction checkpoints do not depend indefinitely on a manual
    dashboard command. Revisit persistent deferred-event metadata at this point.
-3. Design the SignalR live-timing protocol boundary, reconnect/resume,
+2. Design the SignalR live-timing protocol boundary, reconnect/resume,
    deduplication, provisional schema, and FastF1 finalization/reconciliation
    rules before implementing live ingestion.
-4. Implement the live collector, provisional persistence, backend WebSocket
+3. Implement the live collector, provisional persistence, backend WebSocket
    fan-out, session finalization, and dashboard live views.
-5. Stabilize the shared API for the SwiftUI client, then implement the iOS
+4. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
-6. Before production, add authentication/authorization, secret management,
+5. Before production, add authentication/authorization, secret management,
    secure PostgreSQL configuration, observability, backups, CI, deployment,
    and any demonstrated background-job infrastructure. Reconsider manual job
    cancellation and Redis only when measurements justify them.
@@ -1331,9 +1398,9 @@ uv sync --frozen
 ```
 
 Database integration tests additionally require `TEST_DATABASE_URL` and a
-migrated PostgreSQL database. The complete suite passed with 383 tests against
-a fresh isolated PostgreSQL 17 database after the telemetry measurement
-milestone.
+migrated PostgreSQL database. The complete suite passed with 399 tests against
+a fresh isolated PostgreSQL 17 database after the bounded telemetry milestone.
+Revision 6 downgrade/re-upgrade and `alembic check` also passed.
 
 ## Known Issues and Technical Debt
 
@@ -1376,8 +1443,9 @@ milestone.
   interaction suites are implemented, but CI execution remains future work.
 - Docker registry metadata timed out during the latest image rebuild attempt; the existing images and bind-mounted source started successfully, and the local dashboard/API health checks passed.
 - Representative per-lap FastF1 telemetry frequency and planning volume have
-  been measured, but actual migrated PostgreSQL relation/index size and
-  end-to-end telemetry ingestion duration remain to be measured in Milestone 4.
+  been measured. Actual relation/index size and ingestion duration should be
+  measured after enough explicit lap requests exist; this does not block the
+  bounded on-demand implementation.
 - Live SignalR protocol and reconciliation rules have not been designed.
 - PostgreSQL trust authentication is suitable only for the current loopback-bound local environment.
 - Virtual environments are platform-specific. Never reuse a `.venv` created inside the Linux container on macOS; recreate the ignored host environment from `uv.lock`.
@@ -1421,6 +1489,8 @@ milestone.
 - `docs/TELEMETRY_STORAGE_DECISION.md`: Representative FastF1 telemetry
   measurements, scale projection, PostgreSQL-first decision, limitations, and
   TimescaleDB review triggers.
+- `docs/HISTORICAL_TELEMETRY_DESIGN.md`: Implemented bounded telemetry schema,
+  command/read API, worker execution, snapshot fencing, and verification.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
 - `backend/alembic/versions/20260727_0001_backfill_control_plane.py`: Reviewed Revision 1 schema and downgrade.
 - `backend/alembic/versions/20260728_0002_sporting_data.py`: Reviewed Revision 2 sporting-data schema and downgrade.
@@ -1428,11 +1498,14 @@ milestone.
 - `backend/alembic/versions/20260728_0004_ingestion_resilience.py`: Revision 4 FastF1 request-gate, historical personal-best nullability, seed data, and downgrade.
 - `backend/alembic/versions/20260728_0005_request_budget.py`: Revision 5 shared
   FastF1 request-event ledger, budget gate reason, and downgrade.
+- `backend/alembic/versions/20260728_0006_lap_telemetry.py`: Revision 6
+  lap-telemetry state/sample schema, request-operation extension, and downgrade.
 - `backend/app/db/base.py`: Shared SQLAlchemy metadata and timestamp mixin.
-- `backend/app/db/models/`: Revision 1 control-plane and Revision 2 sporting-data SQLAlchemy models.
+- `backend/app/db/models/`: Revision 1 control-plane, Revision 2 sporting-data,
+  and Revision 6 telemetry SQLAlchemy models.
 - `backend/app/db/models/request_gate.py`: Persistent cross-worker FastF1
   pacing, request-budget, and rate-limit cooldown state.
-- `backend/app/db/models/request_event.py`: Observed FastF1 archive/schedule
+- `backend/app/db/models/request_event.py`: Observed FastF1 archive/schedule/telemetry
   cache-miss send ledger.
 - `backend/app/ingestion/archive_attempt.py`: Pending/running/failed archive attempt transitions, attempt counting, overlap protection, and fixed sanitized failure mappings.
 - `backend/app/ingestion/backfill_worker.py`: Single-concurrency claim/execution loop, heartbeat monitor, recovery/aggregation maintenance, fixed outcome handling, and graceful shutdown.
@@ -1455,6 +1528,14 @@ milestone.
 - `backend/app/ingestion/runtime_policy.py`: Validated runtime settings, retry classification, SQLSTATE handling, and deterministic equal-jitter retry schedules.
 - `backend/app/ingestion/telemetry_measurement.py`: Pure telemetry frequency,
   channel-coverage, memory, and PostgreSQL planning estimates.
+- `backend/app/ingestion/telemetry_normalization.py`: Pure duration, range,
+  channel, and deterministic sample-index normalization.
+- `backend/app/ingestion/telemetry_ingestion.py`: Idempotent lap queue,
+  snapshot-bound claim/persistence, heartbeat, retry, lease recovery, and
+  worker composition.
+- `backend/app/api/telemetry.py`: Thin bounded telemetry command/read routes.
+- `backend/app/api/telemetry_data.py`: Repeatable-read telemetry state,
+  compatibility, and sample-index pagination service.
 - `backend/scripts/measure_fastf1_telemetry.py`: Controlled representative-lap
   measurement through the persistent cache and shared request budget.
 - `backend/tests/test_archive_attempt.py`: Stable failure-code and fixed secret-free message mapping coverage.
@@ -1527,6 +1608,9 @@ milestone.
 
 ## Change Log
 
+- 2026-07-28 — Implemented and verified bounded, snapshot-bound historical lap
+  telemetry across Revision 6, FastF1 loading/normalization, durable worker
+  execution, request accounting, and idempotent paginated REST contracts.
 - 2026-07-28 — Measured representative Practice 2, Qualifying, and Race
   telemetry, selected standard PostgreSQL for on-demand lap-scoped storage,
   documented TimescaleDB review triggers, and verified all 383 backend tests.

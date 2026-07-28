@@ -9,6 +9,7 @@ from app.db.models.request_gate import UpstreamRequestGate
 from app.db.models.result import SessionResult
 from app.db.models.season import Season
 from app.db.models.session import RaceSession
+from app.db.models.telemetry import LapTelemetryIngestion, LapTelemetrySample
 
 __all__ = [
     "BackfillJob",
@@ -16,6 +17,8 @@ __all__ = [
     "Driver",
     "Event",
     "Lap",
+    "LapTelemetryIngestion",
+    "LapTelemetrySample",
     "RaceSession",
     "Season",
     "SessionEntry",

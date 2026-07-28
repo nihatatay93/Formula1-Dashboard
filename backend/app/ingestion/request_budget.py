@@ -30,6 +30,7 @@ class FastF1RequestBudgetSnapshot:
     observed_requests: int
     archive_requests: int
     schedule_requests: int
+    telemetry_requests: int
     library_limit: int
     operational_ceiling: int
     warning_threshold: int
@@ -50,8 +51,10 @@ class FastF1RequestBudget:
         operation: str,
         settings: BackfillRuntimeSettings | None = None,
     ) -> None:
-        if operation not in {"archive", "schedule"}:
-            raise ValueError("operation must be archive or schedule")
+        if operation not in {"archive", "schedule", "telemetry"}:
+            raise ValueError(
+                "operation must be archive, schedule, or telemetry"
+            )
         self._session_factory = session_factory
         self._operation = operation
         self._settings = settings or BackfillRuntimeSettings()
@@ -180,6 +183,7 @@ def read_fastf1_request_budget(
             observed_requests=observed_requests,
             archive_requests=int(counts.get("archive", 0)),
             schedule_requests=int(counts.get("schedule", 0)),
+            telemetry_requests=int(counts.get("telemetry", 0)),
             library_limit=runtime_settings.fastf1_request_library_limit,
             operational_ceiling=(
                 runtime_settings.fastf1_request_operational_ceiling

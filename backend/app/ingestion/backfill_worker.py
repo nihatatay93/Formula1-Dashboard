@@ -38,6 +38,7 @@ from app.ingestion.runtime_policy import (
     RetryDisposition,
     classify_retry,
 )
+from app.ingestion.telemetry_ingestion import ProcessedTelemetryLap
 
 logger = logging.getLogger("formula1_dashboard.worker")
 
@@ -62,6 +63,7 @@ class ProcessedArchiveJobSession:
 class WorkerMaintenanceSummary:
     recovered: tuple[RecoveredArchiveLease, ...]
     aggregations: tuple[BackfillJobAggregation, ...]
+    recovered_telemetry: int = 0
 
 
 class ClaimHeartbeatMonitor:
@@ -268,6 +270,10 @@ class ArchiveBackfillWorker:
         monotonic: Callable[[], float] = time.monotonic,
         process_next: Callable[[], ProcessedArchiveJobSession | None] | None = None,
         maintenance: Callable[[], WorkerMaintenanceSummary] | None = None,
+        process_next_telemetry: Callable[
+            [], ProcessedTelemetryLap | None
+        ]
+        | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.loader = loader
@@ -275,6 +281,7 @@ class ArchiveBackfillWorker:
         self._monotonic = monotonic
         self._process_next = process_next or self._process_next_default
         self._maintenance = maintenance or self._maintenance_default
+        self._process_next_telemetry = process_next_telemetry
 
     def run(self, stop_event: Event) -> None:
         next_maintenance_at = 0.0
@@ -315,6 +322,20 @@ class ArchiveBackfillWorker:
                     processed.claim.job_id,
                     processed.claim.session_id,
                     processed.outcome,
+                )
+                continue
+
+            telemetry_processed = None
+            if self._process_next_telemetry is not None:
+                try:
+                    telemetry_processed = self._process_next_telemetry()
+                except Exception as error:
+                    _log_operation_error("telemetry processing", error)
+            if telemetry_processed is not None:
+                logger.info(
+                    "Processed telemetry lap %s with outcome %s.",
+                    telemetry_processed.claim.lap_id,
+                    telemetry_processed.status,
                 )
                 continue
 

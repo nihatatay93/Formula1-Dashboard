@@ -104,6 +104,44 @@ class LoadedFastF1Session:
     laps: DataFrame
 
 
+@dataclass(frozen=True, slots=True)
+class FastF1TelemetryRequest:
+    season_year: int
+    round_number: int
+    session_identifier: str
+    driver_identifier: str
+    lap_number: int
+
+    def __post_init__(self) -> None:
+        FastF1SessionRequest(
+            season_year=self.season_year,
+            round_number=self.round_number,
+            session_identifier=self.session_identifier,
+        )
+        if (
+            not isinstance(self.driver_identifier, str)
+            or not self.driver_identifier.strip()
+        ):
+            raise FastF1LoaderConfigurationError(
+                "driver_identifier must be a non-empty string"
+            )
+        if (
+            isinstance(self.lap_number, bool)
+            or not isinstance(self.lap_number, int)
+            or self.lap_number < 1
+        ):
+            raise FastF1LoaderConfigurationError(
+                "lap_number must be a positive integer"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class LoadedFastF1Telemetry:
+    request: FastF1TelemetryRequest
+    session_name: str
+    telemetry: DataFrame
+
+
 class FastF1SessionLoader:
     """Load one FastF1 session at a time through a persistent process cache."""
 
@@ -170,6 +208,70 @@ class FastF1SessionLoader:
                 session_name=session_name.strip(),
                 results=results,
                 laps=laps,
+            )
+
+    def load_telemetry(
+        self,
+        request: FastF1TelemetryRequest,
+    ) -> LoadedFastF1Telemetry:
+        """Load one exact driver's lap through the serialized cache boundary."""
+
+        with serialized_fastf1_access(self):
+            try:
+                session = fastf1.get_session(
+                    request.season_year,
+                    request.round_number,
+                    request.session_identifier.strip(),
+                )
+                _install_tyre_info_compatibility(session)
+                session.load(
+                    laps=True,
+                    telemetry=True,
+                    weather=False,
+                    messages=False,
+                )
+                laps = session.laps.pick_drivers(
+                    request.driver_identifier.strip()
+                ).pick_laps(request.lap_number)
+                if len(laps) != 1:
+                    raise FastF1SessionLoadError(
+                        "FastF1 did not resolve exactly one requested lap"
+                    )
+                lap = laps.iloc[0]
+                try:
+                    telemetry = lap.get_telemetry(frequency="original")
+                except KeyError:
+                    telemetry = (
+                        lap.get_car_data()
+                        .add_distance()
+                        .add_relative_distance()
+                    )
+            except FastF1RequestBudgetExhaustedError:
+                raise
+            except FastF1SessionLoadError:
+                raise
+            except fastf1.exceptions.RateLimitExceededError as error:
+                raise FastF1RateLimitError(
+                    "FastF1 telemetry request rate limit was reached"
+                ) from error
+            except Exception as error:
+                raise FastF1SessionLoadError(
+                    "FastF1 failed to load requested lap telemetry"
+                ) from error
+
+            session_name = getattr(session, "name", None)
+            if not isinstance(session_name, str) or not session_name.strip():
+                raise FastF1SessionLoadError(
+                    "FastF1 loaded telemetry without a usable session name"
+                )
+            if not isinstance(telemetry, DataFrame) or telemetry.empty:
+                raise FastF1SessionLoadError(
+                    "FastF1 loaded an empty telemetry table"
+                )
+            return LoadedFastF1Telemetry(
+                request=request,
+                session_name=session_name.strip(),
+                telemetry=telemetry,
             )
 
     def _enable_cache(self) -> None:

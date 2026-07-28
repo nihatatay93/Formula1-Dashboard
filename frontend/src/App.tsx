@@ -301,7 +301,8 @@ function RequestBudgetPanel({
         </strong>
         <p>
           {budget.archive_requests} archive · {budget.schedule_requests} schedule
-          requests in the rolling hour
+          {" · "}
+          {budget.telemetry_requests} telemetry requests in the rolling hour
         </p>
       </div>
       <div className="budget-panel__meter">

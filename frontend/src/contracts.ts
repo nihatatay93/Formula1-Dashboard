@@ -192,6 +192,7 @@ export interface FastF1RequestBudget {
   observed_requests: number;
   archive_requests: number;
   schedule_requests: number;
+  telemetry_requests: number;
   library_limit: number;
   operational_ceiling: number;
   warning_threshold: number;
