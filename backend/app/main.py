@@ -5,6 +5,10 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from app.api.router import api_v1_router
+from app.db.schema import (
+    DatabaseSchemaMismatchError,
+    verify_database_schema,
+)
 
 app = FastAPI(
     title="Formula1 Dashboard API",
@@ -42,8 +46,15 @@ def readiness() -> JSONResponse:
     try:
         with psycopg.connect(database_url, connect_timeout=2) as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT 1")
-                cursor.fetchone()
+                verify_database_schema(cursor)
+    except DatabaseSchemaMismatchError:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "checks": {"database": "schema_mismatch"},
+            },
+        )
     except psycopg.Error:
         return JSONResponse(
             status_code=503,

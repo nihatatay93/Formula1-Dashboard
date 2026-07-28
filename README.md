@@ -74,7 +74,15 @@ docker compose up --build
 ```
 
 The one-shot `migrate` service applies repository Alembic migrations before the
-API and worker start.
+API and worker start. When a running bind-mounted development stack receives a
+new migration, apply it before using the reloaded application code:
+
+```bash
+docker compose run --rm migrate /opt/venv/bin/alembic upgrade head
+```
+
+API readiness and worker startup reject a database whose Alembic head does not
+match the checked-out application migrations.
 
 The services are exposed locally at:
 

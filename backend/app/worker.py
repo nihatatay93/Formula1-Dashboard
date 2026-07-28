@@ -9,6 +9,7 @@ from pathlib import Path
 
 import psycopg
 
+from app.db.schema import verify_database_schema
 from app.db.session import create_session_factory
 from app.ingestion.archive_ingestion import SessionFactory
 from app.ingestion.backfill_worker import (
@@ -44,8 +45,7 @@ def request_shutdown(signum: int, _frame: object) -> None:
 def verify_database(database_url: str) -> None:
     with psycopg.connect(database_url, connect_timeout=5) as connection:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT 1")
-            cursor.fetchone()
+            verify_database_schema(cursor)
 
 
 def _perform_all_maintenance(

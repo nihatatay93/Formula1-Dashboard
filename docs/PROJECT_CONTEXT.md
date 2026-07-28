@@ -75,6 +75,9 @@ Implemented supporting infrastructure:
 - PostgreSQL trust authentication is restricted to loopback-bound local development and must not be reused for production.
 - SQLAlchemy uses synchronous sessions with the explicit `postgresql+psycopg` dialect.
 - The application never calls `create_all`; Alembic is the only schema-authoring mechanism.
+- API readiness and worker initialization compare the database's
+  `alembic_version` heads with the checked-out migration script heads. A
+  reachable but incompatible schema is not considered ready.
 
 Target data flow:
 
@@ -364,6 +367,19 @@ Formula1-Dashboard/
 - Decision: Run Alembic through a one-shot `migrate` Compose service and make the API and worker wait for its successful completion.
 - Rationale: Prevent multiple long-running services from racing to apply schema changes.
 - Date: 2026-07-27
+- Status: implemented
+
+### Runtime schema compatibility guard
+
+- Decision: Resolve the checked-out Alembic heads from the repository migration
+  scripts, require the database `alembic_version` heads to match exactly in API
+  readiness and worker initialization, and report a sanitized
+  `schema_mismatch` readiness state.
+- Rationale: A bind-mounted development process can reload application code
+  while an already-completed one-shot migration container remains at an older
+  database revision. Database connectivity alone cannot prove that application
+  queries are safe.
+- Date: 2026-07-28
 - Status: implemented
 
 ### Derived season status
@@ -936,9 +952,12 @@ Implemented endpoints:
 
 ### `GET /api/health/ready`
 
-- Returns `200 OK` with database status `ready` when PostgreSQL is reachable.
+- Returns `200 OK` with database status `ready` when PostgreSQL is reachable
+  and its Alembic heads exactly match the checked-out application migrations.
 - Returns `503 Service Unavailable` with database status `not_configured` when `DATABASE_URL` is missing.
 - Returns `503 Service Unavailable` with database status `unavailable` when PostgreSQL cannot be reached.
+- Returns `503 Service Unavailable` with database status `schema_mismatch` when
+  the database is unversioned, behind, ahead, or on different Alembic heads.
 
 ### `GET /api/v1/seasons/{season_year}`
 
@@ -1389,6 +1408,13 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Verified Revision 7 downgrade/re-upgrade and drift, Ruff, all 411 backend
   tests against isolated PostgreSQL 17, nine frontend tests, six desktop/mobile
   browser tests, the production build, and Compose parsing.
+- Diagnosed the live season-overview failure as application Revision 7 code
+  running against the local Revision 5 database; upgraded the preserved local
+  database through Revisions 6 and 7 and verified the 2018 and 2026 season
+  endpoints returned `200`.
+- Added an Alembic-head compatibility guard to API readiness and worker
+  initialization, documented the bind-mounted migration command, and verified
+  all 420 backend tests against a fresh isolated PostgreSQL 17 database.
 
 No live timing feature has been completed. Saved analyses and automatic
 race-run classification remain intentionally unimplemented.
@@ -1454,9 +1480,9 @@ uv sync --frozen
 ```
 
 Database integration tests additionally require `TEST_DATABASE_URL` and a
-migrated PostgreSQL database. The complete suite passed with 411 tests against
-an isolated PostgreSQL 17 database after the automatic current-season planning
-milestone. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
+migrated PostgreSQL database. The complete suite passed with 420 tests against
+an isolated PostgreSQL 17 database after the runtime schema-compatibility
+repair. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
 
 ## Known Issues and Technical Debt
 
@@ -1562,6 +1588,8 @@ milestone. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
 - `backend/alembic/versions/20260728_0007_deferred_events.py`: Revision 7
   deferred current-season event membership, constraints, index, and downgrade.
 - `backend/app/db/base.py`: Shared SQLAlchemy metadata and timestamp mixin.
+- `backend/app/db/schema.py`: Cached checked-out Alembic-head discovery and
+  database schema-compatibility verification for API/worker readiness.
 - `backend/app/db/models/`: Revision 1 control-plane, Revision 2 sporting-data,
   Revision 6 telemetry, and Revision 7 deferred-event SQLAlchemy models.
 - `backend/app/db/models/deferred_event.py`: Snapshot-bound current-season
@@ -1647,6 +1675,8 @@ milestone. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
   season planner composition, database/configuration readiness, signal
   handling, and readiness-file lifecycle.
 - `backend/tests/test_health.py`: Backend health endpoint unit tests.
+- `backend/tests/test_schema.py`: Exact, missing, stale, divergent, and
+  unversioned Alembic-head compatibility tests.
 - `backend/tests/test_historical_session_contracts.py`: Session-detail,
   result, lap-query, lap-page, serialization, ordering, availability, and
   analysis-field contract coverage.
@@ -1679,6 +1709,9 @@ milestone. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
 
 ## Change Log
 
+- 2026-07-28 — Repaired the local Revision 5/Revision 7 schema mismatch,
+  restored season endpoints, and added tested Alembic-head guards to API
+  readiness and worker startup.
 - 2026-07-28 — Implemented and verified automatic current-UTC-season planning,
   Revision 7 deferred-event snapshot persistence, read-only/dashboard
   visibility, idempotent worker scheduling, and shutdown/failure safety.
