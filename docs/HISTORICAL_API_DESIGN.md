@@ -1,6 +1,6 @@
 # Historical Season and Backfill REST API Design
 
-Status: **accepted; not implemented**
+Status: **accepted; API foundation implemented, endpoints not implemented**
 Date: **2026-07-28**
 
 ## Purpose
@@ -318,16 +318,18 @@ The season overview is bounded to at most the supported championship calendar,
 so pagination is unnecessary there. Lap and telemetry endpoints will require
 separate pagination and query contracts.
 
-## Planned Implementation Sequence
+## Implementation Sequence
 
-1. Add versioned API router, request dependencies, response schemas, and stable
-   error mapping.
-2. Implement a pure/testable derived season-status function.
-3. Implement read-model queries for latest season membership and job progress.
-4. Connect the POST command to `ensure_season_backfill`.
-5. Add unit and PostgreSQL API integration tests, including concurrent POSTs,
+1. Partially implemented: versioned API router, response schemas, supported-year
+   validation, and the stable base error envelope. Database dependencies and
+   internal-exception mappings remain with the endpoints that use them.
+2. Implemented: pure/testable derived season-status policy.
+3. Planned: implement read-model queries for latest season membership and job
+   progress.
+4. Planned: connect the POST command to `ensure_season_backfill`.
+5. Planned: add PostgreSQL API integration tests, including concurrent POSTs,
    preserved completed data, invalid years, and sanitized failures.
-6. Verify generated OpenAPI, Docker Compose startup, and real API-to-worker
+6. Planned: verify generated OpenAPI, Docker Compose startup, and real API-to-worker
    handoff without adding a live upstream request to automated tests.
 
 No database migration is expected for this API slice.

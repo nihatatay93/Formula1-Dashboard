@@ -4,11 +4,14 @@ import psycopg
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from app.api.router import api_v1_router
+
 app = FastAPI(
     title="Formula1 Dashboard API",
     description="Backend API for Formula1 Dashboard.",
     version="0.1.0",
 )
+app.include_router(api_v1_router)
 
 
 @app.get("/")
@@ -57,4 +60,3 @@ def readiness() -> JSONResponse:
             "checks": {"database": "ready"},
         },
     )
-
