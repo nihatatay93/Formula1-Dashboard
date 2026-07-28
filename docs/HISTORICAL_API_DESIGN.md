@@ -1,6 +1,7 @@
 # Historical Season and Backfill REST API Design
 
-Status: **accepted; API foundation implemented, endpoints not implemented**
+Status: **accepted; API foundation and season overview read service implemented,
+endpoints not implemented**
 Date: **2026-07-28**
 
 ## Purpose
@@ -101,6 +102,9 @@ measured before introducing another background control plane.
 
 This endpoint is strictly read-only. It never contacts FastF1 and never creates
 or modifies a job.
+
+The database read service behind this future endpoint is implemented. The route
+itself is not yet mounted.
 
 For a supported year with no stored coverage, it returns `200 OK` with
 `status: "missing"` and an empty event list. `missing` is an accepted domain
@@ -324,8 +328,9 @@ separate pagination and query contracts.
    validation, and the stable base error envelope. Database dependencies and
    internal-exception mappings remain with the endpoints that use them.
 2. Implemented: pure/testable derived season-status policy.
-3. Planned: implement read-model queries for latest season membership and job
-   progress.
+3. Partially implemented: read-model queries for latest season membership,
+   session eligibility/state, active-job summary, and derived season status.
+   Job-progress reads remain planned.
 4. Planned: connect the POST command to `ensure_season_backfill`.
 5. Planned: add PostgreSQL API integration tests, including concurrent POSTs,
    preserved completed data, invalid years, and sanitized failures.
