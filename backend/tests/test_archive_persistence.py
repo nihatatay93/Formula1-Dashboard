@@ -29,6 +29,7 @@ from app.ingestion.archive_persistence import (
 from app.ingestion.backfill_orchestration import (
     ClaimedArchiveJobSession,
     claim_next_archive_job_session,
+    recover_stale_archive_job_sessions,
 )
 from app.ingestion.fastf1_normalization import (
     NormalizedDriver,
@@ -542,6 +543,73 @@ def test_claimed_completion_rejects_stale_ownership_before_writes(
                         for driver in make_snapshot(persistence_target).drivers
                     ]
                 )
+            )
+        ) == 0
+
+
+def test_recovered_lease_fences_the_original_worker_completion(
+    persistence_target: PersistenceTarget,
+) -> None:
+    claim = claim_persistence_target(persistence_target)
+    with persistence_target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE backfill_job_sessions
+                SET heartbeat_at = clock_timestamp() - interval '10 minutes'
+                WHERE job_id = :job_id
+                  AND session_id = :session_id
+                """
+            ),
+            {
+                "job_id": claim.job_id,
+                "session_id": claim.session_id,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                UPDATE session_ingestions
+                SET heartbeat_at = clock_timestamp() - interval '10 minutes'
+                WHERE session_id = :session_id
+                """
+            ),
+            {"session_id": claim.session_id},
+        )
+
+    with Session(persistence_target.engine) as database:
+        recovered = recover_stale_archive_job_sessions(
+            database,
+            jitter_fraction_factory=lambda: 0.5,
+        )
+    assert len(recovered) == 1
+    assert recovered[0].status == "pending"
+
+    with Session(persistence_target.engine) as database:
+        with pytest.raises(
+            ArchivePersistenceOwnershipError,
+            match="no longer owns",
+        ):
+            replace_archive_session(
+                database,
+                session_id=persistence_target.session_id,
+                snapshot=make_snapshot(persistence_target),
+                claim=claim,
+            )
+
+    with Session(persistence_target.engine) as database:
+        job_session = database.get(
+            BackfillJobSession,
+            (claim.job_id, claim.session_id),
+        )
+        ingestion = database.get(SessionIngestion, claim.session_id)
+        assert job_session is not None
+        assert job_session.status == "pending"
+        assert ingestion is not None
+        assert ingestion.status == "pending"
+        assert database.scalar(
+            select(func.count(SessionEntry.id)).where(
+                SessionEntry.session_id == claim.session_id
             )
         ) == 0
 

@@ -237,6 +237,8 @@ Implemented:
   ownership before writes and completes both session states with the snapshot.
 - Ownership-fenced heartbeat transactions for parent job, job-session, and
   persistent session ingestion.
+- Bounded stale-lease recovery that fences the original claim before it can
+  complete archive persistence.
 - Idempotent pending state and single-increment running attempts.
 - Overlapping-running and non-archive state protection.
 - Separate failed-state transactions with fixed secret-free diagnostics.
@@ -245,5 +247,4 @@ Implemented:
 
 Not implemented:
 
-- Worker heartbeat scheduling, lease recovery, job aggregation, and worker
-  execution.
+- Worker heartbeat/recovery scheduling, job aggregation, and worker execution.

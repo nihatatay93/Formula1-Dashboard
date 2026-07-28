@@ -1,6 +1,6 @@
 # Backfill Runtime Policy
 
-Status: **accepted; settings through fenced completion implemented**
+Status: **accepted; settings through stale-lease recovery implemented**
 Date: **2026-07-28**
 
 ## Purpose
@@ -20,8 +20,9 @@ It does not define job aggregation, cancellation, REST APIs, or UI behavior.
 Typed settings, exception classification, deterministic backoff calculation,
 transactional job-session claiming, and synchronized retry/terminal failure
 transitions are implemented. Ownership-fenced heartbeat writes and claim-aware
-atomic completion are also implemented. Worker heartbeat scheduling, lease
-recovery, job aggregation, and freshness evaluation remain unimplemented.
+atomic completion are also implemented. Bounded stale-lease recovery is
+implemented. Worker heartbeat/recovery scheduling, job aggregation, and freshness
+evaluation remain unimplemented.
 
 ## Recommended Configuration
 
@@ -191,6 +192,14 @@ For each stale job-session:
 6. Clear heartbeat fields.
 7. Never modify a completed session.
 
+The implemented `recover_stale_archive_job_sessions` transaction selects a
+bounded oldest-first batch with `FOR UPDATE SKIP LOCKED`. It requires both the
+job-session and archive-owned persistent session to remain running with expired
+heartbeat evidence, applies the fixed diagnostics above, preserves previous
+completion/source timestamps, and uses the normal retry schedule. A fourth lost
+attempt becomes terminal. Rows whose persistent session is no longer running are
+left unchanged.
+
 ## Stale-Worker Fencing
 
 Recovery alone is insufficient because an old worker can resume after its lease
@@ -283,7 +292,8 @@ session reaches seven days.
    retry/terminal failure transitions, and failure-write fencing.
 4. Implemented: ownership-fenced heartbeat updates and claim-aware completion
    fencing inside archive persistence.
-5. Add stale-lease recovery.
+5. Implemented: bounded stale-lease recovery with normal backoff, terminal
+   attempt exhaustion, completed-session preservation, and stale-worker fencing.
 6. Add current-season coverage and correction-checkpoint eligibility functions.
 7. Connect the placeholder worker only after the above behavior is covered by
    PostgreSQL integration tests.

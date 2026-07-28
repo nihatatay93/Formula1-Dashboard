@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import random
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -69,6 +71,24 @@ class ArchiveJobFailureTransition:
 class ArchiveJobHeartbeat:
     claim: ClaimedArchiveJobSession
     heartbeat_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveredArchiveLease:
+    job_id: uuid.UUID
+    session_id: int
+    job_attempt_count: int
+    session_attempt_token: int
+    status: str
+    recovered_at: datetime
+    next_retry_at: datetime | None
+    failure: SanitizedArchiveFailure
+
+
+WORKER_LEASE_EXPIRED_FAILURE = SanitizedArchiveFailure(
+    code="worker_lease_expired",
+    message="The worker lease expired before session ingestion completed.",
+)
 
 
 def claim_next_archive_job_session(
@@ -185,6 +205,123 @@ def claim_next_archive_job_session(
             session_attempt_token=session_attempt_token,
             claimed_at=claimed_at,
         )
+
+
+def recover_stale_archive_job_sessions(
+    database: Session,
+    *,
+    settings: BackfillRuntimeSettings | None = None,
+    batch_size: int = 10,
+    jitter_fraction_factory: Callable[[], float] | None = None,
+) -> tuple[RecoveredArchiveLease, ...]:
+    """Recover a bounded batch of expired archive leases."""
+
+    _require_new_transaction(database)
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+        raise BackfillOrchestrationError(
+            "batch_size must be a positive integer"
+        )
+
+    runtime_settings = settings or BackfillRuntimeSettings()
+    next_jitter_fraction = jitter_fraction_factory or random.random
+    recovered: list[RecoveredArchiveLease] = []
+
+    with database.begin():
+        stale_job_sessions = database.scalars(
+            select(BackfillJobSession)
+            .join(
+                BackfillJob,
+                BackfillJob.id == BackfillJobSession.job_id,
+            )
+            .where(
+                BackfillJob.status == "running",
+                BackfillJobSession.status == "running",
+                BackfillJobSession.heartbeat_at.is_not(None),
+                BackfillJobSession.heartbeat_at
+                < func.clock_timestamp() - runtime_settings.lease_timeout,
+            )
+            .order_by(
+                BackfillJobSession.heartbeat_at,
+                BackfillJobSession.job_id,
+                BackfillJobSession.session_id,
+            )
+            .with_for_update(
+                skip_locked=True,
+                of=BackfillJobSession,
+            )
+            .limit(batch_size)
+        ).all()
+
+        for job_session in stale_job_sessions:
+            job = _get_job_for_update(database, job_session.job_id)
+            if job is None or job.status != "running":
+                continue
+
+            _lock_target_session(database, job_session.session_id)
+            ingestion = _get_ingestion_for_update(
+                database,
+                job_session.session_id,
+            )
+            if (
+                ingestion is None
+                or ingestion.source != ARCHIVE_SOURCE
+                or ingestion.status != "running"
+                or job_session.attempt_count < 1
+            ):
+                continue
+
+            recovered_at = _database_now(database)
+            lease_cutoff = recovered_at - runtime_settings.lease_timeout
+            if (
+                ingestion.heartbeat_at is None
+                or ingestion.heartbeat_at >= lease_cutoff
+            ):
+                continue
+
+            status = "failed"
+            next_retry_at: datetime | None = None
+            if job_session.attempt_count < runtime_settings.max_attempts:
+                schedule = calculate_retry_schedule(
+                    database_now=recovered_at,
+                    failed_attempt=job_session.attempt_count,
+                    jitter_fraction=next_jitter_fraction(),
+                    settings=runtime_settings,
+                )
+                status = "pending"
+                next_retry_at = schedule.next_retry_at
+
+            job_session.status = status
+            job_session.heartbeat_at = None
+            job_session.next_retry_at = next_retry_at
+            job_session.last_error_code = WORKER_LEASE_EXPIRED_FAILURE.code
+            job_session.last_error_message = (
+                WORKER_LEASE_EXPIRED_FAILURE.message
+            )
+
+            ingestion.status = status
+            ingestion.record_state = FINALIZED_STATE
+            ingestion.heartbeat_at = None
+            ingestion.next_retry_at = next_retry_at
+            ingestion.last_error_code = WORKER_LEASE_EXPIRED_FAILURE.code
+            ingestion.last_error_message = (
+                WORKER_LEASE_EXPIRED_FAILURE.message
+            )
+            job.heartbeat_at = recovered_at
+
+            recovered.append(
+                RecoveredArchiveLease(
+                    job_id=job_session.job_id,
+                    session_id=job_session.session_id,
+                    job_attempt_count=job_session.attempt_count,
+                    session_attempt_token=ingestion.attempt_count,
+                    status=status,
+                    recovered_at=recovered_at,
+                    next_retry_at=next_retry_at,
+                    failure=WORKER_LEASE_EXPIRED_FAILURE,
+                )
+            )
+
+    return tuple(recovered)
 
 
 def heartbeat_archive_job_session(

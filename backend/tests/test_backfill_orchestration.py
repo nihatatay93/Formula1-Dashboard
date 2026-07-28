@@ -12,16 +12,23 @@ from app.db.engine import sqlalchemy_database_url
 from app.db.models import BackfillJob, BackfillJobSession, SessionIngestion
 from app.ingestion.archive_persistence import ArchiveSourceConflictError
 from app.ingestion.backfill_orchestration import (
+    WORKER_LEASE_EXPIRED_FAILURE,
     BackfillClaimOwnershipError,
+    BackfillOrchestrationError,
     BackfillOrchestrationTransactionError,
     BackfillPersistentStateConflictError,
     claim_next_archive_job_session,
     heartbeat_archive_job_session,
+    recover_stale_archive_job_sessions,
     transition_archive_job_failure,
 )
 from app.ingestion.fastf1_loader import FastF1SessionLoadError
 from app.ingestion.fastf1_normalization import FastF1NormalizationError
-from app.ingestion.runtime_policy import BackfillRuntimeSettings, RetryDisposition
+from app.ingestion.runtime_policy import (
+    BackfillRuntimePolicyError,
+    BackfillRuntimeSettings,
+    RetryDisposition,
+)
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
@@ -226,6 +233,47 @@ def queue_session(
                 "session_id": session_id,
                 "attempt_count": attempt_count,
                 "next_retry_at": next_retry_at,
+            },
+        )
+
+
+def expire_lease(
+    target: OrchestrationTarget,
+    session_id: int,
+    *,
+    minutes: int = 10,
+) -> None:
+    with target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE backfill_job_sessions
+                SET heartbeat_at = (
+                    clock_timestamp() - (:minutes * interval '1 minute')
+                )
+                WHERE job_id = :job_id
+                  AND session_id = :session_id
+                """
+            ),
+            {
+                "job_id": target.job_id,
+                "session_id": session_id,
+                "minutes": minutes,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                UPDATE session_ingestions
+                SET heartbeat_at = (
+                    clock_timestamp() - (:minutes * interval '1 minute')
+                )
+                WHERE session_id = :session_id
+                """
+            ),
+            {
+                "session_id": session_id,
+                "minutes": minutes,
             },
         )
 
@@ -458,6 +506,359 @@ def test_heartbeat_rejects_stale_ownership_without_partial_updates(
         assert job_session.heartbeat_at == claim.claimed_at
         assert ingestion is not None
         assert ingestion.heartbeat_at == claim.claimed_at
+
+
+def test_stale_lease_recovery_schedules_retry_and_fences_lost_worker(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    session_id = orchestration_target.session_ids[0]
+    queue_session(orchestration_target, session_id)
+
+    with orchestration_target.session_factory() as database:
+        claim = claim_next_archive_job_session(database)
+    assert claim is not None
+
+    completed_at = datetime(2026, 7, 20, 14, 0, tzinfo=UTC)
+    source_updated_at = datetime(2026, 7, 20, 13, 30, tzinfo=UTC)
+    with orchestration_target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE session_ingestions
+                SET completed_at = :completed_at,
+                    source_updated_at = :source_updated_at
+                WHERE session_id = :session_id
+                """
+            ),
+            {
+                "session_id": session_id,
+                "completed_at": completed_at,
+                "source_updated_at": source_updated_at,
+            },
+        )
+    expire_lease(orchestration_target, session_id)
+
+    with orchestration_target.session_factory() as database:
+        recovered = recover_stale_archive_job_sessions(
+            database,
+            jitter_fraction_factory=lambda: 0.5,
+        )
+
+    assert len(recovered) == 1
+    recovery = recovered[0]
+    assert recovery.job_id == claim.job_id
+    assert recovery.session_id == claim.session_id
+    assert recovery.job_attempt_count == 1
+    assert recovery.session_attempt_token == 1
+    assert recovery.status == "pending"
+    assert recovery.next_retry_at == recovery.recovered_at + timedelta(
+        seconds=45
+    )
+    assert recovery.failure == WORKER_LEASE_EXPIRED_FAILURE
+
+    with orchestration_target.session_factory() as database:
+        job = database.get(BackfillJob, orchestration_target.job_id)
+        job_session = database.get(
+            BackfillJobSession,
+            (orchestration_target.job_id, session_id),
+        )
+        ingestion = database.get(SessionIngestion, session_id)
+
+        assert job is not None
+        assert job.heartbeat_at == recovery.recovered_at
+        assert job_session is not None
+        assert job_session.status == "pending"
+        assert job_session.attempt_count == 1
+        assert job_session.heartbeat_at is None
+        assert job_session.next_retry_at == recovery.next_retry_at
+        assert job_session.last_error_code == "worker_lease_expired"
+        assert job_session.last_error_message == (
+            "The worker lease expired before session ingestion completed."
+        )
+
+        assert ingestion is not None
+        assert ingestion.status == "pending"
+        assert ingestion.attempt_count == 1
+        assert ingestion.completed_at == completed_at
+        assert ingestion.source_updated_at == source_updated_at
+        assert ingestion.heartbeat_at is None
+        assert ingestion.next_retry_at == recovery.next_retry_at
+        assert ingestion.last_error_code == "worker_lease_expired"
+
+    with orchestration_target.session_factory() as database:
+        with pytest.raises(
+            BackfillClaimOwnershipError,
+            match="no longer owns",
+        ):
+            heartbeat_archive_job_session(database, claim=claim)
+
+    with orchestration_target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE backfill_job_sessions
+                SET next_retry_at = clock_timestamp() - interval '1 second'
+                WHERE job_id = :job_id
+                  AND session_id = :session_id
+                """
+            ),
+            {
+                "job_id": claim.job_id,
+                "session_id": claim.session_id,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                UPDATE session_ingestions
+                SET next_retry_at = clock_timestamp() - interval '1 second'
+                WHERE session_id = :session_id
+                """
+            ),
+            {"session_id": claim.session_id},
+        )
+
+    with orchestration_target.session_factory() as database:
+        next_claim = claim_next_archive_job_session(database)
+
+    assert next_claim is not None
+    assert next_claim.job_attempt_count == 2
+    assert next_claim.session_attempt_token == 2
+
+
+def test_stale_fourth_attempt_becomes_terminal_without_jitter(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    session_id = orchestration_target.session_ids[0]
+    queue_session(
+        orchestration_target,
+        session_id,
+        attempt_count=3,
+    )
+
+    with orchestration_target.session_factory() as database:
+        claim = claim_next_archive_job_session(database)
+    assert claim is not None
+    assert claim.job_attempt_count == 4
+    expire_lease(orchestration_target, session_id)
+
+    def unexpected_jitter() -> float:
+        raise AssertionError("jitter must not be requested after attempt four")
+
+    with orchestration_target.session_factory() as database:
+        recovered = recover_stale_archive_job_sessions(
+            database,
+            jitter_fraction_factory=unexpected_jitter,
+        )
+
+    assert len(recovered) == 1
+    assert recovered[0].status == "failed"
+    assert recovered[0].next_retry_at is None
+
+    with orchestration_target.session_factory() as database:
+        job_session = database.get(
+            BackfillJobSession,
+            (claim.job_id, session_id),
+        )
+        ingestion = database.get(SessionIngestion, session_id)
+        assert job_session is not None
+        assert job_session.status == "failed"
+        assert job_session.next_retry_at is None
+        assert ingestion is not None
+        assert ingestion.status == "failed"
+        assert ingestion.next_retry_at is None
+
+
+def test_stale_recovery_is_bounded_and_ignores_fresh_leases(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    first_session_id, second_session_id, fresh_session_id = (
+        orchestration_target.session_ids
+    )
+    for session_id in orchestration_target.session_ids:
+        queue_session(orchestration_target, session_id)
+
+    claims = []
+    for _ in orchestration_target.session_ids:
+        with orchestration_target.session_factory() as database:
+            claim = claim_next_archive_job_session(database)
+        assert claim is not None
+        claims.append(claim)
+
+    expire_lease(orchestration_target, first_session_id, minutes=20)
+    expire_lease(orchestration_target, second_session_id, minutes=10)
+
+    with orchestration_target.session_factory() as database:
+        first_batch = recover_stale_archive_job_sessions(
+            database,
+            batch_size=1,
+            jitter_fraction_factory=lambda: 0.5,
+        )
+    with orchestration_target.session_factory() as database:
+        second_batch = recover_stale_archive_job_sessions(
+            database,
+            batch_size=10,
+            jitter_fraction_factory=lambda: 0.5,
+        )
+    with orchestration_target.session_factory() as database:
+        empty_batch = recover_stale_archive_job_sessions(
+            database,
+            batch_size=10,
+            jitter_fraction_factory=lambda: 0.5,
+        )
+
+    assert [item.session_id for item in first_batch] == [first_session_id]
+    assert [item.session_id for item in second_batch] == [second_session_id]
+    assert empty_batch == ()
+
+    with orchestration_target.session_factory() as database:
+        fresh_job_session = database.get(
+            BackfillJobSession,
+            (orchestration_target.job_id, fresh_session_id),
+        )
+        fresh_ingestion = database.get(SessionIngestion, fresh_session_id)
+        assert fresh_job_session is not None
+        assert fresh_job_session.status == "running"
+        assert fresh_ingestion is not None
+        assert fresh_ingestion.status == "running"
+
+
+def test_stale_recovery_skips_locked_rows(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    first_session_id, second_session_id = orchestration_target.session_ids[:2]
+    for session_id in (first_session_id, second_session_id):
+        queue_session(orchestration_target, session_id)
+        with orchestration_target.session_factory() as database:
+            claim = claim_next_archive_job_session(database)
+        assert claim is not None
+        expire_lease(orchestration_target, session_id)
+
+    with orchestration_target.session_factory() as locker:
+        with locker.begin():
+            locked = locker.scalar(
+                select(BackfillJobSession)
+                .where(
+                    BackfillJobSession.job_id
+                    == orchestration_target.job_id,
+                    BackfillJobSession.session_id == first_session_id,
+                )
+                .with_for_update()
+            )
+            assert locked is not None
+
+            with orchestration_target.session_factory() as recovery_database:
+                recovered = recover_stale_archive_job_sessions(
+                    recovery_database,
+                    batch_size=2,
+                    jitter_fraction_factory=lambda: 0.5,
+                )
+
+    assert [item.session_id for item in recovered] == [second_session_id]
+    with orchestration_target.session_factory() as database:
+        first = database.get(
+            BackfillJobSession,
+            (orchestration_target.job_id, first_session_id),
+        )
+        assert first is not None
+        assert first.status == "running"
+
+
+def test_stale_recovery_never_modifies_completed_persistent_session(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    session_id = orchestration_target.session_ids[0]
+    queue_session(orchestration_target, session_id)
+    with orchestration_target.session_factory() as database:
+        claim = claim_next_archive_job_session(database)
+    assert claim is not None
+    expire_lease(orchestration_target, session_id)
+    completed_at = datetime(2026, 7, 28, 22, 0, tzinfo=UTC)
+
+    with orchestration_target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE session_ingestions
+                SET status = 'completed',
+                    completed_at = :completed_at
+                WHERE session_id = :session_id
+                """
+            ),
+            {
+                "session_id": session_id,
+                "completed_at": completed_at,
+            },
+        )
+
+    with orchestration_target.session_factory() as database:
+        recovered = recover_stale_archive_job_sessions(
+            database,
+            jitter_fraction_factory=lambda: 0.5,
+        )
+
+    assert recovered == ()
+    with orchestration_target.session_factory() as database:
+        job_session = database.get(
+            BackfillJobSession,
+            (claim.job_id, session_id),
+        )
+        ingestion = database.get(SessionIngestion, session_id)
+        assert job_session is not None
+        assert job_session.status == "running"
+        assert ingestion is not None
+        assert ingestion.status == "completed"
+        assert ingestion.completed_at == completed_at
+
+
+def test_invalid_recovery_jitter_rolls_back_the_batch(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    session_id = orchestration_target.session_ids[0]
+    queue_session(orchestration_target, session_id)
+    with orchestration_target.session_factory() as database:
+        claim = claim_next_archive_job_session(database)
+    assert claim is not None
+    expire_lease(orchestration_target, session_id)
+
+    with orchestration_target.session_factory() as database:
+        with pytest.raises(
+            BackfillRuntimePolicyError,
+            match="jitter_fraction",
+        ):
+            recover_stale_archive_job_sessions(
+                database,
+                jitter_fraction_factory=lambda: 2,
+            )
+
+    with orchestration_target.session_factory() as database:
+        job_session = database.get(
+            BackfillJobSession,
+            (claim.job_id, session_id),
+        )
+        ingestion = database.get(SessionIngestion, session_id)
+        assert job_session is not None
+        assert job_session.status == "running"
+        assert job_session.last_error_code is None
+        assert ingestion is not None
+        assert ingestion.status == "running"
+        assert ingestion.last_error_code is None
+
+
+@pytest.mark.parametrize("batch_size", [0, -1, True])
+def test_recovery_rejects_invalid_batch_size(
+    orchestration_target: OrchestrationTarget,
+    batch_size: int,
+) -> None:
+    with orchestration_target.session_factory() as database:
+        with pytest.raises(
+            BackfillOrchestrationError,
+            match="batch_size",
+        ):
+            recover_stale_archive_job_sessions(
+                database,
+                batch_size=batch_size,
+            )
 
 
 def test_terminal_failure_synchronizes_failed_state(

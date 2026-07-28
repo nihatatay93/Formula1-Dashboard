@@ -402,12 +402,24 @@ Implemented behavior:
 
 Accepted but not implemented:
 
-- Running rows with an expired heartbeat become eligible for recovery.
-- Recovery must not reset a completed session.
 - The initial worker processes one FastF1 session at a time.
 - The worker must schedule the implemented heartbeat transaction every 30
   seconds.
-- Lease recovery follows `docs/BACKFILL_RUNTIME_POLICY.md`.
+- The worker must schedule the implemented recovery transaction every 30
+  seconds.
+
+Implemented recovery behavior:
+
+- A bounded oldest-first query locks stale running job-sessions with
+  `FOR UPDATE SKIP LOCKED`.
+- Recovery requires the archive-owned persistent session to remain running with
+  an expired heartbeat.
+- Retryable lost leases move both session states to pending with one shared
+  backoff timestamp; the fourth attempt moves both to failed.
+- Fixed `worker_lease_expired` diagnostics replace raw worker failure details.
+- Previous archive rows and successful completion/source timestamps are
+  preserved.
+- A completed persistent session is never modified by lease recovery.
 
 ## Data Source and Finalization
 
