@@ -13,6 +13,7 @@ from app.db.engine import sqlalchemy_database_url
 from app.db.models import (
     BackfillJob,
     BackfillJobSession,
+    DeferredSeasonEvent,
     Event,
     RaceSession,
     Season,
@@ -395,6 +396,50 @@ def test_future_sessions_refresh_coverage_without_creating_job(
     assert plan.job_id is None
     assert plan.job_created is False
     assert plan.deferred_future_events == (deferred_event,)
+
+    no_refresh_loader = StubScheduleLoader([])
+    repeated = ensure_season_backfill(
+        season_year=season_target.season_year,
+        session_factory=season_target.session_factory,
+        schedule_loader=no_refresh_loader,
+    )
+
+    assert no_refresh_loader.calls == []
+    assert repeated.deferred_future_events == (deferred_event,)
+    with season_target.session_factory() as database:
+        stored = database.get(
+            DeferredSeasonEvent,
+            (season_target.season_year, deferred_event.round_number),
+        )
+        assert stored is not None
+        assert stored.discovered_at == repeated.coverage_checked_at
+
+    with season_target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE seasons
+                SET coverage_valid_until = clock_timestamp() - interval '1 second'
+                WHERE year = :year
+                """
+            ),
+            {"year": season_target.season_year},
+        )
+    replacement = ensure_season_backfill(
+        season_year=season_target.season_year,
+        session_factory=season_target.session_factory,
+        schedule_loader=StubScheduleLoader([available_schedule]),
+    )
+
+    assert replacement.coverage_refreshed is True
+    assert replacement.deferred_future_events == ()
+    with season_target.session_factory() as database:
+        assert database.scalar(
+            select(func.count(DeferredSeasonEvent.round_number)).where(
+                DeferredSeasonEvent.season_year
+                == season_target.season_year
+            )
+        ) == 0
 
 
 def test_unowned_pending_ingestion_does_not_create_empty_job(

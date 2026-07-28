@@ -16,12 +16,16 @@ The system is intended to:
 
 ## Current Architecture
 
-Milestone 4 adds Alembic Revision 6 and bounded historical telemetry to the
-implemented architecture. One durable ingestion state is stored per requested
-lap, normalized samples are bound to the current completed sporting snapshot,
-and the existing single-concurrency worker prioritizes archive sessions before
-telemetry. FastF1 telemetry loads use the persistent serialized cache plus the
-shared archive/schedule/telemetry request ledger. Idempotent command and
+Milestones 4 and 5 add bounded historical telemetry and automatic
+current-season planning to the implemented architecture. One durable ingestion
+state is stored per requested lap, normalized samples are bound to the current
+completed sporting snapshot, and the existing single-concurrency worker
+prioritizes archive sessions before telemetry. The same worker plans the
+current UTC season at startup and every 15 minutes by default, reusing the
+existing coverage TTL, request budget, advisory lock, freshness rules, and
+active-job uniqueness. Future events without exact FastF1 session boundaries
+are persisted against the successful coverage snapshot and included in the
+read-only season overview. Idempotent telemetry command and
 sample-index-keyset read endpoints expose state and at most 1,000 samples per
 page; telemetry remains absent from season/session/result/lap-summary payloads.
 Live timing remains unimplemented.
@@ -36,9 +40,9 @@ Implemented services in `compose.yaml`:
 - `migrate`: One-shot Alembic service that upgrades the database before the API and worker start.
 - `api`: FastAPI application with liveness and database-readiness endpoints.
 - `worker`: Single-concurrency archive and bounded-telemetry process built from
-  the backend image. It prioritizes archive job-sessions, then processes
-  explicitly requested laps, heartbeats active claims, and performs periodic
-  recovery/aggregation maintenance.
+  the backend image. It automatically plans the current UTC season, prioritizes
+  archive job-sessions, then processes explicitly requested laps, heartbeats
+  active claims, and performs periodic recovery/aggregation maintenance.
 - `frontend`: React, TypeScript, and Vite application for season selection, coverage and event/session state visualization, backfill commands, and active-job polling.
 
 Implemented supporting infrastructure:
@@ -61,7 +65,10 @@ Implemented supporting infrastructure:
 - Successful calendar refreshes atomically mark latest-snapshot membership without deleting rows absent from a later schedule.
 - Season planning uses a PostgreSQL advisory lock to refresh stale coverage, reuse one active job, and append only missing eligible job-session rows.
 - Parent jobs can be transactionally aggregated from locked session outcomes into monotonic pending, running, completed, or failed state with progress counts.
-- The worker claims and processes one FastF1 session at a time, heartbeats in a dedicated thread, reconciles abandoned leases/active parents every 30 seconds, and polls every two seconds while idle.
+- The worker plans the current UTC season at startup and every 15 minutes by
+  default, claims and processes one FastF1 session at a time, heartbeats in a
+  dedicated thread, reconciles abandoned leases/active parents every 30
+  seconds, and polls every two seconds while idle.
 - Host-side Python editing uses a native macOS Python 3.13 environment synchronized from `backend/uv.lock`; Docker-created virtual environments are not reused by the host editor.
 - The backend uses Python 3.13, `uv`, FastAPI, FastF1 3.8.3, pandas, SQLAlchemy 2, Alembic, psycopg, Uvicorn, pytest, and Ruff.
 - The frontend uses Node.js 24, npm, React, TypeScript, and Vite.
@@ -162,6 +169,7 @@ Formula1-Dashboard/
 │   ├── pyproject.toml
 │   └── uv.lock
 ├── docs/
+│   ├── AUTOMATIC_CURRENT_SEASON_PLANNING.md
 │   ├── BACKFILL_RUNTIME_POLICY.md
 │   ├── DATABASE_DESIGN.md
 │   ├── FASTF1_INGESTION_CONTRACT.md
@@ -180,7 +188,7 @@ Formula1-Dashboard/
 
 - `backend/app/`: FastAPI and worker process source.
 - `backend/app/api/`: Versioned historical API, strict response/error models, supported-year validation, season/job/request-budget/session read models and routes, and the idempotent backfill command boundary.
-- `backend/app/db/`: SQLAlchemy metadata, connection configuration, session factory, and Revision 1–6 models.
+- `backend/app/db/`: SQLAlchemy metadata, connection configuration, session factory, and Revision 1–7 models.
 - `backend/app/ingestion/`: Managed attempt state, schedule discovery and season planning, transactional backfill claiming/failure/aggregation transitions, single-concurrency worker execution, database-bound one-session orchestration, cache-backed loading, request-level accounting, pure upstream-to-domain normalization, atomic archive persistence, and runtime/freshness policy primitives.
 - `backend/alembic/`: Alembic environment and reviewed migration revisions.
 - `backend/tests/`: Backend tests.
@@ -199,6 +207,9 @@ Formula1-Dashboard/
 - `docs/HISTORICAL_TELEMETRY_DESIGN.md`: Implemented Revision 6 schema,
   idempotent command, archive-priority worker, snapshot fencing, and bounded
   read contract.
+- `docs/AUTOMATIC_CURRENT_SEASON_PLANNING.md`: Implemented Revision 7
+  deferred-event persistence, automatic planning cadence, safety behavior,
+  dashboard visibility, and verification.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
 - `AGENTS.md`: Mandatory repository workflow and context rules.
 
@@ -804,6 +815,19 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: implemented
 
+### Automatic current-season planning
+
+- Decision: Run the existing season planner synchronously in the archive worker
+  at startup and every 900 seconds by default, target the current UTC year,
+  persist future events without exact timing against the successful coverage
+  snapshot, and expose those deferred events through the season overview.
+- Rationale: Newly published timing boundaries and archive correction
+  checkpoints should progress without requiring a dashboard user, while
+  retaining the existing request budget, coverage TTL, advisory lock,
+  active-job uniqueness, and single-concurrency guarantees.
+- Date: 2026-07-28
+- Status: implemented
+
 ## Database Model
 
 Alembic revision `20260727_0001` implements the backfill control plane:
@@ -881,6 +905,21 @@ Alembic revision `20260728_0006` implements bounded historical telemetry:
 Revision 6 is documented in `docs/HISTORICAL_TELEMETRY_DESIGN.md`.
 TimescaleDB remains deferred under `docs/TELEMETRY_STORAGE_DECISION.md`.
 
+Alembic revision `20260728_0007` implements deferred current-season event
+membership:
+
+- `deferred_season_events`: One row per season and round that is present in the
+  public schedule but lacks exact FastF1 session boundaries.
+- Composite primary key `(season_year, round_number)`, cascading season foreign
+  key, positive-round and non-empty-name checks, and
+  `(season_year, discovered_at, round_number)` snapshot lookup index.
+- `discovered_at` matches `seasons.coverage_checked_at`; a successful schedule
+  refresh atomically replaces current deferred membership without presenting
+  preserved stale rows in the read model.
+
+Revision 7 is documented in
+`docs/AUTOMATIC_CURRENT_SEASON_PLANNING.md`.
+
 ## API Contract
 
 Implemented endpoints:
@@ -906,6 +945,9 @@ Implemented endpoints:
 - Returns `200 OK` with the accepted season overview contract for supported years, including `status: "missing"` and an empty event list when no season coverage exists.
 - Reads PostgreSQL only; it never contacts FastF1, starts a job, or writes data.
 - Uses one repeatable-read, read-only database snapshot and only the latest successful schedule-discovery membership.
+- Includes ordered `deferred_future_events` from the same successful coverage
+  snapshot, allowing future-event notices to survive page reloads and
+  unexpired-coverage reuse.
 - Returns `Cache-Control: no-store`.
 - Returns stable `422 season_year_out_of_range` for years before 2018 or after the current UTC year.
 - Retains FastAPI's standard `422` validation response for a malformed integer path value.
@@ -1018,8 +1060,10 @@ The historical session-detail, entry/result, and paginated lap-summary contract
 is accepted in `docs/HISTORICAL_SESSION_API_DESIGN.md`. Its strict Pydantic
 response/query models, repeatable-read PostgreSQL services, thin HTTP routes,
 stable failure mappings, and OpenAPI paths are implemented and designed to
-support future manual post-session lap selection and pace comparison. No
-analysis calculation or analysis UI from that contract has been implemented.
+support manual post-session lap selection and pace comparison. The ephemeral
+two-participant selected-lap calculation and dashboard workspace are also
+implemented; saved analyses and automatic run classification remain future
+work.
 
 Accepted future behavior:
 
@@ -1063,9 +1107,13 @@ An explicit FastF1 rate-limit failure remains distinct and closes the shared gat
 for one hour. Schedule discovery retains raw session boundaries for matched
 events, uses the curated schedule for complete championship membership, and
 hydrates missing historical or already-started events only through exact
-per-session timing metadata. Unpublished current-season future events are
-deferred until a later six-hour coverage refresh and do not block planning for
-available sessions.
+per-session timing metadata. Current-season events without exact session
+boundaries are persisted against the latest successful coverage snapshot,
+presented by the read-only season overview, and do not block planning for
+available sessions. The worker runs the same planner at startup and on a
+validated bounded interval for the current UTC year. It executes one planner at
+a time, retains manual Check & Sync, and treats secret-safe planner failures as
+non-fatal until the next scheduled run.
 Historical laps with an unknown `IsPersonalBest` value are stored as null.
 When no archive job-session is claimable, the same worker may claim one
 snapshot-compatible telemetry request. Telemetry claims have independent
@@ -1329,28 +1377,36 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Verified Revision 6 upgrade/downgrade/re-upgrade and drift, Ruff, all 399
   backend tests against isolated PostgreSQL 17, nine frontend tests, six
   desktop/mobile browser tests, the production build, and Compose parsing.
+- Implemented Revision 7 persisted deferred-event membership with atomic
+  schedule-snapshot replacement and latest-snapshot season-overview reads.
+- Added validated automatic current-season planning at worker startup and every
+  900 seconds by default, reusing the schedule cache, shared request budget,
+  coverage TTL, freshness policy, season advisory lock, and active-job
+  uniqueness.
+- Added secret-safe non-fatal planner failure handling, synchronous no-overlap
+  execution, shutdown fencing before maintenance/claims, and a persisted
+  dashboard notice while retaining manual Check & Sync.
+- Verified Revision 7 downgrade/re-upgrade and drift, Ruff, all 411 backend
+  tests against isolated PostgreSQL 17, nine frontend tests, six desktop/mobile
+  browser tests, the production build, and Compose parsing.
 
 No live timing feature has been completed. Saved analyses and automatic
 race-run classification remain intentionally unimplemented.
 
 ## Work in Progress
 
-- Automatic current-season planning and persisted deferred-event membership
-  are the active milestone.
+- No development milestone is currently in progress.
 
 ## Next Steps
 
-1. Add automatic current-season planning so newly published event/session
-   boundaries and correction checkpoints do not depend indefinitely on a manual
-   dashboard command. Revisit persistent deferred-event metadata at this point.
-2. Design the SignalR live-timing protocol boundary, reconnect/resume,
+1. Design the SignalR live-timing protocol boundary, reconnect/resume,
    deduplication, provisional schema, and FastF1 finalization/reconciliation
    rules before implementing live ingestion.
-3. Implement the live collector, provisional persistence, backend WebSocket
+2. Implement the live collector, provisional persistence, backend WebSocket
    fan-out, session finalization, and dashboard live views.
-4. Stabilize the shared API for the SwiftUI client, then implement the iOS
+3. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
-5. Before production, add authentication/authorization, secret management,
+4. Before production, add authentication/authorization, secret management,
    secure PostgreSQL configuration, observability, backups, CI, deployment,
    and any demonstrated background-job infrastructure. Reconsider manual job
    cancellation and Redis only when measurements justify them.
@@ -1398,17 +1454,14 @@ uv sync --frozen
 ```
 
 Database integration tests additionally require `TEST_DATABASE_URL` and a
-migrated PostgreSQL database. The complete suite passed with 399 tests against
-a fresh isolated PostgreSQL 17 database after the bounded telemetry milestone.
-Revision 6 downgrade/re-upgrade and `alembic check` also passed.
+migrated PostgreSQL database. The complete suite passed with 411 tests against
+an isolated PostgreSQL 17 database after the automatic current-season planning
+milestone. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
 
 ## Known Issues and Technical Debt
 
 - Loader tests use controlled FastF1 doubles and do not perform an upstream network smoke test.
 - Schedule discovery combines FastF1 3.8.3's curated public schedule with its private, cache-decorated F1 timing APIs because neither source alone supplies both complete membership and exact end timestamps. The exact FastF1 pin and focused contract tests contain that compatibility risk.
-- Deferred current-season future-event metadata is returned only by a command
-  that actually performs schedule refresh; it is not persisted, so a fresh
-  repeat command does not reconstruct the same notice without another refresh.
 - Request accounting instruments FastF1 3.8.3's private
   `_SessionWithRateLimiting.send` path because that is the pinned cache-miss
   boundary. Focused compatibility tests contain this risk, but a FastF1 upgrade
@@ -1431,7 +1484,10 @@ Revision 6 downgrade/re-upgrade and `alembic check` also passed.
   storage, cross-session query, live append, retention, or operational trigger
   is measured.
 - Recovery deliberately skips inconsistent rows whose persistent session is missing, owned by another source, completed, non-running, or has a fresh heartbeat. Such rows can remain running at job-session level until a future reconciliation policy is implemented.
-- The worker does not invoke season planning; the implemented POST backfill command must run before newly eligible rows can be processed.
+- The automatic planner runs inside the same single-concurrency worker loop as
+  archive and telemetry processing. A slow schedule refresh delays later work
+  in that process, although request budgeting, cache reuse, and the 15-minute
+  default cadence bound normal operation.
 - Graceful shutdown waits for active in-process FastF1 work; local Compose allows two minutes before forced termination, after which lease recovery applies.
 - Manual job cancellation is intentionally deferred from the historical MVP.
 - Historical session response/query contracts, PostgreSQL read services, HTTP
@@ -1491,6 +1547,9 @@ Revision 6 downgrade/re-upgrade and `alembic check` also passed.
   TimescaleDB review triggers.
 - `docs/HISTORICAL_TELEMETRY_DESIGN.md`: Implemented bounded telemetry schema,
   command/read API, worker execution, snapshot fencing, and verification.
+- `docs/AUTOMATIC_CURRENT_SEASON_PLANNING.md`: Implemented automatic planning
+  cadence, deferred-event snapshot semantics, worker safety, dashboard
+  behavior, and verification.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
 - `backend/alembic/versions/20260727_0001_backfill_control_plane.py`: Reviewed Revision 1 schema and downgrade.
 - `backend/alembic/versions/20260728_0002_sporting_data.py`: Reviewed Revision 2 sporting-data schema and downgrade.
@@ -1500,9 +1559,13 @@ Revision 6 downgrade/re-upgrade and `alembic check` also passed.
   FastF1 request-event ledger, budget gate reason, and downgrade.
 - `backend/alembic/versions/20260728_0006_lap_telemetry.py`: Revision 6
   lap-telemetry state/sample schema, request-operation extension, and downgrade.
+- `backend/alembic/versions/20260728_0007_deferred_events.py`: Revision 7
+  deferred current-season event membership, constraints, index, and downgrade.
 - `backend/app/db/base.py`: Shared SQLAlchemy metadata and timestamp mixin.
 - `backend/app/db/models/`: Revision 1 control-plane, Revision 2 sporting-data,
-  and Revision 6 telemetry SQLAlchemy models.
+  Revision 6 telemetry, and Revision 7 deferred-event SQLAlchemy models.
+- `backend/app/db/models/deferred_event.py`: Snapshot-bound current-season
+  future-event membership model.
 - `backend/app/db/models/request_gate.py`: Persistent cross-worker FastF1
   pacing, request-budget, and rate-limit cooldown state.
 - `backend/app/db/models/request_event.py`: Observed FastF1 archive/schedule/telemetry
@@ -1521,11 +1584,15 @@ Revision 6 downgrade/re-upgrade and `alembic check` also passed.
   request reservation, exact capacity recovery, cooldown, and usage snapshots.
 - `backend/app/api/upstream_usage.py`: Read-only local FastF1 request-usage
   endpoint and stable failures.
-- `backend/app/ingestion/season_backfill.py`: Atomic latest-snapshot persistence and advisory-locked active-job creation/reuse.
+- `backend/app/ingestion/season_backfill.py`: Atomic latest calendar and
+  deferred-event snapshot persistence plus advisory-locked active-job
+  creation/reuse.
 - `backend/app/ingestion/fastf1_normalization.py`: Pure FastF1 results-and-laps normalization, literal missing-identity sentinel handling, and validation.
 - `backend/app/ingestion/freshness_policy.py`: Pure UTC season-coverage, archive-grace, and correction-checkpoint eligibility decisions.
 - `backend/app/ingestion/archive_persistence.py`: Atomic normalized archive upserts, stale-row replacement, source/identity guards, optional claim fencing, and synchronized completion.
-- `backend/app/ingestion/runtime_policy.py`: Validated runtime settings, retry classification, SQLSTATE handling, and deterministic equal-jitter retry schedules.
+- `backend/app/ingestion/runtime_policy.py`: Validated runtime settings,
+  automatic-planning configuration, retry classification, SQLSTATE handling,
+  and deterministic equal-jitter retry schedules.
 - `backend/app/ingestion/telemetry_measurement.py`: Pure telemetry frequency,
   channel-coverage, memory, and PostgreSQL planning estimates.
 - `backend/app/ingestion/telemetry_normalization.py`: Pure duration, range,
@@ -1573,8 +1640,12 @@ Revision 6 downgrade/re-upgrade and `alembic check` also passed.
 - `backend/tests/test_freshness_policy.py`: Coverage TTL, UTC year, exact grace/checkpoint, late-scan, stability, and timestamp validation coverage.
 - `backend/tests/test_runtime_policy.py`: Runtime setting, environment parsing, retry classification, and backoff boundary coverage.
 - `backend/tests/test_worker.py`: Worker startup maintenance, shutdown behavior, heartbeat interval validation, and secret-safe logging coverage.
+- `backend/tests/test_automatic_planning.py`: PostgreSQL current-UTC-season
+  missing/correction-due planning and repeated-run idempotency coverage.
 - `backend/app/main.py`: FastAPI scaffold and health endpoints.
-- `backend/app/worker.py`: Archive worker process setup, database/configuration readiness, signal handling, and readiness-file lifecycle.
+- `backend/app/worker.py`: Archive worker process setup, automatic current-UTC
+  season planner composition, database/configuration readiness, signal
+  handling, and readiness-file lifecycle.
 - `backend/tests/test_health.py`: Backend health endpoint unit tests.
 - `backend/tests/test_historical_session_contracts.py`: Session-detail,
   result, lap-query, lap-page, serialization, ordering, availability, and
@@ -1608,6 +1679,9 @@ Revision 6 downgrade/re-upgrade and `alembic check` also passed.
 
 ## Change Log
 
+- 2026-07-28 — Implemented and verified automatic current-UTC-season planning,
+  Revision 7 deferred-event snapshot persistence, read-only/dashboard
+  visibility, idempotent worker scheduling, and shutdown/failure safety.
 - 2026-07-28 — Implemented and verified bounded, snapshot-bound historical lap
   telemetry across Revision 6, FastF1 loading/normalization, durable worker
   execution, request accounting, and idempotent paginated REST contracts.

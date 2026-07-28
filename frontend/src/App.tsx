@@ -815,6 +815,21 @@ function App() {
           </section>
         ) : season ? (
           <>
+            {season.deferred_future_events.length > 0 ? (
+              <div className="inline-alert inline-alert--warning" role="status">
+                <strong>Future calendar awaiting exact timing</strong>
+                <span>
+                  {season.deferred_future_events.length} future event
+                  {season.deferred_future_events.length === 1 ? "" : "s"},
+                  starting with{" "}
+                  {season.deferred_future_events[0].event_name} on{" "}
+                  {formatDateTime(
+                    season.deferred_future_events[0].scheduled_start_at,
+                  )}, will appear when FastF1 publishes exact session
+                  boundaries.
+                </span>
+              </div>
+            ) : null}
             <section className="overview-panel" aria-labelledby="overview-title">
               <div className="section-heading">
                 <div>

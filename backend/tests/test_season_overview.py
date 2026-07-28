@@ -81,6 +81,35 @@ def season_overview_target() -> Iterator[SeasonOverviewTarget]:
                 "coverage_valid_until": database_now + timedelta(days=1),
             },
         )
+        connection.execute(
+            text(
+                """
+                INSERT INTO deferred_season_events (
+                    season_year,
+                    round_number,
+                    event_name,
+                    scheduled_start_at,
+                    discovered_at
+                )
+                VALUES
+                    (
+                        :year, 3, 'Future Read Model Grand Prix',
+                        :current_start, :current_discovered
+                    ),
+                    (
+                        :year, 4, 'Stale Deferred Grand Prix',
+                        :stale_start, :stale_discovered
+                    )
+                """
+            ),
+            {
+                "year": season_year,
+                "current_start": database_now + timedelta(days=10),
+                "current_discovered": latest_discovered_at,
+                "stale_start": database_now + timedelta(days=20),
+                "stale_discovered": older_discovered_at,
+            },
+        )
         current_event_id = connection.scalar(
             text(
                 """
@@ -384,6 +413,7 @@ def test_missing_season_returns_domain_state_without_creating_rows(
     }
     assert response.active_job is None
     assert response.events == ()
+    assert response.deferred_future_events == ()
 
     with season_overview_target.engine.connect() as connection:
         assert (
@@ -423,6 +453,12 @@ def test_overview_uses_latest_membership_and_preserves_usable_failed_snapshot(
     assert response.active_job is not None
     assert response.active_job.id == season_overview_target.active_job_id
     assert response.active_job.status.value == "running"
+    assert len(response.deferred_future_events) == 1
+    assert response.deferred_future_events[0].round_number == 3
+    assert (
+        response.deferred_future_events[0].event_name
+        == "Future Read Model Grand Prix"
+    )
 
     assert tuple(event.event_name for event in response.events) == (
         "Read Model Grand Prix",

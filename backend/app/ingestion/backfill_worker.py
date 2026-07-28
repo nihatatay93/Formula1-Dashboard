@@ -274,6 +274,7 @@ class ArchiveBackfillWorker:
             [], ProcessedTelemetryLap | None
         ]
         | None = None,
+        automatic_planner: Callable[[], object] | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.loader = loader
@@ -282,11 +283,44 @@ class ArchiveBackfillWorker:
         self._process_next = process_next or self._process_next_default
         self._maintenance = maintenance or self._maintenance_default
         self._process_next_telemetry = process_next_telemetry
+        self._automatic_planner = automatic_planner
 
     def run(self, stop_event: Event) -> None:
         next_maintenance_at = 0.0
+        next_planning_at = (
+            0.0
+            if (
+                self.settings.automatic_current_season_planning_enabled
+                and self._automatic_planner is not None
+            )
+            else float("inf")
+        )
         while not stop_event.is_set():
             now = self._monotonic()
+            if now >= next_planning_at:
+                if stop_event.is_set():
+                    break
+                try:
+                    assert self._automatic_planner is not None
+                    self._automatic_planner()
+                except Exception as error:
+                    _log_operation_error(
+                        "automatic current-season planning",
+                        error,
+                    )
+                else:
+                    logger.info(
+                        "Automatic current-season planning completed."
+                    )
+                next_planning_at = (
+                    self._monotonic()
+                    + self.settings
+                    .automatic_current_season_planning_interval_seconds
+                )
+
+            if stop_event.is_set():
+                break
+
             if now >= next_maintenance_at:
                 try:
                     summary = self._maintenance()
@@ -343,9 +377,14 @@ class ArchiveBackfillWorker:
                 0.0,
                 next_maintenance_at - self._monotonic(),
             )
+            until_planning = max(
+                0.0,
+                next_planning_at - self._monotonic(),
+            )
             wait_seconds = min(
                 float(self.settings.worker_poll_interval_seconds),
                 until_maintenance,
+                until_planning,
             )
             stop_event.wait(wait_seconds)
 

@@ -10,6 +10,7 @@ def test_metadata_contains_all_migrated_tables() -> None:
         "backfill_job_sessions",
         "backfill_jobs",
         "drivers",
+        "deferred_season_events",
         "events",
         "laps",
         "lap_telemetry_ingestions",
@@ -124,3 +125,17 @@ def test_lap_telemetry_metadata_is_bounded_and_cascades_with_lap() -> None:
     } >= {("lap_id", "sample_index")}
     assert next(iter(ingestions.c.lap_id.foreign_keys)).ondelete == "CASCADE"
     assert next(iter(samples.c.lap_id.foreign_keys)).ondelete == "CASCADE"
+
+
+def test_deferred_event_membership_is_snapshot_indexed() -> None:
+    table = Base.metadata.tables["deferred_season_events"]
+
+    assert [column.name for column in table.primary_key.columns] == [
+        "season_year",
+        "round_number",
+    ]
+    assert next(iter(table.c.season_year.foreign_keys)).ondelete == "CASCADE"
+    assert (
+        "ix_deferred_season_events_season_year_discovered_at_round_number"
+        in {index.name for index in table.indexes}
+    )

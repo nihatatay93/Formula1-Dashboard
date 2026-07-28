@@ -1,5 +1,5 @@
 import logging
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event, Thread
 from types import SimpleNamespace
@@ -64,6 +64,212 @@ def test_worker_runs_maintenance_before_its_first_claim() -> None:
     worker.run(stop_event)
 
     assert calls == ["maintenance", "process"]
+
+
+def test_worker_plans_current_season_at_startup_before_maintenance() -> None:
+    stop_event = Event()
+    calls: list[str] = []
+
+    def planner() -> None:
+        calls.append("planner")
+
+    def maintenance() -> WorkerMaintenanceSummary:
+        calls.append("maintenance")
+        return empty_maintenance()
+
+    def process_next() -> None:
+        calls.append("process")
+        stop_event.set()
+        return None
+
+    worker = ArchiveBackfillWorker(
+        session_factory=unused_session_factory,  # type: ignore[arg-type]
+        loader=UnusedLoader(),
+        automatic_planner=planner,
+        process_next=process_next,
+        maintenance=maintenance,
+    )
+
+    worker.run(stop_event)
+
+    assert calls == ["planner", "maintenance", "process"]
+
+
+def test_disabled_automatic_planning_never_invokes_callback() -> None:
+    stop_event = Event()
+    planner_called = False
+
+    def planner() -> None:
+        nonlocal planner_called
+        planner_called = True
+
+    def process_next() -> None:
+        stop_event.set()
+        return None
+
+    worker = ArchiveBackfillWorker(
+        session_factory=unused_session_factory,  # type: ignore[arg-type]
+        loader=UnusedLoader(),
+        settings=BackfillRuntimeSettings(
+            automatic_current_season_planning_enabled=False,
+        ),
+        automatic_planner=planner,
+        process_next=process_next,
+        maintenance=empty_maintenance,
+    )
+
+    worker.run(stop_event)
+
+    assert planner_called is False
+
+
+def test_automatic_planning_failure_is_safe_and_nonfatal(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    stop_event = Event()
+    process_called = False
+
+    def planner() -> None:
+        raise RuntimeError("RAW-PLANNER-SECRET-SENTINEL")
+
+    def process_next() -> None:
+        nonlocal process_called
+        process_called = True
+        stop_event.set()
+        return None
+
+    worker = ArchiveBackfillWorker(
+        session_factory=unused_session_factory,  # type: ignore[arg-type]
+        loader=UnusedLoader(),
+        automatic_planner=planner,
+        process_next=process_next,
+        maintenance=empty_maintenance,
+    )
+
+    with caplog.at_level(
+        logging.ERROR,
+        logger="formula1_dashboard.worker",
+    ):
+        worker.run(stop_event)
+
+    assert process_called is True
+    assert "RuntimeError" in caplog.text
+    assert "RAW-PLANNER-SECRET-SENTINEL" not in caplog.text
+
+
+def test_current_season_planner_uses_utc_year(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel_factory = object()
+    sentinel_loader = object()
+    sentinel_settings = BackfillRuntimeSettings()
+    sentinel_plan = object()
+    calls: list[dict[str, object]] = []
+
+    def ensure(**kwargs):
+        calls.append(kwargs)
+        return sentinel_plan
+
+    monkeypatch.setattr(worker_entrypoint, "ensure_season_backfill", ensure)
+
+    result = worker_entrypoint.plan_current_season(
+        session_factory=sentinel_factory,  # type: ignore[arg-type]
+        schedule_loader=sentinel_loader,  # type: ignore[arg-type]
+        settings=sentinel_settings,
+        now_provider=lambda: datetime(
+            2027,
+            1,
+            1,
+            0,
+            30,
+            tzinfo=UTC,
+        ),
+    )
+
+    assert result is sentinel_plan
+    assert calls == [
+        {
+            "season_year": 2027,
+            "session_factory": sentinel_factory,
+            "schedule_loader": sentinel_loader,
+            "settings": sentinel_settings,
+        }
+    ]
+
+
+def test_automatic_planner_runs_again_at_configured_interval() -> None:
+    clock = [0.0]
+    planner_calls = 0
+
+    class ControlledStopEvent:
+        stopped = False
+
+        def is_set(self) -> bool:
+            return self.stopped
+
+        def set(self) -> None:
+            self.stopped = True
+
+        def wait(self, seconds: float) -> bool:
+            clock[0] += seconds
+            return self.stopped
+
+    stop = ControlledStopEvent()
+
+    def planner() -> None:
+        nonlocal planner_calls
+        planner_calls += 1
+        if planner_calls == 2:
+            stop.set()
+
+    worker = ArchiveBackfillWorker(
+        session_factory=unused_session_factory,  # type: ignore[arg-type]
+        loader=UnusedLoader(),
+        settings=BackfillRuntimeSettings(
+            automatic_current_season_planning_interval_seconds=60,
+        ),
+        monotonic=lambda: clock[0],
+        automatic_planner=planner,
+        process_next=lambda: None,
+        maintenance=empty_maintenance,
+    )
+
+    worker.run(stop)  # type: ignore[arg-type]
+
+    assert planner_calls == 2
+    assert clock[0] == 60
+
+
+def test_shutdown_during_automatic_planning_stops_new_work() -> None:
+    stop_event = Event()
+    maintenance_called = False
+    process_called = False
+
+    def planner() -> None:
+        stop_event.set()
+
+    def maintenance() -> WorkerMaintenanceSummary:
+        nonlocal maintenance_called
+        maintenance_called = True
+        return empty_maintenance()
+
+    def process_next() -> None:
+        nonlocal process_called
+        process_called = True
+        return None
+
+    worker = ArchiveBackfillWorker(
+        session_factory=unused_session_factory,  # type: ignore[arg-type]
+        loader=UnusedLoader(),
+        automatic_planner=planner,
+        process_next=process_next,
+        maintenance=maintenance,
+    )
+
+    worker.run(stop_event)
+
+    assert maintenance_called is False
+    assert process_called is False
 
 
 def test_shutdown_during_maintenance_prevents_a_new_claim() -> None:

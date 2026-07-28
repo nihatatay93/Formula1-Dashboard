@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.contracts import (
     ActiveJobSummary,
     ArchiveEligibility,
+    DeferredFutureEvent,
     LastError,
     SeasonCounts,
     SeasonCoverage,
@@ -23,6 +24,7 @@ from app.api.contracts import (
 from app.api.season_status import SeasonStatusFacts, derive_season_status
 from app.db.models import (
     BackfillJob,
+    DeferredSeasonEvent,
     Event,
     RaceSession,
     Season,
@@ -92,6 +94,29 @@ def read_season_overview(
             coverage_checked_at=(
                 season.coverage_checked_at if season is not None else None
             ),
+        )
+        deferred_future_events = tuple(
+            DeferredFutureEvent(
+                round_number=state.round_number,
+                event_name=state.event_name,
+                scheduled_start_at=state.scheduled_start_at,
+            )
+            for state in database.scalars(
+                select(DeferredSeasonEvent)
+                .where(
+                    DeferredSeasonEvent.season_year == season_year,
+                    DeferredSeasonEvent.discovered_at
+                    == (
+                        season.coverage_checked_at
+                        if season is not None
+                        else None
+                    ),
+                )
+                .order_by(
+                    DeferredSeasonEvent.round_number,
+                    DeferredSeasonEvent.scheduled_start_at,
+                )
+            )
         )
 
         events: list[SeasonEvent] = []
@@ -203,6 +228,7 @@ def read_season_overview(
                 else None
             ),
             events=tuple(events),
+            deferred_future_events=deferred_future_events,
         )
 
 

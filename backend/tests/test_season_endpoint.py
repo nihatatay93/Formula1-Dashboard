@@ -89,6 +89,7 @@ def test_season_endpoint_returns_contract_and_disables_caching(
         },
         "active_job": None,
         "events": [],
+        "deferred_future_events": [],
     }
     assert calls == [(2024, sentinel_factory)]
 

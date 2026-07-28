@@ -476,6 +476,15 @@ p {
   color: var(--success);
 }
 
+.inline-alert--warning {
+  border-color: rgb(242 190 76 / 28%);
+  background: rgb(242 190 76 / 7%);
+}
+
+.inline-alert--warning strong {
+  color: var(--warning);
+}
+
 .dashboard-loading {
   display: grid;
   min-height: 24rem;

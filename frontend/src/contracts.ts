@@ -85,6 +85,12 @@ export interface SeasonEvent {
   sessions: SeasonSession[];
 }
 
+export interface DeferredFutureEvent {
+  round_number: number;
+  event_name: string;
+  scheduled_start_at: string;
+}
+
 export interface SeasonOverview {
   year: number;
   status: SeasonStatus;
@@ -92,6 +98,7 @@ export interface SeasonOverview {
   counts: SeasonCounts;
   active_job: ActiveJobSummary | null;
   events: SeasonEvent[];
+  deferred_future_events: DeferredFutureEvent[];
 }
 
 export interface BackfillCoverage {
@@ -112,11 +119,7 @@ export interface EnsureBackfillResponse {
   job: ActiveJobSummary | null;
   eligible_session_count: number;
   newly_queued_session_count: number;
-  deferred_future_events: {
-    round_number: number;
-    event_name: string;
-    scheduled_start_at: string;
-  }[];
+  deferred_future_events: DeferredFutureEvent[];
 }
 
 export interface JobProgressCounts {

@@ -63,6 +63,10 @@ def test_default_settings_match_the_accepted_policy() -> None:
     assert settings.heartbeat_interval == timedelta(seconds=30)
     assert settings.lease_timeout == timedelta(minutes=5)
     assert settings.recovery_scan_interval == timedelta(seconds=30)
+    assert settings.automatic_current_season_planning_enabled is True
+    assert settings.automatic_current_season_planning_interval == timedelta(
+        minutes=15
+    )
     assert settings.current_season_coverage_ttl == timedelta(hours=6)
     assert settings.historical_season_coverage_ttl == timedelta(days=30)
     assert settings.archive_availability_grace == timedelta(hours=2)
@@ -110,6 +114,8 @@ def test_environment_overrides_are_typed() -> None:
             "BACKFILL_HEARTBEAT_INTERVAL_SECONDS": "15",
             "BACKFILL_LEASE_TIMEOUT_SECONDS": "180",
             "BACKFILL_RECOVERY_SCAN_INTERVAL_SECONDS": "20",
+            "AUTOMATIC_CURRENT_SEASON_PLANNING_ENABLED": "false",
+            "AUTOMATIC_CURRENT_SEASON_PLANNING_INTERVAL_SECONDS": "600",
             "CURRENT_SEASON_COVERAGE_TTL_SECONDS": "3600",
             "HISTORICAL_SEASON_COVERAGE_TTL_SECONDS": "86400",
             "ARCHIVE_AVAILABILITY_GRACE_SECONDS": "1200",
@@ -133,6 +139,8 @@ def test_environment_overrides_are_typed() -> None:
         heartbeat_interval_seconds=15,
         lease_timeout_seconds=180,
         recovery_scan_interval_seconds=20,
+        automatic_current_season_planning_enabled=False,
+        automatic_current_season_planning_interval_seconds=600,
         current_season_coverage_ttl_seconds=3600,
         historical_season_coverage_ttl_seconds=86400,
         archive_availability_grace_seconds=1200,
@@ -164,6 +172,9 @@ def test_environment_overrides_are_typed() -> None:
         {"jitter_min_ratio": float("nan")},
         {"heartbeat_interval_seconds": 30, "lease_timeout_seconds": 30},
         {"lease_timeout_seconds": 300, "recovery_scan_interval_seconds": 301},
+        {"automatic_current_season_planning_enabled": 1},
+        {"automatic_current_season_planning_interval_seconds": 59},
+        {"automatic_current_season_planning_interval_seconds": 21_601},
         {"archive_correction_checkpoints_seconds": ()},
         {"archive_correction_checkpoints_seconds": (7200, 86_400)},
         {"archive_correction_checkpoints_seconds": (604_800, 86_400)},
@@ -181,6 +192,7 @@ def test_rejects_invalid_settings(settings: dict[str, object]) -> None:
         {"FASTF1_ARCHIVE_SESSION_MIN_INTERVAL_SECONDS": "slow"},
         {"BACKFILL_JITTER_MIN_RATIO": "half"},
         {"ARCHIVE_CORRECTION_CHECKPOINTS_SECONDS": "86400,seven-days"},
+        {"AUTOMATIC_CURRENT_SEASON_PLANNING_ENABLED": "sometimes"},
     ],
 )
 def test_rejects_malformed_environment_values(

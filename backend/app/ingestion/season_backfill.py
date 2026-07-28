@@ -5,12 +5,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
     BackfillJob,
     BackfillJobSession,
+    DeferredSeasonEvent,
     Event,
     RaceSession,
     Season,
@@ -126,11 +127,6 @@ def ensure_season_backfill(
                 coverage_refreshed=coverage_refreshed,
                 database_now=database_now,
                 settings=runtime_settings,
-                deferred_future_events=(
-                    loaded_schedule.deferred_future_events
-                    if loaded_schedule is not None
-                    else ()
-                ),
             )
 
     raise SeasonBackfillError(
@@ -191,6 +187,7 @@ def _persist_schedule_snapshot(
             .with_for_update()
         ).all()
     }
+    deferred_rounds: set[int] = set()
 
     for scheduled_event in schedule.events:
         event = existing_events.get(scheduled_event.round_number)
@@ -250,6 +247,36 @@ def _persist_schedule_snapshot(
             race_session.last_discovered_at = discovered_at
             race_session.updated_at = discovered_at
 
+    for deferred in schedule.deferred_future_events:
+        state = database.get(
+            DeferredSeasonEvent,
+            (schedule.season_year, deferred.round_number),
+        )
+        if state is None:
+            state = DeferredSeasonEvent(
+                season_year=schedule.season_year,
+                round_number=deferred.round_number,
+                event_name=deferred.event_name,
+                scheduled_start_at=deferred.scheduled_start_at,
+                discovered_at=discovered_at,
+            )
+            database.add(state)
+        else:
+            state.event_name = deferred.event_name
+            state.scheduled_start_at = deferred.scheduled_start_at
+            state.discovered_at = discovered_at
+            state.updated_at = discovered_at
+        deferred_rounds.add(deferred.round_number)
+
+    stale_deferred = delete(DeferredSeasonEvent).where(
+        DeferredSeasonEvent.season_year == schedule.season_year
+    )
+    if deferred_rounds:
+        stale_deferred = stale_deferred.where(
+            DeferredSeasonEvent.round_number.not_in(deferred_rounds)
+        )
+    database.execute(stale_deferred)
+
     season.coverage_checked_at = discovered_at
     season.coverage_valid_until = (
         coverage.successful_refresh_valid_until
@@ -267,7 +294,6 @@ def _create_or_reuse_job(
     coverage_refreshed: bool,
     database_now: datetime,
     settings: BackfillRuntimeSettings,
-    deferred_future_events: tuple[DeferredFutureEvent, ...],
 ) -> SeasonBackfillPlan:
     current_sessions = database.execute(
         select(RaceSession, SessionIngestion)
@@ -364,6 +390,25 @@ def _create_or_reuse_job(
             newly_queued.append(race_session.id)
 
     database.flush()
+    deferred_future_events = tuple(
+        DeferredFutureEvent(
+            round_number=state.round_number,
+            event_name=state.event_name,
+            scheduled_start_at=state.scheduled_start_at,
+        )
+        for state in database.scalars(
+            select(DeferredSeasonEvent)
+            .where(
+                DeferredSeasonEvent.season_year == season.year,
+                DeferredSeasonEvent.discovered_at
+                == season.coverage_checked_at,
+            )
+            .order_by(
+                DeferredSeasonEvent.round_number,
+                DeferredSeasonEvent.scheduled_start_at,
+            )
+        )
+    )
     return SeasonBackfillPlan(
         season_year=season.year,
         coverage_reason=coverage.reason,

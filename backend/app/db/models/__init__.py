@@ -1,4 +1,5 @@
 from app.db.models.backfill import BackfillJob, BackfillJobSession
+from app.db.models.deferred_event import DeferredSeasonEvent
 from app.db.models.driver import Driver
 from app.db.models.entry import SessionEntry
 from app.db.models.event import Event
@@ -15,6 +16,7 @@ __all__ = [
     "BackfillJob",
     "BackfillJobSession",
     "Driver",
+    "DeferredSeasonEvent",
     "Event",
     "Lap",
     "LapTelemetryIngestion",

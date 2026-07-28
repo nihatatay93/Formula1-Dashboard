@@ -172,6 +172,10 @@ test("changes season, starts synchronization, and displays job progress", async 
 test("keeps the primary dashboard within the viewport", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Australian Grand Prix")).toBeVisible();
+  await expect(
+    page.getByText("Future calendar awaiting exact timing"),
+  ).toBeVisible();
+  await expect(page.getByText(/starting with Dutch Grand Prix/)).toBeVisible();
 
   const dimensions = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,

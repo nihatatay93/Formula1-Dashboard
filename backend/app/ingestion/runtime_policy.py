@@ -62,6 +62,8 @@ class BackfillRuntimeSettings:
     heartbeat_interval_seconds: int = 30
     lease_timeout_seconds: int = 300
     recovery_scan_interval_seconds: int = 30
+    automatic_current_season_planning_enabled: bool = True
+    automatic_current_season_planning_interval_seconds: int = 900
     current_season_coverage_ttl_seconds: int = 21_600
     historical_season_coverage_ttl_seconds: int = 2_592_000
     archive_availability_grace_seconds: int = 7_200
@@ -110,6 +112,17 @@ class BackfillRuntimeSettings:
         _positive_integer(
             self.recovery_scan_interval_seconds,
             "recovery_scan_interval_seconds",
+        )
+        if not isinstance(
+            self.automatic_current_season_planning_enabled,
+            bool,
+        ):
+            raise BackfillRuntimePolicyError(
+                "automatic_current_season_planning_enabled must be boolean"
+            )
+        _positive_integer(
+            self.automatic_current_season_planning_interval_seconds,
+            "automatic_current_season_planning_interval_seconds",
         )
         _positive_integer(
             self.current_season_coverage_ttl_seconds,
@@ -162,6 +175,15 @@ class BackfillRuntimeSettings:
         if self.recovery_scan_interval_seconds > self.lease_timeout_seconds:
             raise BackfillRuntimePolicyError(
                 "recovery_scan_interval_seconds must not exceed lease_timeout_seconds"
+            )
+        if not (
+            60
+            <= self.automatic_current_season_planning_interval_seconds
+            <= 21_600
+        ):
+            raise BackfillRuntimePolicyError(
+                "automatic current-season planning interval must be between "
+                "60 and 21600 seconds"
             )
 
         checkpoints = self.archive_correction_checkpoints_seconds
@@ -264,6 +286,18 @@ class BackfillRuntimeSettings:
                 "BACKFILL_RECOVERY_SCAN_INTERVAL_SECONDS",
                 defaults.recovery_scan_interval_seconds,
             ),
+            automatic_current_season_planning_enabled=_environment_boolean(
+                values,
+                "AUTOMATIC_CURRENT_SEASON_PLANNING_ENABLED",
+                defaults.automatic_current_season_planning_enabled,
+            ),
+            automatic_current_season_planning_interval_seconds=(
+                _environment_integer(
+                    values,
+                    "AUTOMATIC_CURRENT_SEASON_PLANNING_INTERVAL_SECONDS",
+                    defaults.automatic_current_season_planning_interval_seconds,
+                )
+            ),
             current_season_coverage_ttl_seconds=_environment_integer(
                 values,
                 "CURRENT_SEASON_COVERAGE_TTL_SECONDS",
@@ -305,6 +339,12 @@ class BackfillRuntimeSettings:
     @property
     def recovery_scan_interval(self) -> timedelta:
         return timedelta(seconds=self.recovery_scan_interval_seconds)
+
+    @property
+    def automatic_current_season_planning_interval(self) -> timedelta:
+        return timedelta(
+            seconds=self.automatic_current_season_planning_interval_seconds
+        )
 
     @property
     def current_season_coverage_ttl(self) -> timedelta:
@@ -465,6 +505,24 @@ def _environment_float(
         raise BackfillRuntimePolicyError(
             f"{name} must be a number"
         ) from None
+
+
+def _environment_boolean(
+    environ: Mapping[str, str],
+    name: str,
+    default: bool,
+) -> bool:
+    raw_value = environ.get(name)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip().casefold()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise BackfillRuntimePolicyError(
+        f"{name} must be true or false"
+    )
 
 
 def _environment_integer_tuple(

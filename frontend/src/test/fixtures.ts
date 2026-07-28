@@ -84,6 +84,13 @@ export const completedSeason: SeasonOverview = {
   },
   active_job: null,
   events: [completedEvent],
+  deferred_future_events: [
+    {
+      round_number: 12,
+      event_name: "Dutch Grand Prix",
+      scheduled_start_at: "2026-08-21T10:30:00Z",
+    },
+  ],
 };
 
 export const missingSeason: SeasonOverview = {
@@ -106,6 +113,7 @@ export const missingSeason: SeasonOverview = {
   },
   active_job: null,
   events: [],
+  deferred_future_events: [],
 };
 
 export const sessionDetail: SessionDetail = {

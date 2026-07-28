@@ -235,6 +235,7 @@ class SeasonOverviewResponse(ApiModel):
     counts: SeasonCounts
     active_job: ActiveJobSummary | None
     events: tuple[SeasonEvent, ...]
+    deferred_future_events: tuple[DeferredFutureEvent, ...] = ()
 
 
 class SessionSnapshot(ApiModel):
