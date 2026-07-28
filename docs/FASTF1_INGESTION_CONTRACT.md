@@ -153,12 +153,49 @@ replaced session.
 FastF1 loading or normalization failure does not open the replacement transaction.
 
 If persistence fails, the entire replacement transaction rolls back and the
-previous committed sporting snapshot remains available. Recording a sanitized
-worker failure in a separate transaction and choosing retry timing remain later
-orchestration work.
+previous committed sporting snapshot remains available. The managed attempt wrapper
+then records `failed` in a separate transaction and re-raises the original
+exception. A failed refresh preserves the previous sporting rows, successful
+completion timestamp, and upstream update timestamp.
 
 The implementation must never delete the old snapshot before the new snapshot has
 been fully loaded and validated.
+
+## Attempt State Transitions
+
+The implemented managed attempt wrapper uses these session-ingestion transitions:
+
+1. `mark_archive_ingestion_pending` creates or resets archive state to `pending`.
+   Repeating this transition is idempotent and does not increment `attempt_count`.
+2. Starting work locks the target session and ingestion row, rejects non-archive
+   ownership or an existing `running` attempt, changes the state to `running`, and
+   increments `attempt_count` exactly once.
+3. The committed `running` state is visible while FastF1 loading and normalization
+   execute outside the database transaction.
+4. Successful sporting-data replacement changes the state to `completed` and
+   clears failure fields in the same transaction as the new snapshot.
+5. Any ordinary ingestion exception is re-raised after a separate transaction
+   changes the owning attempt to `failed`.
+
+Pending and running retain the most recent sanitized error for diagnostics. A
+successful replacement clears it atomically. New attempts preserve a previous
+successful snapshot and its completion metadata. Heartbeat, retry eligibility, and
+lease recovery are deliberately not assigned by this layer.
+
+Persisted diagnostics never include the original exception text, cause, traceback,
+request representation, authorization data, or upstream response. Exceptions map
+to fixed messages and these stable codes:
+
+- `fastf1_configuration_failed`
+- `fastf1_load_failed`
+- `fastf1_normalization_failed`
+- `archive_identity_mismatch`
+- `archive_target_changed`
+- `archive_source_conflict`
+- `archive_target_missing`
+- `archive_persistence_failed`
+- `database_operation_failed`
+- `archive_ingestion_failed`
 
 ## Idempotency
 
@@ -196,10 +233,13 @@ Implemented:
 - Driver, entry, result, and bounded-batch lap upserts.
 - Stale archive row deletion without deleting global drivers.
 - Atomic `completed` and `finalized` ingestion-state updates.
+- Idempotent pending state and single-increment running attempts.
+- Overlapping-running and non-archive state protection.
+- Separate failed-state transactions with fixed secret-free diagnostics.
+- Preservation of a previous completed snapshot when a refresh attempt fails.
 - Rollback preservation and idempotent stable natural-key rows.
 
 Not implemented:
 
-- Pending/running/failed ingestion state transitions.
-- Failure recording after persistence rollback.
-- Worker execution and retry behavior.
+- Backfill job and job-session state synchronization.
+- Retry timing, heartbeat, lease recovery, and worker execution.

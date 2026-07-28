@@ -3,7 +3,7 @@
 Status: **accepted; Revisions 1 and 2 implemented**
 Date: **2026-07-27**
 
-This document defines the accepted database and migration design for the first historical backfill phase. Revision 1 and its six control-plane tables are implemented. Sporting-data and telemetry revisions remain planned.
+This document defines the accepted database and migration design for the first historical backfill phase. Revisions 1 and 2, the control-plane and sporting-data tables, and the one-session archive ingestion lifecycle are implemented. Telemetry remains planned.
 
 ## Design Goals
 
@@ -32,7 +32,7 @@ Synchronous database access was selected because FastF1 work is blocking and the
 
 ## Backend Layout
 
-The Revision 1 Alembic environment and control-plane model files are implemented. Sporting-data models, repositories, and the split unit/integration test directory layout remain planned.
+The Alembic environment, control-plane models, sporting-data models, and archive ingestion services are implemented. A repository layer and split unit/integration test directory layout remain possible later refactors rather than current requirements.
 
 ```text
 backend/
@@ -55,12 +55,22 @@ backend/
 │   │       ├── ingestion.py
 │   │       ├── backfill.py
 │   │       ├── driver.py
+│   │       ├── entry.py
 │   │       ├── result.py
 │   │       └── lap.py
-│   └── repositories/
+│   └── ingestion/
+│       ├── archive_attempt.py
+│       ├── archive_ingestion.py
+│       ├── archive_persistence.py
+│       ├── fastf1_loader.py
+│       └── fastf1_normalization.py
 └── tests/
-    ├── integration/
-    └── unit/
+    ├── test_archive_attempt.py
+    ├── test_archive_ingestion.py
+    ├── test_archive_persistence.py
+    ├── test_database_integration.py
+    ├── test_fastf1_loader.py
+    └── test_fastf1_normalization.py
 ```
 
 `app/db/models/__init__.py` imports every implemented model so Alembic receives complete `Base.metadata`. Application startup must never call `create_all`; migrations are the only schema-authoring mechanism.
@@ -340,11 +350,32 @@ The exact precedence will be implemented once API response tests are written.
 - Session entries use an upsert keyed by `(session_id, entry_key)`.
 - Laps use an upsert keyed by `(session_entry_id, lap_number)`.
 - A partial unique index prevents two active year jobs.
-- Workers claim eligible `backfill_job_sessions` rows with `FOR UPDATE SKIP LOCKED`.
-- One database transaction changes a claimed job-session and its persistent session-ingestion state to `running`.
+- The implemented one-session wrapper locks the target session and persistent
+  ingestion row before changing it to `running`.
+- Future workers will claim eligible `backfill_job_sessions` rows with
+  `FOR UPDATE SKIP LOCKED` and synchronize job-session state with persistent
+  session-ingestion state.
 - A completed session is committed independently, so later sessions failing does not hide completed data.
 - Re-running a completed session updates/upserts its owned rows instead of blindly inserting duplicates.
 - Destructive replacement of a session dataset, if required, must happen inside one transaction after the replacement data has been validated.
+
+## Implemented Session Attempt Lifecycle
+
+- Marking archive ingestion `pending` is idempotent and does not increment
+  `attempt_count`.
+- Starting an attempt locks the session and ingestion state, rejects non-archive
+  ownership or an existing `running` state, increments `attempt_count`, and commits
+  `running` before upstream work begins.
+- First and latest attempt start timestamps are retained.
+- Successful replacement writes `completed` atomically with the sporting snapshot.
+- Failure writes `failed` in a separate transaction and preserves any earlier
+  completed snapshot and completion metadata.
+- Pending and running retain the most recent sanitized failure; successful
+  completion clears it atomically.
+- Failure codes and messages come from fixed mappings; raw exception content is
+  never persisted.
+- `heartbeat_at` and `next_retry_at` remain unset until retry and lease policies are
+  accepted and implemented.
 
 ## Retry and Crash Recovery
 

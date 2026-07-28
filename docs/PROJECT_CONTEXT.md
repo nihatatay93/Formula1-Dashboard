@@ -16,7 +16,7 @@ The system is intended to:
 
 ## Current Architecture
 
-The local-development scaffold, first two database migrations, locked FastF1 runtime, and a database-bound one-session FastF1 archive vertical slice are implemented. The vertical slice composes serialized cache-backed loading, pure sporting-data normalization, and atomic one-session archive persistence. The database contains the backfill control plane and normalized sporting-data tables. Year-level backfill orchestration, worker job processing, telemetry, and live timing ingestion are not yet implemented.
+The local-development scaffold, first two database migrations, locked FastF1 runtime, and a managed database-bound one-session FastF1 archive vertical slice are implemented. The managed slice adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. The database contains the backfill control plane and normalized sporting-data tables. Year-level backfill orchestration, retry/lease policy, worker job processing, telemetry, and live timing ingestion are not yet implemented.
 
 Implemented services in `compose.yaml`:
 
@@ -31,6 +31,7 @@ Implemented supporting infrastructure:
 - A persistent `fastf1_cache` Docker volume is declared for the worker.
 - FastF1 cache activation and session loads are serialized within one process.
 - One-session archive requests are derived from stored session and event identity, checked against the loaded FastF1 session, and revalidated under database row locks before replacement.
+- Archive attempts expose committed running state, reject overlap and non-archive ownership, and record fixed secret-free failure diagnostics without deleting a previous completed snapshot.
 - The backend uses Python 3.13, `uv`, FastAPI, FastF1 3.8.3, pandas, SQLAlchemy 2, Alembic, psycopg, Uvicorn, pytest, and Ruff.
 - The frontend uses Node.js 24, npm, React, TypeScript, and Vite.
 - PostgreSQL trust authentication is restricted to loopback-bound local development and must not be reused for production.
@@ -67,15 +68,17 @@ Formula1-Dashboard/
 │   │   │   ├── naming.py
 │   │   │   └── session.py
 │   │   ├── ingestion/
-│   │   │   ├── archive_persistence.py
+│   │   │   ├── archive_attempt.py
 │   │   │   ├── archive_ingestion.py
+│   │   │   ├── archive_persistence.py
 │   │   │   ├── fastf1_loader.py
 │   │   │   └── fastf1_normalization.py
 │   │   ├── main.py
 │   │   └── worker.py
 │   ├── tests/
-│   │   ├── test_archive_persistence.py
+│   │   ├── test_archive_attempt.py
 │   │   ├── test_archive_ingestion.py
+│   │   ├── test_archive_persistence.py
 │   │   ├── test_database_integration.py
 │   │   ├── test_database_metadata.py
 │   │   ├── test_fastf1_loader.py
@@ -101,7 +104,7 @@ Formula1-Dashboard/
 
 - `backend/app/`: FastAPI and worker process source.
 - `backend/app/db/`: SQLAlchemy metadata, connection configuration, session factory, and Revision 1 and 2 models.
-- `backend/app/ingestion/`: Database-bound one-session orchestration, cache-backed loading, pure upstream-to-domain normalization, and atomic archive persistence.
+- `backend/app/ingestion/`: Managed attempt state, database-bound one-session orchestration, cache-backed loading, pure upstream-to-domain normalization, and atomic archive persistence.
 - `backend/alembic/`: Alembic environment and reviewed migration revisions.
 - `backend/tests/`: Backend tests.
 - `frontend/src/`: React dashboard source.
@@ -331,6 +334,20 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: implemented
 
+### Archive session attempt lifecycle
+
+- Decision: Make pending idempotent without incrementing attempts; commit running before upstream work; increment attempts only when running begins; retain the latest sanitized failure until success; complete atomically with snapshot persistence; and record failure separately while preserving any previous completed snapshot.
+- Rationale: Give the UI and future worker an accurate observable session state without holding database locks during FastF1 work or losing usable historical data after a failed refresh.
+- Date: 2026-07-28
+- Status: implemented
+
+### Sanitized persisted failures
+
+- Decision: Persist only stable error codes and fixed bounded messages selected by exception category; never persist raw exception text, causes, tracebacks, request representations, or upstream responses.
+- Rationale: Raw failures can contain tokens, authorization headers, URLs, cookies, local paths, SQL parameters, or other sensitive operational data.
+- Date: 2026-07-28
+- Status: implemented
+
 ## Database Model
 
 Alembic revision `20260727_0001` implements the backfill control plane:
@@ -338,7 +355,7 @@ Alembic revision `20260727_0001` implements the backfill control plane:
 - `seasons`: One row per season. `year` is a `SMALLINT` primary key constrained to `>= 1950`. Coverage timestamps support future freshness derivation.
 - `events`: Championship events keyed internally by `BIGINT IDENTITY`, linked to `seasons`, and unique by `(season_year, round_number)`.
 - `sessions`: Event sessions keyed internally by `BIGINT IDENTITY`, linked to `events`, and unique by `(event_id, session_key)`.
-- `session_ingestions`: One persistent ingestion-state row per session, including status, source, provisional/finalized state, attempts, lifecycle timestamps, retry eligibility, heartbeat, and sanitized error fields.
+- `session_ingestions`: One persistent ingestion-state row per session, including status, source, provisional/finalized state, attempts, lifecycle timestamps, retry eligibility, heartbeat, and sanitized error fields. Pending/running/completed/failed transitions are implemented for managed archive attempts; retry and heartbeat policy are not.
 - `backfill_jobs`: UUID year-level jobs linked to a season. A partial unique index on `season_year` for `pending` and `running` rows prevents two active jobs for one year.
 - `backfill_job_sessions`: Per-job, per-session progress with composite primary key `(job_id, session_id)`, attempt and lifecycle fields, and worker-claim/progress indexes.
 
@@ -427,7 +444,7 @@ Accepted behavior:
 13. FastF1 cache must be used, and aggressive parallel requests must be avoided.
 14. Telemetry must be queried separately by session, driver, and lap.
 
-The accepted one-session replacement contract is documented in `docs/FASTF1_INGESTION_CONTRACT.md`. FastF1 3.8.3 and pandas are locked runtime dependencies. The implemented vertical slice derives one request from database session identity, loads through the persistent serialized cache, verifies loaded identity, normalizes results and laps, and atomically replaces the target archive snapshot. Persistence locks and revalidates the target session and event identity, rejects non-archive ownership, upserts natural-key records, removes stale archive rows, preserves global drivers, and marks ingestion completed/finalized atomically. Pending/running/failed transitions, failure recording, year-level job orchestration, and worker processing are not implemented.
+The accepted one-session replacement and attempt contract is documented in `docs/FASTF1_INGESTION_CONTRACT.md`. A managed archive attempt commits running state and increments its attempt count before calling the vertical slice. The slice derives one request from database session identity, loads through the persistent serialized cache, verifies loaded identity, normalizes results and laps, and atomically replaces the target archive snapshot. Success marks ingestion completed/finalized with the snapshot. Failure is re-raised after a separate owning-attempt transaction stores only a fixed sanitized code and message; a previous completed snapshot and its timestamps remain available. Year-level job orchestration, job-session synchronization, retry timing, heartbeat, lease recovery, and worker processing are not implemented.
 
 ## Live Timing Design
 
@@ -485,22 +502,26 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Implemented a database-bound one-session vertical slice that derives the FastF1 request from stored session identity, validates the loaded identity, normalizes the candidate snapshot, and invokes transactional replacement.
 - Added PostgreSQL integration coverage for vertical-slice idempotency, stable natural-key rows, target-derived requests, missing or concurrently changed targets, loaded identity mismatches, and no-write loading and normalization failures.
 - Verified the complete 50-test suite against an isolated PostgreSQL 17 database.
+- Implemented managed archive pending, running, completed, and failed session-ingestion transitions with attempt counting and overlap/source protection.
+- Implemented fixed exception-category error codes and secret-free persisted failure messages while re-raising original exceptions.
+- Added PostgreSQL coverage for observable running state, idempotent pending, attempt increments, prior-snapshot preservation, sanitized failure fields, existing-running rejection, non-archive ownership, and timestamp validation.
+- Added focused coverage for every stable persisted failure-code mapping and its fixed secret-free message.
+- Verified the complete 66-test suite against an isolated PostgreSQL 17 database.
 
 No year-level FastF1 backfill orchestration, worker job execution, telemetry, or live timing feature has been completed.
 
 ## Work in Progress
 
-- No implementation is currently in progress after the database-bound one-session archive vertical slice.
+- No implementation is currently in progress after managed archive attempt state and sanitized failure recording.
 
 ## Next Steps
 
-1. Define pending/running/failed state transitions and sanitized failure recording around the vertical slice.
-2. Define retry count, backoff, heartbeat, lease, and current-season freshness policies before worker orchestration.
-3. Decide whether manual backfill cancellation belongs in the first phase.
-4. Add season coverage and job-progress REST APIs.
-5. Add the basic season selection and progress UI.
-6. Measure telemetry volume before deciding on TimescaleDB.
-7. Design SignalR live timing and reconciliation separately.
+1. Define retry count, backoff, heartbeat, lease, and current-season freshness policies before worker orchestration.
+2. Decide whether manual backfill cancellation belongs in the first phase.
+3. Add season coverage and job-progress REST APIs.
+4. Add the basic season selection and progress UI.
+5. Measure telemetry volume before deciding on TimescaleDB.
+6. Design SignalR live timing and reconciliation separately.
 
 ## Run and Test Commands
 
@@ -524,14 +545,15 @@ docker run --rm -e UV_PROJECT_ENVIRONMENT=/tmp/formula1-dashboard-venv -v "$PWD/
 docker run --rm -e UV_PROJECT_ENVIRONMENT=/tmp/formula1-dashboard-venv -v "$PWD/backend:/workspace" -w /workspace ghcr.io/astral-sh/uv:0.11.29-python3.13-trixie-slim uv run --frozen pytest
 ```
 
-Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The complete suite passed with 50 tests against an isolated PostgreSQL 17 database after the one-session archive vertical slice was added.
+Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The complete suite passed with 66 tests against an isolated PostgreSQL 17 database after managed attempt state and sanitized failure recording were added.
 
 ## Known Issues and Technical Debt
 
 - The worker is only a readiness scaffold and cannot claim or process jobs.
 - The one-session vertical slice is callable but is not yet invoked by the placeholder worker or a job orchestration service.
 - Loader tests use controlled FastF1 doubles and do not perform an upstream network smoke test.
-- Pending/running/failed ingestion transitions and sanitized failure recording are not implemented around persistence.
+- Managed session-ingestion state is not yet synchronized with `backfill_jobs` or `backfill_job_sessions`.
+- Failure recording requires a separate database transaction; if the database is unavailable, the original exception is re-raised with a diagnostic note but failed state cannot be persisted.
 - Session-row locking serializes callers that use the persistence service; worker claiming and lease recovery remain unimplemented.
 - FastF1 loading is serialized per process; cross-process concurrency must be controlled by worker claiming and leases.
 - TimescaleDB usage has not been decided.
@@ -554,10 +576,12 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `backend/alembic/versions/20260728_0002_sporting_data.py`: Reviewed Revision 2 sporting-data schema and downgrade.
 - `backend/app/db/base.py`: Shared SQLAlchemy metadata and timestamp mixin.
 - `backend/app/db/models/`: Revision 1 control-plane and Revision 2 sporting-data SQLAlchemy models.
+- `backend/app/ingestion/archive_attempt.py`: Pending/running/failed archive attempt transitions, attempt counting, overlap protection, and fixed sanitized failure mappings.
 - `backend/app/ingestion/archive_ingestion.py`: Database-target lookup, FastF1 request derivation, loaded-identity validation, normalization, and persistence composition.
 - `backend/app/ingestion/fastf1_loader.py`: Deterministic, cache-backed, process-serialized one-session FastF1 loading.
 - `backend/app/ingestion/fastf1_normalization.py`: Pure FastF1 results-and-laps normalization and validation.
 - `backend/app/ingestion/archive_persistence.py`: Atomic normalized archive upserts, stale-row replacement, source and locked-target identity guards, and ingestion completion.
+- `backend/tests/test_archive_attempt.py`: Stable failure-code and fixed secret-free message mapping coverage.
 - `backend/tests/test_archive_persistence.py`: PostgreSQL transactional persistence, idempotency, stale replacement, source protection, and rollback coverage.
 - `backend/tests/test_archive_ingestion.py`: PostgreSQL one-session vertical-slice identity, idempotency, and pre-persistence failure coverage.
 - `backend/tests/test_database_integration.py`: PostgreSQL constraint and index integration coverage.
@@ -572,6 +596,7 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 
 ## Change Log
 
+- 2026-07-28 — Implemented and verified managed archive attempt states, attempt counting, overlap/source protection, and secret-free failure recording.
 - 2026-07-28 — Implemented and verified the database-bound one-session FastF1 loading, normalization, and transactional persistence vertical slice.
 - 2026-07-28 — Implemented and verified the serialized cache-backed FastF1 one-session loader with messages enabled and telemetry/weather disabled.
 - 2026-07-28 — Implemented and verified atomic persistence and stale-row replacement for one normalized FastF1 archive session.

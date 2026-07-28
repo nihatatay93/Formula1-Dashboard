@@ -11,6 +11,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.engine import sqlalchemy_database_url
 from app.db.models import Lap, SessionEntry, SessionIngestion, SessionResult
+from app.ingestion.archive_attempt import (
+    ArchiveIngestionAlreadyRunningError,
+    ArchiveIngestionStateError,
+    mark_archive_ingestion_pending,
+    run_fastf1_archive_ingestion_attempt,
+)
 from app.ingestion.archive_ingestion import (
     ArchiveSessionIdentityError,
     ingest_fastf1_archive_session,
@@ -18,6 +24,7 @@ from app.ingestion.archive_ingestion import (
 from app.ingestion.archive_persistence import (
     ArchivePersistenceTargetChangedError,
     ArchiveSessionNotFoundError,
+    ArchiveSourceConflictError,
 )
 from app.ingestion.fastf1_loader import (
     FastF1SessionLoadError,
@@ -101,6 +108,43 @@ class TargetChangingLoader(StubLoader):
                 {"session_id": self.target.session_id},
             )
         return loaded
+
+
+class StateInspectingLoader(StubLoader):
+    def __init__(
+        self,
+        *,
+        target: IngestionTarget,
+        results: pd.DataFrame,
+        laps: pd.DataFrame,
+        expected_started_at: datetime,
+    ) -> None:
+        super().__init__(results=results, laps=laps)
+        self.target = target
+        self.expected_started_at = expected_started_at
+
+    def load(self, request: FastF1SessionRequest) -> LoadedFastF1Session:
+        with Session(self.target.engine) as database:
+            ingestion = database.get(
+                SessionIngestion,
+                self.target.session_id,
+            )
+            assert ingestion is not None
+            assert ingestion.status == "running"
+            assert ingestion.attempt_count == 1
+            assert ingestion.first_started_at == self.expected_started_at
+            assert ingestion.last_started_at == self.expected_started_at
+            assert ingestion.last_error_code is None
+            assert ingestion.last_error_message is None
+        return super().load(request)
+
+
+class SecretFailingLoader:
+    def load(self, request: FastF1SessionRequest) -> LoadedFastF1Session:
+        raise FastF1SessionLoadError(
+            "sensitive=RAW-ERROR-SENTINEL; "
+            f"request={request!r}"
+        )
 
 
 @pytest.fixture
@@ -363,6 +407,238 @@ def test_composes_loading_normalization_and_persistence_idempotently(
         assert ingestion is not None
         assert ingestion.status == "completed"
         assert ingestion.completed_at == second_completed_at
+
+
+def test_managed_attempt_exposes_running_and_completes_atomically(
+    ingestion_target: IngestionTarget,
+) -> None:
+    results, laps = archive_tables(ingestion_target)
+    started_at = datetime(2026, 7, 28, 16, 0, tzinfo=UTC)
+    completed_at = datetime(2026, 7, 28, 16, 5, tzinfo=UTC)
+    loader = StateInspectingLoader(
+        target=ingestion_target,
+        results=results,
+        laps=laps,
+        expected_started_at=started_at,
+    )
+
+    pending = mark_archive_ingestion_pending(
+        session_id=ingestion_target.session_id,
+        session_factory=ingestion_target.session_factory,
+    )
+    repeated_pending = mark_archive_ingestion_pending(
+        session_id=ingestion_target.session_id,
+        session_factory=ingestion_target.session_factory,
+    )
+    summary = run_fastf1_archive_ingestion_attempt(
+        session_id=ingestion_target.session_id,
+        session_factory=ingestion_target.session_factory,
+        loader=loader,
+        started_at=started_at,
+        completed_at=completed_at,
+    )
+
+    assert pending.status == "pending"
+    assert pending.attempt_count == 0
+    assert repeated_pending.attempt_count == 0
+    assert summary.attempt_count == 1
+    assert summary.ingestion.persistence.session_id == ingestion_target.session_id
+
+    with Session(ingestion_target.engine) as database:
+        ingestion = database.get(SessionIngestion, ingestion_target.session_id)
+        assert ingestion is not None
+        assert ingestion.status == "completed"
+        assert ingestion.source == "fastf1_archive"
+        assert ingestion.record_state == "finalized"
+        assert ingestion.attempt_count == 1
+        assert ingestion.first_started_at == started_at
+        assert ingestion.last_started_at == started_at
+        assert ingestion.completed_at == completed_at
+        assert ingestion.last_error_code is None
+        assert ingestion.last_error_message is None
+
+
+def test_managed_failure_records_only_fixed_sanitized_diagnostics(
+    ingestion_target: IngestionTarget,
+) -> None:
+    started_at = datetime(2026, 7, 28, 17, 0, tzinfo=UTC)
+
+    with pytest.raises(FastF1SessionLoadError, match="RAW-ERROR-SENTINEL"):
+        run_fastf1_archive_ingestion_attempt(
+            session_id=ingestion_target.session_id,
+            session_factory=ingestion_target.session_factory,
+            loader=SecretFailingLoader(),
+            started_at=started_at,
+        )
+
+    with Session(ingestion_target.engine) as database:
+        ingestion = database.get(SessionIngestion, ingestion_target.session_id)
+        assert ingestion is not None
+        assert ingestion.status == "failed"
+        assert ingestion.attempt_count == 1
+        assert ingestion.first_started_at == started_at
+        assert ingestion.last_started_at == started_at
+        assert ingestion.completed_at is None
+        assert ingestion.last_error_code == "fastf1_load_failed"
+        assert ingestion.last_error_message == "FastF1 session loading failed."
+        assert "RAW-ERROR-SENTINEL" not in ingestion.last_error_message
+        assert "sensitive=" not in ingestion.last_error_message
+
+    pending = mark_archive_ingestion_pending(
+        session_id=ingestion_target.session_id,
+        session_factory=ingestion_target.session_factory,
+    )
+    assert pending.status == "pending"
+    assert pending.attempt_count == 1
+    assert pending.last_error_code == "fastf1_load_failed"
+    assert pending.last_error_message == "FastF1 session loading failed."
+
+
+def test_failed_reingestion_preserves_previous_completed_snapshot(
+    ingestion_target: IngestionTarget,
+) -> None:
+    results, laps = archive_tables(ingestion_target)
+    first_started_at = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
+    completed_at = datetime(2026, 7, 28, 18, 5, tzinfo=UTC)
+    source_updated_at = datetime(2026, 7, 28, 17, 30, tzinfo=UTC)
+    run_fastf1_archive_ingestion_attempt(
+        session_id=ingestion_target.session_id,
+        session_factory=ingestion_target.session_factory,
+        loader=StubLoader(results=results, laps=laps),
+        started_at=first_started_at,
+        completed_at=completed_at,
+        source_updated_at=source_updated_at,
+    )
+    pending = mark_archive_ingestion_pending(
+        session_id=ingestion_target.session_id,
+        session_factory=ingestion_target.session_factory,
+    )
+
+    assert pending.completed_at == completed_at
+    with pytest.raises(FastF1SessionLoadError):
+        run_fastf1_archive_ingestion_attempt(
+            session_id=ingestion_target.session_id,
+            session_factory=ingestion_target.session_factory,
+            loader=SecretFailingLoader(),
+            started_at=datetime(2026, 7, 28, 19, 0, tzinfo=UTC),
+        )
+
+    with Session(ingestion_target.engine) as database:
+        ingestion = database.get(SessionIngestion, ingestion_target.session_id)
+        assert ingestion is not None
+        assert ingestion.status == "failed"
+        assert ingestion.attempt_count == 2
+        assert ingestion.first_started_at == first_started_at
+        assert ingestion.completed_at == completed_at
+        assert ingestion.source_updated_at == source_updated_at
+        assert database.scalar(
+            select(func.count(SessionEntry.id)).where(
+                SessionEntry.session_id == ingestion_target.session_id
+            )
+        ) == 1
+
+
+def test_managed_attempt_rejects_an_existing_running_state(
+    ingestion_target: IngestionTarget,
+) -> None:
+    with ingestion_target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO session_ingestions (
+                    session_id,
+                    status,
+                    source,
+                    record_state,
+                    attempt_count
+                )
+                VALUES (
+                    :session_id,
+                    'running',
+                    'fastf1_archive',
+                    'finalized',
+                    3
+                )
+                """
+            ),
+            {"session_id": ingestion_target.session_id},
+        )
+    results, laps = archive_tables(ingestion_target)
+    loader = StubLoader(results=results, laps=laps)
+
+    with pytest.raises(ArchiveIngestionAlreadyRunningError, match="already running"):
+        run_fastf1_archive_ingestion_attempt(
+            session_id=ingestion_target.session_id,
+            session_factory=ingestion_target.session_factory,
+            loader=loader,
+        )
+
+    assert loader.requests == []
+    with Session(ingestion_target.engine) as database:
+        ingestion = database.get(SessionIngestion, ingestion_target.session_id)
+        assert ingestion is not None
+        assert ingestion.status == "running"
+        assert ingestion.attempt_count == 3
+
+
+def test_managed_attempt_preserves_non_archive_ingestion_state(
+    ingestion_target: IngestionTarget,
+) -> None:
+    with ingestion_target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO session_ingestions (
+                    session_id,
+                    status,
+                    source,
+                    record_state
+                )
+                VALUES (
+                    :session_id,
+                    'running',
+                    'live_signalr',
+                    'provisional'
+                )
+                """
+            ),
+            {"session_id": ingestion_target.session_id},
+        )
+    results, laps = archive_tables(ingestion_target)
+    loader = StubLoader(results=results, laps=laps)
+
+    with pytest.raises(ArchiveSourceConflictError, match="another source"):
+        run_fastf1_archive_ingestion_attempt(
+            session_id=ingestion_target.session_id,
+            session_factory=ingestion_target.session_factory,
+            loader=loader,
+        )
+
+    assert loader.requests == []
+    with Session(ingestion_target.engine) as database:
+        ingestion = database.get(SessionIngestion, ingestion_target.session_id)
+        assert ingestion is not None
+        assert ingestion.status == "running"
+        assert ingestion.source == "live_signalr"
+        assert ingestion.record_state == "provisional"
+
+
+def test_managed_attempt_rejects_naive_started_at_without_creating_state(
+    ingestion_target: IngestionTarget,
+) -> None:
+    results, laps = archive_tables(ingestion_target)
+    loader = StubLoader(results=results, laps=laps)
+
+    with pytest.raises(ArchiveIngestionStateError, match="timezone"):
+        run_fastf1_archive_ingestion_attempt(
+            session_id=ingestion_target.session_id,
+            session_factory=ingestion_target.session_factory,
+            loader=loader,
+            started_at=datetime(2026, 7, 28, 20, 0),
+        )
+
+    assert loader.requests == []
+    assert_session_has_no_archive_state(ingestion_target)
 
 
 def test_loader_failure_does_not_change_database(
