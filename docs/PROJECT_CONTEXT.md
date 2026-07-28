@@ -16,7 +16,7 @@ The system is intended to:
 
 ## Current Architecture
 
-The local-development scaffold, five database migrations, locked FastF1 runtime, schedule discovery and season job planner, a managed database-bound one-session FastF1 archive worker, the first historical API slice, and the first product dashboard milestone are implemented. The API slice provides `POST /api/v1/seasons/{season_year}/backfill`, `GET /api/v1/seasons/{season_year}`, `GET /api/v1/backfill-jobs/{job_id}`, and `GET /api/v1/upstreams/fastf1/usage` with strict response/error contracts, 2018-through-current-UTC-year validation, JavaScript-safe decimal-string database identifiers, UTC timestamp normalization, dynamic `200/202` command behavior, and client-safe failures. The season overview reads one repeatable PostgreSQL snapshot and never writes or contacts FastF1. The job-progress endpoint reads one repeatable snapshot, derives internally consistent counts and an execution phase with current/next/last-completed session references, preserves deterministic round/session ordering, and never runs parent aggregation. The idempotent backfill command synchronously checks schedule coverage through the persistent FastF1 cache, delegates all planning and concurrency control to the season planner, creates or reuses one active job, and exposes its polling location without performing session ingestion in the API process. The managed ingestion flow adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. Validated runtime settings, retryable/terminal exception classification, deterministic equal-jitter backoff calculations, transactional job-session claiming, synchronized retry/terminal failure transitions, ownership-fenced heartbeat writes, claim-aware atomic completion, bounded stale-lease recovery, deterministic season/session freshness eligibility, transactional parent-job aggregation, and single-concurrency worker execution are implemented. Claims use a persistent PostgreSQL FastF1 request gate plus row locking and return job-attempt and monotonic session-attempt ownership tokens; heartbeat, failure, and completion writes validate both tokens. Archive session starts retain a one-second safety gap. Real cache-miss FastF1 HTTP sends are recorded in a shared rolling PostgreSQL ledger; the application warns at 400 and pauses at 450 observed requests per hour, below the library's 500-request threshold. FastF1's explicit rate-limit exception closes the global gate for one hour without consuming the job-session retry budget. Recovery fences the lost claim by leaving running state before a retry can be claimed. Freshness functions evaluate UTC coverage expiry, archive grace, and correction checkpoints. The season planner uses FastF1's curated schedule as the championship membership and round-number authority, retains exact private-index boundaries for matched events, hydrates missing historical or already-started events from exact per-session timing metadata, defers unpublished current-season future events without blocking available work, persists the available exact-boundary calendar snapshot atomically, and creates or reuses one active year job under a season advisory lock. Aggregation locks all child rows before the parent, preserves monotonic job state, and returns progress counts. The worker polls eligible jobs, maintains heartbeats during blocking FastF1 work, runs recovery/parent reconciliation every 30 seconds, applies fenced outcomes, and stops gracefully without taking new work. The React dashboard selects supported seasons, presents coverage and session-state visualizations, starts or reuses backfill jobs, polls active job progress, identifies the GP/session currently fetching, displays deferred future-event notices, and shows local request usage and cooldown countdowns through the backend only. The database contains the backfill control plane, request coordination and accounting, schedule membership markers, and normalized sporting-data tables. Historical result/lap views, telemetry, and live timing ingestion are not yet implemented.
+The local-development scaffold, five database migrations, locked FastF1 runtime, schedule discovery and season job planner, a managed database-bound one-session FastF1 archive worker, the historical season and session API slices, and the season plus session-exploration dashboard milestones are implemented. The API provides `POST /api/v1/seasons/{season_year}/backfill`, `GET /api/v1/seasons/{season_year}`, `GET /api/v1/backfill-jobs/{job_id}`, `GET /api/v1/upstreams/fastf1/usage`, `GET /api/v1/sessions/{session_id}`, `GET /api/v1/sessions/{session_id}/results`, and `GET /api/v1/sessions/{session_id}/entries/{session_entry_id}/laps` with strict response/error contracts, JavaScript-safe decimal-string database identifiers, UTC timestamp normalization, bounded query validation, and client-safe failures. Strict session-detail, entry/result, lap-summary, lap-filter, and page-cursor Pydantic models, their repeatable-read PostgreSQL query services, and thin no-store HTTP routes are implemented. The season overview reads one repeatable PostgreSQL snapshot and never writes or contacts FastF1. The job-progress endpoint reads one repeatable snapshot, derives internally consistent counts and an execution phase with current/next/last-completed session references, preserves deterministic round/session ordering, and never runs parent aggregation. The idempotent backfill command synchronously checks schedule coverage through the persistent FastF1 cache, delegates all planning and concurrency control to the season planner, creates or reuses one active job, and exposes its polling location without performing session ingestion in the API process. The managed ingestion flow adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. Validated runtime settings, retryable/terminal exception classification, deterministic equal-jitter backoff calculations, transactional job-session claiming, synchronized retry/terminal failure transitions, ownership-fenced heartbeat writes, claim-aware atomic completion, bounded stale-lease recovery, deterministic season/session freshness eligibility, transactional parent-job aggregation, and single-concurrency worker execution are implemented. Claims use a persistent PostgreSQL FastF1 request gate plus row locking and return job-attempt and monotonic session-attempt ownership tokens; heartbeat, failure, and completion writes validate both tokens. Archive session starts retain a one-second safety gap. Real cache-miss FastF1 HTTP sends are recorded in a shared rolling PostgreSQL ledger; the application warns at 400 and pauses at 450 observed requests per hour, below the library's 500-request threshold. FastF1's explicit rate-limit exception closes the global gate for one hour without consuming the job-session retry budget. Recovery fences the lost claim by leaving running state before a retry can be claimed. Freshness functions evaluate UTC coverage expiry, archive grace, and correction checkpoints. The season planner uses FastF1's curated schedule as the championship membership and round-number authority, retains exact private-index boundaries for matched events, hydrates missing historical or already-started events from exact per-session timing metadata, defers unpublished current-season future events without blocking available work, persists the available exact-boundary calendar snapshot atomically, and creates or reuses one active year job under a season advisory lock. Aggregation locks all child rows before the parent, preserves monotonic job state, and returns progress counts. The worker polls eligible jobs, maintains heartbeats during blocking FastF1 work, runs recovery/parent reconciliation every 30 seconds, applies fenced outcomes, and stops gracefully without taking new work. The React dashboard selects supported seasons, presents coverage and session-state visualizations, starts or reuses backfill jobs, polls active job progress, identifies the GP/session currently fetching, displays deferred future-event notices, and shows local request usage and cooldown countdowns through the backend only. Every calendar session can open an in-page workspace backed only by the historical session API; it shows metadata and availability, a complete entry/result table, participant selection, a compound-colored loaded-lap pace profile, detailed lap summaries, and 50-row keyset pagination with snapshot-change restart protection. The database contains the backfill control plane, request coordination and accounting, schedule membership markers, and normalized sporting-data tables. Manual lap selection/averaging, telemetry, and live timing ingestion are not yet implemented.
 
 Implemented services in `compose.yaml`:
 
@@ -87,6 +87,8 @@ Formula1-Dashboard/
 │   │   │   ├── season_overview.py
 │   │   │   ├── season_status.py
 │   │   │   ├── seasons.py
+│   │   │   ├── session_data.py
+│   │   │   ├── sessions.py
 │   │   │   └── upstream_usage.py
 │   │   ├── db/
 │   │   │   ├── models/
@@ -126,6 +128,7 @@ Formula1-Dashboard/
 │   │   ├── test_fastf1_schedule.py
 │   │   ├── test_freshness_policy.py
 │   │   ├── test_health.py
+│   │   ├── test_historical_session_contracts.py
 │   │   ├── test_runtime_policy.py
 │   │   ├── test_request_budget.py
 │   │   ├── test_season_endpoint.py
@@ -134,6 +137,8 @@ Formula1-Dashboard/
 │   │   ├── test_season_backfill_endpoint_integration.py
 │   │   ├── test_season_overview.py
 │   │   ├── test_season_status.py
+│   │   ├── test_session_data.py
+│   │   ├── test_session_endpoints.py
 │   │   ├── test_sporting_data_integration.py
 │   │   ├── test_upstream_usage_endpoint.py
 │   │   └── test_worker.py
@@ -146,6 +151,7 @@ Formula1-Dashboard/
 │   ├── DATABASE_DESIGN.md
 │   ├── FASTF1_INGESTION_CONTRACT.md
 │   ├── HISTORICAL_API_DESIGN.md
+│   ├── HISTORICAL_SESSION_API_DESIGN.md
 │   ├── PROJECT_CONTEXT.md
 │   ├── SCHEDULE_DISCOVERY_DESIGN.md
 │   └── SPORTING_DATA_DESIGN.md
@@ -158,7 +164,7 @@ Formula1-Dashboard/
 ```
 
 - `backend/app/`: FastAPI and worker process source.
-- `backend/app/api/`: Versioned historical API, strict response/error models, supported-year validation, season/job/request-budget read models and routes, and the idempotent backfill command boundary.
+- `backend/app/api/`: Versioned historical API, strict response/error models, supported-year validation, season/job/request-budget/session read models and routes, and the idempotent backfill command boundary.
 - `backend/app/db/`: SQLAlchemy metadata, connection configuration, session factory, and Revision 1–5 models.
 - `backend/app/ingestion/`: Managed attempt state, schedule discovery and season planning, transactional backfill claiming/failure/aggregation transitions, single-concurrency worker execution, database-bound one-session orchestration, cache-backed loading, request-level accounting, pure upstream-to-domain normalization, atomic archive persistence, and runtime/freshness policy primitives.
 - `backend/alembic/`: Alembic environment and reviewed migration revisions.
@@ -169,6 +175,10 @@ Formula1-Dashboard/
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic conventions, migration phases, tables, constraints, indexes, and recovery behavior.
 - `docs/FASTF1_INGESTION_CONTRACT.md`: Accepted one-session validation, identity, atomic replacement, failure, and idempotency contract.
 - `docs/HISTORICAL_API_DESIGN.md`: Accepted and implemented first historical season and backfill REST API contract.
+- `docs/HISTORICAL_SESSION_API_DESIGN.md`: Accepted session-detail,
+  entry/result, paginated lap-summary, and future manual post-session analysis
+  contract; response/query models, database read services, and HTTP routes are
+  implemented.
 - `docs/SCHEDULE_DISCOVERY_DESIGN.md`: Implemented FastF1 schedule source, atomic calendar snapshot, membership, and active-job planning contract.
 - `docs/SPORTING_DATA_DESIGN.md`: Evidence-based implemented Revision 2 driver, entry, result, and lap schema.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
@@ -182,6 +192,15 @@ Formula1-Dashboard/
 - Rationale: The user explicitly selected English for the project.
 - Date: 2026-07-27
 - Status: accepted
+
+### Explanatory Git commit messages
+
+- Decision: Every Git commit must use a concise subject plus an explanatory
+  body describing the change scope, rationale, and relevant verification.
+- Rationale: Preserve useful project history so future reviews can understand
+  not only what changed, but why it changed and how it was checked.
+- Date: 2026-07-28
+- Status: implemented
 
 ### Single project workspace
 
@@ -229,6 +248,19 @@ Formula1-Dashboard/
 
 - Decision: Build the first dashboard directly over the implemented `/api/v1` season and backfill contracts, default to the current UTC season, support 2018 onward, poll active jobs every two seconds, and keep telemetry outside season-level responses.
 - Rationale: Provide an immediately useful visualization without inventing client-only data, bypassing the backend, or expanding the API and dependency surface before historical result views are designed.
+- Date: 2026-07-28
+- Status: implemented
+
+### Historical session exploration UI
+
+- Decision: Let every season-calendar session open one in-page workspace that
+  reads session detail and, when available, the full entry/result set. Load
+  laps only after a participant is selected, request at most 50 rows per page,
+  append pages by `next_after_lap`, and restart pagination when the completed
+  snapshot timestamp changes.
+- Rationale: Make completed sessions useful without loading laps for an entire
+  season, preserve session-entry identity, keep payloads bounded, and prevent
+  one visible lap series from silently combining two archive snapshots.
 - Date: 2026-07-28
 - Status: implemented
 
@@ -582,6 +614,73 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: implemented
 
+### Historical session read API contract
+
+- Decision: Expose separate read-only session-detail, entry/result, and
+  session-entry-scoped lap-summary endpoints. Keep results unpaginated, paginate
+  laps by lap-number keyset with bounded filters, include deleted laps by
+  default, return `409` when a known session has no completed snapshot, and
+  serve preserved completed snapshots during correction attempts.
+- Rationale: Keep responses bounded and deterministic, preserve session-local
+  driver identity, distinguish unavailable data from a valid empty result, and
+  support web and iOS session exploration without embedding laps or telemetry
+  in season responses.
+- Date: 2026-07-28
+- Status: accepted
+
+### Historical session contract foundation
+
+- Decision: Implement strict Pydantic models for session detail, snapshot
+  availability, ingestion state, entries/results, exact decimal-string points,
+  lap queries, filters, pages, and full lap summaries before database services
+  or HTTP routes.
+- Rationale: Validate cross-field availability, deterministic ordering,
+  JavaScript-safe identity, lap-filter, and pagination guarantees independently
+  from PostgreSQL and transport behavior.
+- Date: 2026-07-28
+- Status: implemented
+
+### Historical session database reads
+
+- Decision: Read session detail, entries/results, and one entry-scoped lap page
+  inside independent PostgreSQL `REPEATABLE READ, READ ONLY` transactions. Use
+  completed ingestion timestamps for availability, return zero archive counts
+  before completion, preserve usable snapshots during correction failures, and
+  paginate laps by the existing `(session_entry_id, lap_number)` key.
+- Rationale: Give web and future iOS clients internally consistent, mutation-free
+  sporting snapshots while keeping provisional data out of historical reads and
+  avoiding offset drift or a new database index.
+- Date: 2026-07-28
+- Status: implemented
+
+### Historical session HTTP boundary
+
+- Decision: Expose the three accepted session read services through thin
+  `/api/v1/sessions` GET routes with positive path identifiers, bounded lap
+  query parameters, a stable error for inverted lap ranges, no-store headers,
+  strict response models, and OpenAPI documentation for both standard FastAPI
+  validation and stable API errors.
+- Rationale: Keep transport validation and failure mapping explicit while
+  preserving the repeatable-read database services as the read-model boundary
+  for web and future iOS clients.
+- Date: 2026-07-28
+- Status: implemented
+
+### Manual post-session analysis readiness
+
+- Decision: Preserve and expose individual lap-summary timing, stint, tyre, pit,
+  track-status, deletion, and accuracy fields so clients can manually select
+  representative laps and compare calculated pace. Associate a manual selection
+  with session ID, session-entry ID, lap numbers, and the completed snapshot
+  timestamp. Defer automatic race-simulation classification, saved analyses,
+  and server-side aggregates to a separately designed future feature.
+- Rationale: Manual selection can support transparent practice long-run
+  comparisons with the current relational data, while verified fuel load,
+  engine mode, run plan, and weather are unavailable and make automatic
+  classification inherently inferential.
+- Date: 2026-07-28
+- Status: accepted
+
 ### Season overview read consistency
 
 - Decision: Build the season overview inside one PostgreSQL `REPEATABLE READ, READ ONLY` transaction, use the PostgreSQL timestamp for every freshness decision, and include only event/session rows whose discovery marker equals the season's latest successful coverage timestamp.
@@ -755,14 +854,62 @@ Implemented endpoints:
 - Returns stable, sanitized `500 server_configuration_error` and
   `503 database_unavailable` responses.
 
-No session-results, lap, telemetry, or WebSocket endpoint has been
-implemented. The versioned `/api/v1` router, strict historical response/error
-models, supported-year validation, pure derived season-status policy, read-only
-season endpoint, read-only job-progress and request-usage endpoints, and
+### `GET /api/v1/sessions/{session_id}`
+
+- Returns `200 OK` for an existing session, including event/session metadata,
+  current ingestion state, completed-snapshot availability, and bounded
+  sporting row counts.
+- Returns an existing session with unavailable snapshot metadata and zero
+  counts rather than treating it as a missing resource.
+- Returns `Cache-Control: no-store`.
+- Returns FastAPI's standard `422` validation response for malformed or
+  non-positive session IDs.
+- Returns stable `404 session_not_found`, sanitized
+  `500 server_configuration_error`, and `503 database_unavailable` responses.
+
+### `GET /api/v1/sessions/{session_id}/results`
+
+- Returns `200 OK` with every stored session entry and its nullable result,
+  ordered deterministically by result position and session-entry ID.
+- Preserves exact points as decimal strings and uses the session entry, never
+  racing number, as participant identity.
+- Returns `Cache-Control: no-store`.
+- Returns FastAPI's standard `422` validation response for malformed or
+  non-positive session IDs.
+- Returns stable `404 session_not_found`, `409 session_data_unavailable`,
+  sanitized `500 server_configuration_error`, and
+  `503 database_unavailable` responses.
+
+### `GET /api/v1/sessions/{session_id}/entries/{session_entry_id}/laps`
+
+- Returns `200 OK` with one lap-number-keyset page for an entry belonging to
+  the requested session.
+- Accepts `after_lap`, `limit`, `lap_from`, `lap_to`, `stint_number`, and
+  `include_deleted`; the default limit is 50 and the maximum is 100.
+- Includes deleted laps by default and supports deterministic empty pages.
+- Returns `Cache-Control: no-store`.
+- Returns FastAPI's standard `422` validation response for malformed or
+  out-of-bound path/query values and stable `422 invalid_lap_range` when
+  `lap_from` exceeds `lap_to`.
+- Returns stable `404 session_not_found`, `404 session_entry_not_found`,
+  `409 session_data_unavailable`, sanitized
+  `500 server_configuration_error`, and `503 database_unavailable` responses.
+
+No telemetry or WebSocket endpoint has been implemented. The versioned
+`/api/v1` router, strict historical response/error models, supported-year
+validation, pure derived season-status policy, read-only season, job-progress,
+request-usage, session-detail, result, and lap-summary endpoints, and
 idempotent backfill command are implemented.
 
 The accepted first historical API contract is documented in
 `docs/HISTORICAL_API_DESIGN.md`.
+
+The historical session-detail, entry/result, and paginated lap-summary contract
+is accepted in `docs/HISTORICAL_SESSION_API_DESIGN.md`. Its strict Pydantic
+response/query models, repeatable-read PostgreSQL services, thin HTTP routes,
+stable failure mappings, and OpenAPI paths are implemented and designed to
+support future manual post-session lap selection and pace comparison. No
+analysis calculation or analysis UI from that contract has been implemented.
 
 Accepted future behavior:
 
@@ -987,41 +1134,83 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
   session metadata or changing the live 2026 database state.
 - Verified Ruff, all 319 backend tests against an isolated PostgreSQL 17
   database, and the frontend TypeScript/Vite production build.
+- Created the proposed historical session-detail, entry/result, and
+  entry-scoped paginated lap-summary REST contract without implementing routes,
+  queries, migrations, or UI behavior.
+- Accepted the complete historical session-read contract and documented how its
+  individual lap fields and snapshot identity support future manual
+  post-session pace analysis without claiming automatic race-run detection.
+- Implemented strict historical session-detail, snapshot, ingestion,
+  entry/result, lap-query/filter/page, and full lap-summary Pydantic contracts.
+- Added focused contract tests for exact decimals, canonical identifiers and
+  colors, UTC timestamps, unavailable snapshots, nullable identities,
+  deterministic ordering, lap filters, and cursor/page consistency.
+- Verified Ruff and all 337 backend tests against a fresh isolated PostgreSQL
+  17 database, then removed the temporary test database.
+- Implemented read-only session-detail, entry/result, and entry-scoped
+  paginated lap-summary PostgreSQL services with dedicated not-found and
+  unavailable-data failures.
+- Added integration coverage for preserved failed snapshots, zero unavailable
+  counts, result ordering and nullable identities, team-color normalization,
+  keyset traversal, lap filters, empty pages, entry ownership, identifier
+  validation, and read-only transactions.
+- Verified Ruff and all 352 backend tests against a fresh isolated PostgreSQL
+  17 database, then removed the temporary test database.
+- Implemented the three accepted read-only historical session HTTP routes with
+  positive path validation, bounded lap filters and keyset parameters, stable
+  domain/database errors, and `Cache-Control: no-store`.
+- Documented strict session-detail, result, and lap response models plus the
+  standard and stable validation/error forms in generated OpenAPI.
+- Added endpoint coverage for response serialization, every query parameter,
+  path/query validation, inverted ranges, domain and database failure hygiene,
+  no-store headers, dependency wiring, and OpenAPI schemas.
+- Verified Ruff and all 379 backend tests against a fresh isolated PostgreSQL
+  17 database, then removed the temporary test database.
+- Smoke-tested all three routes against an existing completed session through
+  the running local Compose API; each returned `200`, and session detail
+  returned `Cache-Control: no-store`.
+- Extended the frontend's TypeScript contracts and same-origin API client for
+  session detail, results, and bounded lap-summary requests.
+- Made every season-calendar session an accessible drilldown control and added
+  an in-page session workspace with metadata, snapshot availability, sporting
+  row counts, entry/result classification, and participant selection.
+- Added a compound-colored loaded-lap pace profile, detailed timing/stint/tyre/
+  sector/quality table, 50-row keyset pagination, empty/error/loading states,
+  and archive-snapshot change protection without adding dependencies.
+- Verified the frontend TypeScript/Vite production build, the running local
+  Vite module, and live local session-detail, result, and lap API responses.
 
-No historical result/lap detail view, telemetry feature, or live timing feature has been completed.
+No manual lap-selection/average analysis, telemetry feature, or live timing
+feature has been completed.
 
 ## Work in Progress
 
-- No active development is currently in progress. The historical compatibility
-  repair, frontend visual refinement, and current-season future-event deferral
-  have been reviewed and approved for the next local commit.
+- No implementation phase is currently active. Dedicated frontend
+  component/browser-interaction coverage is the next planned milestone.
 
 ## Next Steps
 
-1. Design the historical session-detail, entry/result, and paginated lap-summary
-   REST contracts, including stable ordering, filters, data-availability
-   semantics, and client-safe errors.
-2. Implement the read-only historical query services and endpoints with
-   PostgreSQL integration, OpenAPI, and contract tests.
-3. Add dashboard navigation from season/event/session coverage into result
-   tables and lap-summary visualizations using only the new backend endpoints.
-4. Add dedicated frontend component and browser-interaction coverage for the
+1. Add dedicated frontend component and browser-interaction coverage for the
    implemented dashboard workflows and responsive states.
-5. Measure representative FastF1 telemetry volume and access patterns before
+2. Design the future manual lap-selection analysis workflow after the base
+   session views are usable, including selected-lap averages, driver/team
+   comparison, snapshot-change handling, and whether analyses need backend
+   persistence for sharing between web and iOS.
+3. Measure representative FastF1 telemetry volume and access patterns before
    deciding whether PostgreSQL alone or TimescaleDB should own telemetry.
-6. Design and implement bounded telemetry ingestion and APIs queried by session,
+4. Design and implement bounded telemetry ingestion and APIs queried by session,
    driver, and lap; never include season-wide telemetry in overview responses.
-7. Add automatic current-season planning so newly published event/session
+5. Add automatic current-season planning so newly published event/session
    boundaries and correction checkpoints do not depend indefinitely on a manual
    dashboard command. Revisit persistent deferred-event metadata at this point.
-8. Design the SignalR live-timing protocol boundary, reconnect/resume,
+6. Design the SignalR live-timing protocol boundary, reconnect/resume,
    deduplication, provisional schema, and FastF1 finalization/reconciliation
    rules before implementing live ingestion.
-9. Implement the live collector, provisional persistence, backend WebSocket
+7. Implement the live collector, provisional persistence, backend WebSocket
    fan-out, session finalization, and dashboard live views.
-10. Stabilize the shared API for the SwiftUI client, then implement the iOS
+8. Stabilize the shared API for the SwiftUI client, then implement the iOS
     application without exposing upstream credentials.
-11. Before production, add authentication/authorization, secret management,
+9. Before production, add authentication/authorization, secret management,
     secure PostgreSQL configuration, observability, backups, CI, deployment,
     and any demonstrated background-job infrastructure. Reconsider manual job
     cancellation and Redis only when measurements justify them.
@@ -1063,7 +1252,10 @@ uv sync --frozen
 .venv/bin/pytest tests/test_archive_attempt.py
 ```
 
-Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The complete suite passed with 316 tests against an isolated PostgreSQL 17 database after historical identity-sentinel and malformed tyre-stint compatibility coverage were added.
+Database integration tests additionally require `TEST_DATABASE_URL` and a
+migrated PostgreSQL database. The complete suite passed with 379 tests against
+a fresh isolated PostgreSQL 17 database after the historical session HTTP
+routes and endpoint tests were added.
 
 ## Known Issues and Technical Debt
 
@@ -1094,8 +1286,13 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - The worker does not invoke season planning; the implemented POST backfill command must run before newly eligible rows can be processed.
 - Graceful shutdown waits for active in-process FastF1 work; local Compose allows two minutes before forced termination, after which lease recovery applies.
 - Manual job cancellation is intentionally deferred from the historical MVP.
-- The accepted first historical season/backfill API slice is implemented. Historical session results and lap-summary read contracts remain undesigned.
-- The first dashboard has build and live local smoke coverage but no dedicated frontend unit or browser interaction test suite yet.
+- Historical session response/query contracts, PostgreSQL read services, HTTP
+  routes, OpenAPI paths, and the base dashboard result/lap workspace are
+  implemented. Manual post-session selection and analysis remain a future
+  workflow; no saved-analysis model or automatic race-run classifier has been
+  designed.
+- The dashboard has build and live local smoke coverage but no dedicated
+  frontend unit, component, or browser-interaction test suite yet.
 - Docker registry metadata timed out during the latest image rebuild attempt; the existing images and bind-mounted source started successfully, and the local dashboard/API health checks passed.
 - FastF1 ingestion time and storage volume have not been measured.
 - Live SignalR protocol and reconciliation rules have not been designed.
@@ -1111,15 +1308,28 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic layout, relational model, migration phases, idempotency, locking, and recovery design.
 - `docs/FASTF1_INGESTION_CONTRACT.md`: Accepted one-session archive snapshot identity, validation, atomic replacement, and failure behavior.
 - `docs/HISTORICAL_API_DESIGN.md`: Accepted and implemented first historical season/backfill API contract.
+- `docs/HISTORICAL_SESSION_API_DESIGN.md`: Accepted session-detail,
+  entry/result, paginated lap-summary, and future manual post-session analysis
+  contract; response/query models, database services, and HTTP routes are
+  implemented together with the base dashboard exploration behavior.
 - `backend/app/api/backfill_job.py`: Repeatable-read, database-read-only job and child-session mapping with derived counts, deterministic ordering, and dedicated not-found behavior.
 - `backend/app/api/backfill_jobs.py`: Read-only job-progress HTTP route, UUID validation, response contract, no-store policy, and sanitized failure mappings.
-- `backend/app/api/contracts.py`: Strict historical API response/error models, enum values, UTC timestamps, decimal-string identifiers, and cross-field validation.
+- `backend/app/api/contracts.py`: Strict historical API response/error models,
+  session/result/lap contracts, lap-query pagination and filters, enum values,
+  UTC timestamps, exact decimal strings, decimal-string identifiers, and
+  cross-field validation.
 - `backend/app/api/dependencies.py`: Supported 2018-through-current-UTC-year validation, database and schedule-loader injection, and stable API dependency errors.
 - `backend/app/api/errors.py`: Stable client-safe FastAPI error envelope.
 - `backend/app/api/router.py`: Mounted `/api/v1` router boundary for historical product endpoints.
 - `backend/app/api/season_overview.py`: Repeatable-read, database-read-only latest-membership season overview, eligibility/count mapping, active-job summary, and derived status.
 - `backend/app/api/seasons.py`: Season overview and backfill-command routes, dynamic command response mapping, polling headers, and sanitized failure mappings.
 - `backend/app/api/season_status.py`: Pure validated derived season-status precedence.
+- `backend/app/api/session_data.py`: Repeatable-read, database-read-only session
+  detail, result, and entry-scoped keyset lap services with snapshot
+  availability and dedicated domain failures.
+- `backend/app/api/sessions.py`: Thin read-only session-detail, result, and
+  entry-scoped lap HTTP routes with bounded validation, no-store headers, stable
+  sanitized failure mappings, and strict OpenAPI contracts.
 - `docs/SCHEDULE_DISCOVERY_DESIGN.md`: Implemented FastF1 schedule source, normalized snapshot, atomic membership persistence, and season job-planning contract.
 - `docs/SPORTING_DATA_DESIGN.md`: Implemented Revision 2 schema, FastF1 inspection evidence, normalization rules, and decisions.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
@@ -1164,6 +1374,12 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `backend/tests/test_season_backfill_endpoint.py`: Backfill command actions, dynamic status/headers, supported-year handling, sanitized failure mappings, dependency behavior, and OpenAPI coverage.
 - `backend/tests/test_season_backfill_endpoint_integration.py`: Concurrent POST idempotency, single-job persistence, worker claimability, and progress-read integration coverage.
 - `backend/tests/test_season_status.py`: Derived season-status precedence and input-validation tests.
+- `backend/tests/test_session_data.py`: PostgreSQL session metadata, preserved
+  snapshot, result ordering, lap pagination/filtering, ownership, unavailable
+  data, validation, and read-only transaction coverage.
+- `backend/tests/test_session_endpoints.py`: Session-detail, result, and lap HTTP
+  serialization, validation, stable-error, no-store, dependency, and OpenAPI
+  coverage.
 - `backend/tests/test_backfill_orchestration.py`: PostgreSQL claim locking, heartbeat synchronization, retry, lease recovery, parent aggregation, row-lock serialization, source protection, rollback, and ownership-token coverage.
 - `backend/tests/test_archive_persistence.py`: PostgreSQL transactional persistence, idempotency, stale replacement, source protection, and rollback coverage.
 - `backend/tests/test_archive_ingestion.py`: PostgreSQL one-session vertical-slice identity, idempotency, and pre-persistence failure coverage.
@@ -1186,18 +1402,51 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `backend/app/main.py`: FastAPI scaffold and health endpoints.
 - `backend/app/worker.py`: Archive worker process setup, database/configuration readiness, signal handling, and readiness-file lifecycle.
 - `backend/tests/test_health.py`: Backend health endpoint unit tests.
+- `backend/tests/test_historical_session_contracts.py`: Session-detail,
+  result, lap-query, lap-page, serialization, ordering, availability, and
+  analysis-field contract coverage.
 - `frontend/src/App.tsx`: Season selection, coverage metrics, request-budget
   visualization, detailed execution/countdown progress, event-grouped session
-  states, backfill command, active-job polling, and the refined archive-control
-  presentation structure.
-- `frontend/src/api.ts`: Typed same-origin API client with stable safe error handling.
-- `frontend/src/contracts.ts`: TypeScript representation of the implemented historical API response contracts.
+  states, backfill command, active-job polling, and session-workspace
+  navigation.
+- `frontend/src/SessionExplorer.tsx`: Session metadata and availability,
+  entry/result classification, participant selection, compound-colored
+  loaded-lap pace profile, detailed lap table, and snapshot-safe keyset
+  pagination.
+- `frontend/src/api.ts`: Typed same-origin season, backfill, request-budget,
+  session-detail, result, and lap API client with stable safe error handling.
+- `frontend/src/contracts.ts`: TypeScript representation of the implemented
+  historical season, job, session, result, and lap API contracts.
 - `frontend/src/index.css`: Responsive editorial motorsport layout, surface,
-  typography, interaction, progress, event-card, and visual-state system.
+  typography, interaction, progress, event-card, result-table, lap-chart, and
+  visual-state system.
 - `README.md`: Local development overview and commands.
 
 ## Change Log
 
+- 2026-07-28 — Reviewed and approved the complete historical session API and
+  base dashboard exploration milestone for a local commit; adopted explanatory
+  commit bodies as a permanent repository rule.
+- 2026-07-28 — Implemented and verified the base session-exploration dashboard
+  with season-session navigation, classification, participant lap drilldown,
+  compound pace visualization, detailed lap summaries, and snapshot-safe
+  pagination.
+- 2026-07-28 — Implemented and verified the three read-only historical session
+  HTTP routes with bounded validation, no-store headers, stable errors, and
+  OpenAPI coverage; all 379 backend tests passed against a fresh isolated
+  database, and the running local API served all three routes successfully.
+- 2026-07-28 — Implemented and verified the read-only historical session
+  detail, entry/result, and entry-scoped paginated lap PostgreSQL services; all
+  352 backend tests passed against a fresh isolated database.
+- 2026-07-28 — Implemented and verified the strict historical session,
+  entry/result, and paginated lap-summary response/query contracts; all 337
+  backend tests passed against a fresh isolated PostgreSQL database.
+- 2026-07-28 — Accepted the historical session-read API decisions and recorded
+  the future manual selected-lap pace-analysis workflow, snapshot identity, and
+  current inference limitations without implementing analysis behavior.
+- 2026-07-28 — Proposed the bounded historical session-detail, entry/result,
+  and entry-scoped paginated lap-summary REST contract for review; no endpoint
+  or query implementation was added.
 - 2026-07-28 — Reviewed and approved the historical FastF1 compatibility
   repair, dashboard visual refinement, and current-season future-event
   deferral for one local commit; recorded the next implementation milestones.

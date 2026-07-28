@@ -3,7 +3,11 @@ import type {
   BackfillJob,
   EnsureBackfillResponse,
   FastF1RequestBudget,
+  LapSummaryRequest,
+  LapSummaryResponse,
   SeasonOverview,
+  SessionDetail,
+  SessionResults,
 } from "./contracts";
 
 export class ApiClientError extends Error {
@@ -83,6 +87,45 @@ export function getFastF1RequestBudget(
 ): Promise<FastF1RequestBudget> {
   return requestJson<FastF1RequestBudget>(
     "/api/v1/upstreams/fastf1/usage",
+    { signal },
+  );
+}
+
+export function getSessionDetail(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<SessionDetail> {
+  return requestJson<SessionDetail>(`/api/v1/sessions/${sessionId}`, {
+    signal,
+  });
+}
+
+export function getSessionResults(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<SessionResults> {
+  return requestJson<SessionResults>(
+    `/api/v1/sessions/${sessionId}/results`,
+    { signal },
+  );
+}
+
+export function getSessionLaps(
+  sessionId: string,
+  sessionEntryId: string,
+  query: LapSummaryRequest = {},
+  signal?: AbortSignal,
+): Promise<LapSummaryResponse> {
+  const parameters = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) {
+      parameters.set(key, String(value));
+    }
+  }
+  const encodedParameters = parameters.toString();
+  const queryString = encodedParameters ? `?${encodedParameters}` : "";
+  return requestJson<LapSummaryResponse>(
+    `/api/v1/sessions/${sessionId}/entries/${sessionEntryId}/laps${queryString}`,
     { signal },
   );
 }

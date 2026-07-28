@@ -18,6 +18,7 @@ import type {
   SeasonSession,
   SeasonStatus,
 } from "./contracts";
+import SessionExplorer from "./SessionExplorer";
 
 const FIRST_SUPPORTED_SEASON = 2018;
 const JOB_POLL_INTERVAL_MS = 2_000;
@@ -200,7 +201,15 @@ function MetricCard({
   );
 }
 
-function EventCard({ event }: { event: SeasonEvent }) {
+function EventCard({
+  event,
+  onSelectSession,
+  selectedSessionId,
+}: {
+  event: SeasonEvent;
+  onSelectSession: (session: SeasonSession) => void;
+  selectedSessionId: string | null;
+}) {
   const availableCount = event.sessions.filter(
     (session) => session.data_available,
   ).length;
@@ -228,7 +237,17 @@ function EventCard({ event }: { event: SeasonEvent }) {
 
       <div className="session-list">
         {event.sessions.map((session) => (
-          <div className="session-row" key={session.id}>
+          <button
+            aria-pressed={selectedSessionId === session.id}
+            className={`session-row${
+              selectedSessionId === session.id
+                ? " session-row--selected"
+                : ""
+            }`}
+            key={session.id}
+            onClick={() => onSelectSession(session)}
+            type="button"
+          >
             <span className="session-row__date">
               {formatDate(session.scheduled_start_at)}
             </span>
@@ -241,7 +260,10 @@ function EventCard({ event }: { event: SeasonEvent }) {
               </span>
             </div>
             <StatusPill status={sessionDisplayStatus(session)} />
-          </div>
+            <span className="session-row__open" aria-hidden="true">
+              →
+            </span>
+          </button>
         ))}
       </div>
     </article>
@@ -453,6 +475,9 @@ function App() {
   const [requestBudgetError, setRequestBudgetError] = useState<string | null>(
     null,
   );
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
+    null,
+  );
   const [now, setNow] = useState(() => Date.now());
 
   const supportedYears = useMemo(
@@ -545,6 +570,7 @@ function App() {
     setJob(null);
     setJobError(null);
     setPollingJobId(null);
+    setSelectedSessionId(null);
 
     refreshSeason(selectedYear, controller.signal)
       .catch((error: unknown) => {
@@ -652,6 +678,20 @@ function App() {
   }
 
   const counts = season?.counts;
+  const selectedSession = useMemo(() => {
+    if (!season || !selectedSessionId) {
+      return null;
+    }
+    for (const event of season.events) {
+      const session = event.sessions.find(
+        (candidate) => candidate.id === selectedSessionId,
+      );
+      if (session) {
+        return { event, session };
+      }
+    }
+    return null;
+  }, [season, selectedSessionId]);
   const progressTotal = counts?.sessions ?? 0;
   const progressPending =
     (counts?.pending ?? 0) +
@@ -663,6 +703,19 @@ function App() {
         (counts?.completed ?? 0) -
         (counts?.failed ?? 0),
     );
+
+  function handleSessionSelection(sessionId: string) {
+    setSelectedSessionId(sessionId);
+    window.requestAnimationFrame(() => {
+      const reduceMotion = window.matchMedia(
+        "(prefers-reduced-motion: reduce)",
+      ).matches;
+      document.getElementById("session-explorer")?.scrollIntoView({
+        behavior: reduceMotion ? "auto" : "smooth",
+        block: "start",
+      });
+    });
+  }
 
   return (
     <div className="app-shell">
@@ -837,6 +890,15 @@ function App() {
               </p>
             ) : null}
 
+            {selectedSession ? (
+              <SessionExplorer
+                event={selectedSession.event}
+                key={`${selectedSession.session.id}:${selectedSession.session.ingestion?.completed_at ?? "unavailable"}`}
+                onClose={() => setSelectedSessionId(null)}
+                session={selectedSession.session}
+              />
+            ) : null}
+
             <section className="calendar-section" aria-labelledby="calendar-title">
               <div className="section-heading">
                 <div>
@@ -852,7 +914,14 @@ function App() {
               {season.events.length > 0 ? (
                 <div className="event-grid">
                   {season.events.map((event) => (
-                    <EventCard event={event} key={event.id} />
+                    <EventCard
+                      event={event}
+                      key={event.id}
+                      onSelectSession={(session) =>
+                        handleSessionSelection(session.id)
+                      }
+                      selectedSessionId={selectedSessionId}
+                    />
                   ))}
                 </div>
               ) : (

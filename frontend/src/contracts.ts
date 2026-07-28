@@ -11,6 +11,8 @@ export type SeasonStatus =
 
 export type RecordState = "provisional" | "finalized";
 
+export type DataSource = "live_signalr" | "fastf1_archive" | "jolpica";
+
 export interface LastError {
   code: string;
   message: string;
@@ -199,6 +201,156 @@ export interface FastF1RequestBudget {
   cooldown_reason: "rate_limit" | "budget" | null;
   status: "available" | "warning" | "paused" | "rate_limited";
   authoritative: false;
+}
+
+export interface SessionSnapshot {
+  data_available: boolean;
+  source: DataSource | null;
+  record_state: RecordState | null;
+  completed_at: string | null;
+  source_updated_at: string | null;
+}
+
+export interface SessionDetailIngestion {
+  status: IngestionStatus;
+  source: DataSource;
+  record_state: RecordState;
+  attempt_count: number;
+  completed_at: string | null;
+  next_retry_at: string | null;
+  last_error: LastError | null;
+}
+
+export interface SessionDetail {
+  id: string;
+  session_key: string;
+  session_name: string;
+  scheduled_start_at: string | null;
+  scheduled_end_at: string | null;
+  event: {
+    id: string;
+    season_year: number;
+    round_number: number;
+    official_name: string | null;
+    event_name: string;
+    country: string | null;
+    location: string | null;
+    event_format: string | null;
+  };
+  snapshot: SessionSnapshot;
+  ingestion: SessionDetailIngestion | null;
+  counts: {
+    entries: number;
+    results: number;
+    laps: number;
+  };
+}
+
+export interface SessionResultDriver {
+  id: string;
+  jolpica_driver_id: string | null;
+  given_name: string | null;
+  family_name: string | null;
+  full_name: string;
+  country_code: string | null;
+}
+
+export interface SessionResultData {
+  position: number | null;
+  classified_position: string | null;
+  grid_position: number | null;
+  points: string | null;
+  status: string | null;
+  laps_completed: number | null;
+  q1_time_us: number | null;
+  q2_time_us: number | null;
+  q3_time_us: number | null;
+  elapsed_time_us: number | null;
+  gap_to_leader_us: number | null;
+  gap_to_leader_laps: number | null;
+  source: DataSource;
+  record_state: RecordState;
+}
+
+export interface SessionEntryResult {
+  session_entry_id: string;
+  driver: SessionResultDriver | null;
+  racing_number: string | null;
+  abbreviation: string | null;
+  broadcast_name: string | null;
+  display_name: string;
+  team_jolpica_id: string | null;
+  team_name: string | null;
+  team_color_hex: string | null;
+  source: DataSource;
+  record_state: RecordState;
+  result: SessionResultData | null;
+}
+
+export interface SessionResults {
+  session_id: string;
+  snapshot: SessionSnapshot;
+  items: SessionEntryResult[];
+}
+
+export interface LapSummary {
+  id: string;
+  lap_number: number;
+  stint_number: number | null;
+  session_time_us: number | null;
+  lap_time_us: number | null;
+  lap_start_time_us: number | null;
+  pit_out_time_us: number | null;
+  pit_in_time_us: number | null;
+  sector_1_time_us: number | null;
+  sector_2_time_us: number | null;
+  sector_3_time_us: number | null;
+  sector_1_session_time_us: number | null;
+  sector_2_session_time_us: number | null;
+  sector_3_session_time_us: number | null;
+  speed_i1_kph: number | null;
+  speed_i2_kph: number | null;
+  speed_fl_kph: number | null;
+  speed_st_kph: number | null;
+  is_personal_best: boolean | null;
+  compound: string | null;
+  tyre_life_laps: number | null;
+  fresh_tyre: boolean | null;
+  track_status: string | null;
+  position: number | null;
+  deleted: boolean | null;
+  deleted_reason: string | null;
+  fastf1_generated: boolean;
+  is_accurate: boolean;
+  source: DataSource;
+  record_state: RecordState;
+}
+
+export interface LapSummaryResponse {
+  session_id: string;
+  session_entry_id: string;
+  snapshot: SessionSnapshot;
+  filters: {
+    lap_from: number | null;
+    lap_to: number | null;
+    stint_number: number | null;
+    include_deleted: boolean;
+  };
+  page: {
+    limit: number;
+    has_more: boolean;
+    next_after_lap: number | null;
+  };
+  items: LapSummary[];
+}
+
+export interface LapSummaryRequest {
+  after_lap?: number;
+  limit?: number;
+  lap_from?: number;
+  lap_to?: number;
+  stint_number?: number;
+  include_deleted?: boolean;
 }
 
 export interface ApiErrorResponse {

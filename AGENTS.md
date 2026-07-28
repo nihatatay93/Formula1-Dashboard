@@ -10,4 +10,5 @@ These rules apply to the entire repository.
 6. Never write passwords, tokens, cookies, credentials, or any other secret values to documentation.
 7. Never delete or overwrite changes made by the user.
 8. A task is not complete until `docs/PROJECT_CONTEXT.md` has been updated.
-
+9. Every Git commit must use a concise subject and an explanatory body that
+   records the scope, rationale, and relevant verification.

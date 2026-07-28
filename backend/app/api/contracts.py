@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Annotated, Self
 
@@ -35,7 +36,35 @@ def _utc_datetime(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+def _nonnegative_decimal_string(value: object) -> str:
+    if isinstance(value, bool) or isinstance(value, float):
+        raise ValueError("decimal value must be an exact non-negative number")
+    if isinstance(value, Decimal):
+        decimal_value = value
+    elif isinstance(value, int):
+        decimal_value = Decimal(value)
+    elif isinstance(value, str) and value and value == value.strip():
+        try:
+            decimal_value = Decimal(value)
+        except InvalidOperation as error:
+            raise ValueError(
+                "decimal value must be an exact non-negative number"
+            ) from error
+    else:
+        raise ValueError("decimal value must be an exact non-negative number")
+
+    if not decimal_value.is_finite() or decimal_value < 0:
+        raise ValueError("decimal value must be an exact non-negative number")
+    if decimal_value == 0:
+        decimal_value = decimal_value.copy_abs()
+    return format(decimal_value, "f")
+
+
 DecimalIdentifier = Annotated[str, BeforeValidator(_decimal_identifier)]
+NonnegativeDecimalString = Annotated[
+    str,
+    BeforeValidator(_nonnegative_decimal_string),
+]
 UtcDatetime = Annotated[datetime, AfterValidator(_utc_datetime)]
 
 
@@ -53,6 +82,12 @@ class IngestionStatus(StrEnum):
 class RecordState(StrEnum):
     PROVISIONAL = "provisional"
     FINALIZED = "finalized"
+
+
+class DataSource(StrEnum):
+    LIVE_SIGNALR = "live_signalr"
+    FASTF1_ARCHIVE = "fastf1_archive"
+    JOLPICA = "jolpica"
 
 
 class SeasonStatus(StrEnum):
@@ -200,6 +235,291 @@ class SeasonOverviewResponse(ApiModel):
     counts: SeasonCounts
     active_job: ActiveJobSummary | None
     events: tuple[SeasonEvent, ...]
+
+
+class SessionSnapshot(ApiModel):
+    data_available: bool
+    source: DataSource | None
+    record_state: RecordState | None
+    completed_at: UtcDatetime | None
+    source_updated_at: UtcDatetime | None
+
+    @model_validator(mode="after")
+    def validate_availability(self) -> Self:
+        required_values = (
+            self.source,
+            self.record_state,
+            self.completed_at,
+        )
+        if self.data_available and any(value is None for value in required_values):
+            raise ValueError(
+                "available snapshot requires source, record state, and completion time"
+            )
+        if not self.data_available and any(
+            value is not None
+            for value in (*required_values, self.source_updated_at)
+        ):
+            raise ValueError(
+                "unavailable snapshot cannot expose completed snapshot metadata"
+            )
+        return self
+
+
+class SessionDetailIngestion(ApiModel):
+    status: IngestionStatus
+    source: DataSource
+    record_state: RecordState
+    attempt_count: int = Field(ge=0)
+    completed_at: UtcDatetime | None
+    next_retry_at: UtcDatetime | None
+    last_error: LastError | None
+
+
+class SessionDetailEvent(ApiModel):
+    id: DecimalIdentifier
+    season_year: int = Field(ge=2018)
+    round_number: int = Field(ge=1)
+    official_name: str | None
+    event_name: str = Field(min_length=1)
+    country: str | None
+    location: str | None
+    event_format: str | None
+
+
+class SessionDetailCounts(ApiModel):
+    entries: int = Field(ge=0)
+    results: int = Field(ge=0)
+    laps: int = Field(ge=0)
+
+
+class SessionDetailResponse(ApiModel):
+    id: DecimalIdentifier
+    session_key: str = Field(min_length=1)
+    session_name: str = Field(min_length=1)
+    scheduled_start_at: UtcDatetime | None
+    scheduled_end_at: UtcDatetime | None
+    event: SessionDetailEvent
+    snapshot: SessionSnapshot
+    ingestion: SessionDetailIngestion | None
+    counts: SessionDetailCounts
+
+    @model_validator(mode="after")
+    def validate_unavailable_counts(self) -> Self:
+        if not self.snapshot.data_available and any(
+            (
+                self.counts.entries,
+                self.counts.results,
+                self.counts.laps,
+            )
+        ):
+            raise ValueError("unavailable session snapshot must have zero counts")
+        return self
+
+
+class SessionResultDriver(ApiModel):
+    id: DecimalIdentifier
+    jolpica_driver_id: str | None
+    given_name: str | None
+    family_name: str | None
+    full_name: str = Field(min_length=1)
+    country_code: str | None
+
+
+class SessionResultData(ApiModel):
+    position: int | None = Field(ge=1)
+    classified_position: str | None
+    grid_position: int | None = Field(ge=0)
+    points: NonnegativeDecimalString | None
+    status: str | None
+    laps_completed: int | None = Field(ge=0)
+    q1_time_us: int | None = Field(ge=0)
+    q2_time_us: int | None = Field(ge=0)
+    q3_time_us: int | None = Field(ge=0)
+    elapsed_time_us: int | None = Field(ge=0)
+    gap_to_leader_us: int | None = Field(ge=0)
+    gap_to_leader_laps: int | None = Field(ge=0)
+    source: DataSource
+    record_state: RecordState
+
+
+class SessionEntryResult(ApiModel):
+    session_entry_id: DecimalIdentifier
+    driver: SessionResultDriver | None
+    racing_number: str | None
+    abbreviation: str | None
+    broadcast_name: str | None
+    display_name: str = Field(min_length=1)
+    team_jolpica_id: str | None
+    team_name: str | None
+    team_color_hex: str | None = Field(pattern=r"^#[0-9A-F]{6}$")
+    source: DataSource
+    record_state: RecordState
+    result: SessionResultData | None
+
+
+class SessionResultsResponse(ApiModel):
+    session_id: DecimalIdentifier
+    snapshot: SessionSnapshot
+    items: tuple[SessionEntryResult, ...]
+
+    @model_validator(mode="after")
+    def validate_available_ordered_snapshot(self) -> Self:
+        if not self.snapshot.data_available:
+            raise ValueError("result response requires an available snapshot")
+
+        entry_ids = [item.session_entry_id for item in self.items]
+        if len(entry_ids) != len(set(entry_ids)):
+            raise ValueError("result items must have unique session entry IDs")
+
+        ordered_items = sorted(
+            self.items,
+            key=lambda item: (
+                item.result is None or item.result.position is None,
+                (
+                    item.result.position
+                    if item.result is not None
+                    and item.result.position is not None
+                    else 0
+                ),
+                int(item.session_entry_id),
+            ),
+        )
+        if list(self.items) != ordered_items:
+            raise ValueError(
+                "result items must be ordered by position and session entry"
+            )
+        return self
+
+
+class LapSummaryQuery(ApiModel):
+    after_lap: int | None = Field(default=None, ge=0)
+    limit: int = Field(default=50, ge=1, le=100)
+    lap_from: int | None = Field(default=None, ge=1)
+    lap_to: int | None = Field(default=None, ge=1)
+    stint_number: int | None = Field(default=None, ge=1)
+    include_deleted: bool = True
+
+    @model_validator(mode="after")
+    def validate_lap_range(self) -> Self:
+        if (
+            self.lap_from is not None
+            and self.lap_to is not None
+            and self.lap_from > self.lap_to
+        ):
+            raise ValueError("lap_from cannot be greater than lap_to")
+        return self
+
+
+class LapSummaryFilters(ApiModel):
+    lap_from: int | None = Field(ge=1)
+    lap_to: int | None = Field(ge=1)
+    stint_number: int | None = Field(ge=1)
+    include_deleted: bool
+
+    @model_validator(mode="after")
+    def validate_lap_range(self) -> Self:
+        if (
+            self.lap_from is not None
+            and self.lap_to is not None
+            and self.lap_from > self.lap_to
+        ):
+            raise ValueError("lap_from cannot be greater than lap_to")
+        return self
+
+
+class LapSummaryPage(ApiModel):
+    limit: int = Field(ge=1, le=100)
+    has_more: bool
+    next_after_lap: int | None = Field(ge=1)
+
+    @model_validator(mode="after")
+    def validate_cursor(self) -> Self:
+        if self.has_more != (self.next_after_lap is not None):
+            raise ValueError(
+                "next lap cursor presence must agree with has_more"
+            )
+        return self
+
+
+class LapSummary(ApiModel):
+    id: DecimalIdentifier
+    lap_number: int = Field(ge=1)
+    stint_number: int | None = Field(ge=1)
+    session_time_us: int | None = Field(ge=0)
+    lap_time_us: int | None = Field(ge=0)
+    lap_start_time_us: int | None = Field(ge=0)
+    pit_out_time_us: int | None = Field(ge=0)
+    pit_in_time_us: int | None = Field(ge=0)
+    sector_1_time_us: int | None = Field(ge=0)
+    sector_2_time_us: int | None = Field(ge=0)
+    sector_3_time_us: int | None = Field(ge=0)
+    sector_1_session_time_us: int | None = Field(ge=0)
+    sector_2_session_time_us: int | None = Field(ge=0)
+    sector_3_session_time_us: int | None = Field(ge=0)
+    speed_i1_kph: float | None = Field(ge=0, allow_inf_nan=False)
+    speed_i2_kph: float | None = Field(ge=0, allow_inf_nan=False)
+    speed_fl_kph: float | None = Field(ge=0, allow_inf_nan=False)
+    speed_st_kph: float | None = Field(ge=0, allow_inf_nan=False)
+    is_personal_best: bool | None
+    compound: str | None
+    tyre_life_laps: int | None = Field(ge=0)
+    fresh_tyre: bool | None
+    track_status: str | None
+    position: int | None = Field(ge=1)
+    deleted: bool | None
+    deleted_reason: str | None
+    fastf1_generated: bool
+    is_accurate: bool
+    source: DataSource
+    record_state: RecordState
+
+
+class LapSummaryResponse(ApiModel):
+    session_id: DecimalIdentifier
+    session_entry_id: DecimalIdentifier
+    snapshot: SessionSnapshot
+    filters: LapSummaryFilters
+    page: LapSummaryPage
+    items: tuple[LapSummary, ...]
+
+    @model_validator(mode="after")
+    def validate_page(self) -> Self:
+        if not self.snapshot.data_available:
+            raise ValueError("lap response requires an available snapshot")
+        if len(self.items) > self.page.limit:
+            raise ValueError("lap item count cannot exceed the page limit")
+
+        lap_numbers = [item.lap_number for item in self.items]
+        if lap_numbers != sorted(set(lap_numbers)):
+            raise ValueError("lap items must have unique ascending lap numbers")
+
+        if self.page.has_more:
+            if not self.items:
+                raise ValueError("a continued lap page must contain items")
+            if self.page.next_after_lap != self.items[-1].lap_number:
+                raise ValueError(
+                    "next lap cursor must equal the last returned lap"
+                )
+
+        for item in self.items:
+            if (
+                self.filters.lap_from is not None
+                and item.lap_number < self.filters.lap_from
+            ):
+                raise ValueError("lap item is below the response lower bound")
+            if (
+                self.filters.lap_to is not None
+                and item.lap_number > self.filters.lap_to
+            ):
+                raise ValueError("lap item is above the response upper bound")
+            if (
+                self.filters.stint_number is not None
+                and item.stint_number != self.filters.stint_number
+            ):
+                raise ValueError("lap item does not match the response stint")
+            if not self.filters.include_deleted and item.deleted is True:
+                raise ValueError("deleted lap cannot appear when excluded")
+        return self
 
 
 class EnsureBackfillResponse(ApiModel):
