@@ -1,13 +1,13 @@
 # FastF1 One-Session Ingestion Contract
 
-Status: **accepted; normalization implemented, persistence pending**
+Status: **accepted; normalization and persistence implemented**
 Date: **2026-07-28**
 
 ## Purpose
 
 This contract defines how one complete FastF1 session snapshot is validated and
-eventually replaces the previously stored FastF1 archive snapshot for the same
-database session.
+replaces the previously stored FastF1 archive snapshot for the same database
+session.
 
 An upsert updates or creates rows that are present in a new snapshot. It does not
 remove previously stored rows that are absent from that snapshot. Without explicit
@@ -32,9 +32,9 @@ It does not cover:
 - Live SignalR data.
 - Reconciliation between provisional live data and finalized archive data.
 
-The first persistence implementation must refuse to replace a session containing
-non-archive sporting rows. It must not delete or overwrite `live_signalr` provisional
-data until the live finalization contract is designed.
+The persistence implementation refuses to replace a session containing non-archive
+sporting rows or ingestion state. It does not delete or overwrite `live_signalr`
+provisional data; live finalization requires a separate reconciliation contract.
 
 ## Deterministic Entry Identity
 
@@ -80,19 +80,23 @@ Any validation failure rejects the complete candidate snapshot.
 
 ## Atomic Replacement
 
-After validation succeeds, persistence will use one database transaction:
+After validation succeeds, persistence uses one database transaction:
 
-1. Lock or otherwise verify exclusive write ownership for the database session.
-2. Verify that the session does not contain sporting rows owned by another source.
+1. Lock the target `sessions` row with `SELECT ... FOR UPDATE`.
+2. Verify that the session does not contain sporting rows or ingestion state owned
+   by another source.
 3. Upsert global drivers by verified Jolpica driver ID.
-4. Upsert session entries by `(session_id, entry_key)`.
-5. Upsert results by `session_entry_id`.
-6. Upsert laps by `(session_entry_id, lap_number)`.
-7. Delete archive-owned results and laps absent from the new snapshot.
-8. Delete archive-owned session entries absent from the new snapshot, after their
+4. Temporarily clear archive entry driver links and racing numbers inside the
+   transaction so corrected number assignments and fallback-to-verified key
+   transitions cannot violate partial unique indexes.
+5. Upsert session entries by `(session_id, entry_key)`.
+6. Upsert results by `session_entry_id`.
+7. Upsert laps by `(session_entry_id, lap_number)` in bounded batches.
+8. Delete archive-owned results and laps absent from the new snapshot.
+9. Delete archive-owned session entries absent from the new snapshot, after their
    children have been removed.
-9. Mark the session ingestion `completed` and `finalized`.
-10. Commit once.
+10. Mark the session ingestion `completed` and `finalized`.
+11. Commit once.
 
 Global driver rows are not session-owned and must never be deleted by session
 replacement.
@@ -106,9 +110,9 @@ replaced session.
 FastF1 loading or normalization failure does not open the replacement transaction.
 
 If persistence fails, the entire replacement transaction rolls back and the
-previous committed sporting snapshot remains available. The worker will record the
-sanitized failure state in a separate transaction after rollback; retry timing is a
-later orchestration decision.
+previous committed sporting snapshot remains available. Recording a sanitized
+worker failure in a separate transaction and choosing retry timing remain later
+orchestration work.
 
 The implementation must never delete the old snapshot before the new snapshot has
 been fully loaded and validated.
@@ -135,11 +139,16 @@ Implemented:
 - Null, scalar, integer, duration, decimal, boolean, and speed validation.
 - Race/sprint result-time normalization.
 - Lap-to-entry association and natural-key duplicate detection.
+- Transaction ownership and target-session row locking.
+- Non-archive entry, result, lap, and ingestion-state protection.
+- Driver, entry, result, and bounded-batch lap upserts.
+- Stale archive row deletion without deleting global drivers.
+- Atomic `completed` and `finalized` ingestion-state updates.
+- Rollback preservation and idempotent stable natural-key rows.
 
 Not implemented:
 
 - FastF1 session loading and cache activation.
-- Database upserts and stale-row deletion.
-- Exclusive session writer enforcement.
-- Session ingestion state transitions.
+- Pending/running/failed ingestion state transitions.
+- Failure recording after persistence rollback.
 - Worker execution and retry behavior.

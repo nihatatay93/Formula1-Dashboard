@@ -14,10 +14,11 @@ two database migrations:
 - Backfill control-plane tables for seasons, sessions, ingestion state, and jobs
 - Sporting-data tables for drivers, session entries, results, and lap summaries
 - Locked FastF1 runtime and pure results-and-laps normalization
+- Atomic persistence and stale-row replacement for one normalized archive session
 - Docker Compose health checks
 
-FastF1 session loading and database persistence, telemetry, and live timing
-ingestion are not implemented yet.
+FastF1 session loading and worker execution, telemetry, and live timing ingestion
+are not implemented yet.
 
 ## Requirements
 
