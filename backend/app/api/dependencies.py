@@ -1,6 +1,10 @@
 from datetime import UTC, datetime
 
+from sqlalchemy.exc import ArgumentError
+from sqlalchemy.orm import Session, sessionmaker
+
 from app.api.errors import ApiError
+from app.db.session import create_session_factory
 
 MINIMUM_SEASON_YEAR = 2018
 
@@ -37,3 +41,13 @@ def require_supported_season_year(season_year: int) -> int:
             message="Season year is outside the supported range.",
         ) from None
 
+
+def get_database_session_factory() -> sessionmaker[Session]:
+    try:
+        return create_session_factory()
+    except (ArgumentError, RuntimeError):
+        raise ApiError(
+            status_code=500,
+            code="server_configuration_error",
+            message="Server database configuration is invalid.",
+        ) from None

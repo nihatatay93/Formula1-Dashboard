@@ -1,7 +1,7 @@
 # Historical Season and Backfill REST API Design
 
-Status: **accepted; API foundation and season overview read service implemented,
-endpoints not implemented**
+Status: **accepted; API foundation, season overview read service, and season
+overview endpoint implemented; command and job-progress endpoints not implemented**
 Date: **2026-07-28**
 
 ## Purpose
@@ -103,8 +103,7 @@ measured before introducing another background control plane.
 This endpoint is strictly read-only. It never contacts FastF1 and never creates
 or modifies a job.
 
-The database read service behind this future endpoint is implemented. The route
-itself is not yet mounted.
+The database read service and HTTP route are implemented.
 
 For a supported year with no stored coverage, it returns `200 OK` with
 `status: "missing"` and an empty event list. `missing` is an accepted domain
@@ -324,17 +323,19 @@ separate pagination and query contracts.
 
 ## Implementation Sequence
 
-1. Partially implemented: versioned API router, response schemas, supported-year
-   validation, and the stable base error envelope. Database dependencies and
-   internal-exception mappings remain with the endpoints that use them.
+1. Implemented: versioned API router, response schemas, supported-year
+   validation, stable base error envelope, database session-factory dependency,
+   and client-safe configuration/database failure mappings for the season
+   overview endpoint.
 2. Implemented: pure/testable derived season-status policy.
 3. Partially implemented: read-model queries for latest season membership,
-   session eligibility/state, active-job summary, and derived season status.
-   Job-progress reads remain planned.
+   session eligibility/state, active-job summary, and derived season status, plus
+   the read-only season overview HTTP route. Job-progress reads remain planned.
 4. Planned: connect the POST command to `ensure_season_backfill`.
-5. Planned: add PostgreSQL API integration tests, including concurrent POSTs,
-   preserved completed data, invalid years, and sanitized failures.
-6. Planned: verify generated OpenAPI, Docker Compose startup, and real API-to-worker
-   handoff without adding a live upstream request to automated tests.
+5. Partially implemented: season overview route, invalid-year, client-safe
+   failure, generated OpenAPI, and PostgreSQL read-service coverage. Concurrent
+   POST and API-to-worker handoff tests remain planned.
+6. Planned: verify real API-to-worker handoff without adding a live upstream
+   request to automated tests.
 
 No database migration is expected for this API slice.
