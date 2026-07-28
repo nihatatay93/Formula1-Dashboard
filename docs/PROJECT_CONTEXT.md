@@ -16,7 +16,7 @@ The system is intended to:
 
 ## Current Architecture
 
-The local-development scaffold, first two database migrations, locked FastF1 runtime, and a managed database-bound one-session FastF1 archive vertical slice are implemented. The managed slice adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. The database contains the backfill control plane and normalized sporting-data tables. Year-level backfill orchestration, retry/lease policy, worker job processing, telemetry, and live timing ingestion are not yet implemented.
+The local-development scaffold, first two database migrations, locked FastF1 runtime, and a managed database-bound one-session FastF1 archive vertical slice are implemented. The managed slice adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. Retry, backoff, heartbeat, lease recovery, fencing, and current-season freshness policies are accepted but not yet implemented. The database contains the backfill control plane and normalized sporting-data tables. Year-level backfill orchestration, worker job processing, telemetry, and live timing ingestion are not yet implemented.
 
 Implemented services in `compose.yaml`:
 
@@ -32,6 +32,7 @@ Implemented supporting infrastructure:
 - FastF1 cache activation and session loads are serialized within one process.
 - One-session archive requests are derived from stored session and event identity, checked against the loaded FastF1 session, and revalidated under database row locks before replacement.
 - Archive attempts expose committed running state, reject overlap and non-archive ownership, and record fixed secret-free failure diagnostics without deleting a previous completed snapshot.
+- Host-side Python editing uses a native macOS Python 3.13 environment synchronized from `backend/uv.lock`; Docker-created virtual environments are not reused by the host editor.
 - The backend uses Python 3.13, `uv`, FastAPI, FastF1 3.8.3, pandas, SQLAlchemy 2, Alembic, psycopg, Uvicorn, pytest, and Ruff.
 - The frontend uses Node.js 24, npm, React, TypeScript, and Vite.
 - PostgreSQL trust authentication is restricted to loopback-bound local development and must not be reused for production.
@@ -90,6 +91,7 @@ Formula1-Dashboard/
 │   ├── pyproject.toml
 │   └── uv.lock
 ├── docs/
+│   ├── BACKFILL_RUNTIME_POLICY.md
 │   ├── DATABASE_DESIGN.md
 │   ├── FASTF1_INGESTION_CONTRACT.md
 │   ├── PROJECT_CONTEXT.md
@@ -109,6 +111,7 @@ Formula1-Dashboard/
 - `backend/tests/`: Backend tests.
 - `frontend/src/`: React dashboard source.
 - `docs/`: Architecture, decisions, and persistent project context.
+- `docs/BACKFILL_RUNTIME_POLICY.md`: Accepted retry, backoff, heartbeat, lease recovery, fencing, and current-season freshness policy; not yet implemented.
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic conventions, migration phases, tables, constraints, indexes, and recovery behavior.
 - `docs/FASTF1_INGESTION_CONTRACT.md`: Accepted one-session validation, identity, atomic replacement, failure, and idempotency contract.
 - `docs/SPORTING_DATA_DESIGN.md`: Evidence-based implemented Revision 2 driver, entry, result, and lap schema.
@@ -150,6 +153,13 @@ Formula1-Dashboard/
 - Decision: Use Python and FastAPI for the backend and ingestion processes.
 - Rationale: Integrate naturally with FastF1 and provide one API for web and iOS clients.
 - Date: 2026-07-27
+- Status: implemented
+
+### Host Python editor environment
+
+- Decision: Use Homebrew Python 3.13 and `uv` to create an ignored native `backend/.venv` for VS Code, while continuing to use the same committed `pyproject.toml` and `uv.lock` as Docker.
+- Rationale: A virtual environment created inside the Linux backend container contains a Linux interpreter path and binaries that cannot be used by macOS VS Code.
+- Date: 2026-07-28
 - Status: implemented
 
 ### Frontend foundation
@@ -348,6 +358,27 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: implemented
 
+### Backfill retry and backoff policy
+
+- Decision: Allow four attempts per job-session; classify only FastF1 loading, target changes, and confirmed transient database failures as retryable; use exponential backoff with a 60-second base, multiplier 2, 15-minute cap, and equal jitter from 50% to 100% of nominal delay.
+- Rationale: Recover from transient upstream and infrastructure faults without repeatedly retrying deterministic configuration, normalization, identity, source, integrity, or unknown failures.
+- Date: 2026-07-28
+- Status: accepted
+
+### Heartbeat, lease, and fencing policy
+
+- Decision: Heartbeat every 30 seconds, expire leases after 5 minutes, scan for recovery every 30 seconds, and fence all heartbeat/failure/completion writes with job ID, job attempt count, and the monotonic session-ingestion attempt token.
+- Rationale: Recover abandoned work while preventing a delayed stale worker from overwriting a newer attempt.
+- Date: 2026-07-28
+- Status: accepted
+
+### Current-season freshness policy
+
+- Decision: Use a 6-hour current-season coverage TTL, 30-day historical coverage TTL, 2-hour post-session archive grace period, and automatic archive correction checkpoints at 24 hours and 7 days after scheduled session end.
+- Rationale: Serve existing data immediately, discover new current-season sessions promptly, avoid requesting archives before they are likely available, and capture normal post-session corrections without indefinite upstream polling.
+- Date: 2026-07-28
+- Status: accepted
+
 ## Database Model
 
 Alembic revision `20260727_0001` implements the backfill control plane:
@@ -444,7 +475,7 @@ Accepted behavior:
 13. FastF1 cache must be used, and aggressive parallel requests must be avoided.
 14. Telemetry must be queried separately by session, driver, and lap.
 
-The accepted one-session replacement and attempt contract is documented in `docs/FASTF1_INGESTION_CONTRACT.md`. A managed archive attempt commits running state and increments its attempt count before calling the vertical slice. The slice derives one request from database session identity, loads through the persistent serialized cache, verifies loaded identity, normalizes results and laps, and atomically replaces the target archive snapshot. Success marks ingestion completed/finalized with the snapshot. Failure is re-raised after a separate owning-attempt transaction stores only a fixed sanitized code and message; a previous completed snapshot and its timestamps remain available. Year-level job orchestration, job-session synchronization, retry timing, heartbeat, lease recovery, and worker processing are not implemented.
+The accepted one-session replacement and attempt contract is documented in `docs/FASTF1_INGESTION_CONTRACT.md`. A managed archive attempt commits running state and increments its attempt count before calling the vertical slice. The slice derives one request from database session identity, loads through the persistent serialized cache, verifies loaded identity, normalizes results and laps, and atomically replaces the target archive snapshot. Success marks ingestion completed/finalized with the snapshot. Failure is re-raised after a separate owning-attempt transaction stores only a fixed sanitized code and message; a previous completed snapshot and its timestamps remain available. The runtime policy in `docs/BACKFILL_RUNTIME_POLICY.md` is accepted. Year-level job orchestration, job-session synchronization, retry scheduling, heartbeat execution, lease recovery, fencing enforcement, freshness evaluation, and worker processing are not implemented.
 
 ## Live Timing Design
 
@@ -507,16 +538,19 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Added PostgreSQL coverage for observable running state, idempotent pending, attempt increments, prior-snapshot preservation, sanitized failure fields, existing-running rejection, non-archive ownership, and timestamp validation.
 - Added focused coverage for every stable persisted failure-code mapping and its fixed secret-free message.
 - Verified the complete 66-test suite against an isolated PostgreSQL 17 database.
+- Diagnosed the VS Code unresolved-import issue as a Linux-container virtual environment being reused on macOS while the host had only Python 3.9.
+- Installed host Python 3.13 and `uv`, recreated the ignored `backend/.venv` natively from `uv.lock`, and verified SQLAlchemy, pandas, FastF1, Ruff, and focused pytest execution.
+- Created and accepted the runtime policy for retry budgets, backoff, heartbeat, lease recovery, stale-worker fencing, and current-season freshness; no policy behavior has been implemented yet.
 
 No year-level FastF1 backfill orchestration, worker job execution, telemetry, or live timing feature has been completed.
 
 ## Work in Progress
 
-- No implementation is currently in progress after managed archive attempt state and sanitized failure recording.
+- No runtime policy implementation is currently in progress after acceptance of `docs/BACKFILL_RUNTIME_POLICY.md`.
 
 ## Next Steps
 
-1. Define retry count, backoff, heartbeat, lease, and current-season freshness policies before worker orchestration.
+1. Implement typed runtime settings, retryable/terminal exception classification, and deterministic backoff calculations with tests.
 2. Decide whether manual backfill cancellation belongs in the first phase.
 3. Add season coverage and job-progress REST APIs.
 4. Add the basic season selection and progress UI.
@@ -545,6 +579,17 @@ docker run --rm -e UV_PROJECT_ENVIRONMENT=/tmp/formula1-dashboard-venv -v "$PWD/
 docker run --rm -e UV_PROJECT_ENVIRONMENT=/tmp/formula1-dashboard-venv -v "$PWD/backend:/workspace" -w /workspace ghcr.io/astral-sh/uv:0.11.29-python3.13-trixie-slim uv run --frozen pytest
 ```
 
+Host-side VS Code and Python tooling were verified on macOS with:
+
+```bash
+brew install python@3.13 uv
+cd backend
+uv venv --clear --python 3.13 .venv
+uv sync --frozen
+.venv/bin/ruff check .
+.venv/bin/pytest tests/test_archive_attempt.py
+```
+
 Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The complete suite passed with 66 tests against an isolated PostgreSQL 17 database after managed attempt state and sanitized failure recording were added.
 
 ## Known Issues and Technical Debt
@@ -557,17 +602,18 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - Session-row locking serializes callers that use the persistence service; worker claiming and lease recovery remain unimplemented.
 - FastF1 loading is serialized per process; cross-process concurrency must be controlled by worker claiming and leases.
 - TimescaleDB usage has not been decided.
-- Job recovery, retry, lease, heartbeat, and locking fields exist, but policies and processing behavior have not been finalized.
+- Job recovery, retry, lease, heartbeat, and locking fields exist, and their policy is accepted, but processing behavior has not been implemented.
 - Season/backfill API paths and response schemas have not been finalized.
 - FastF1 ingestion time and storage volume have not been measured.
 - Live SignalR protocol and reconciliation rules have not been designed.
 - PostgreSQL trust authentication is suitable only for the current loopback-bound local environment.
-- The ignored host `.venv` is not portable; use the verified container-based backend commands.
+- Virtual environments are platform-specific. Never reuse a `.venv` created inside the Linux container on macOS; recreate the ignored host environment from `uv.lock`.
 
 ## Important Files
 
 - `AGENTS.md`: Mandatory context, safety, language, and user-change preservation rules.
 - `docs/PROJECT_CONTEXT.md`: Authoritative record of current behavior, accepted decisions, and next steps.
+- `docs/BACKFILL_RUNTIME_POLICY.md`: Accepted runtime retry, backoff, heartbeat, lease recovery, fencing, and freshness decisions.
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic layout, relational model, migration phases, idempotency, locking, and recovery design.
 - `docs/FASTF1_INGESTION_CONTRACT.md`: Accepted one-session archive snapshot identity, validation, atomic replacement, and failure behavior.
 - `docs/SPORTING_DATA_DESIGN.md`: Implemented Revision 2 schema, FastF1 inspection evidence, normalization rules, and decisions.
@@ -596,6 +642,8 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 
 ## Change Log
 
+- 2026-07-28 — Accepted retry, backoff, heartbeat, lease recovery, stale-worker fencing, and current-season freshness policies.
+- 2026-07-28 — Recreated the ignored backend virtual environment with native macOS Python 3.13 and verified VS Code dependency imports against the locked environment.
 - 2026-07-28 — Implemented and verified managed archive attempt states, attempt counting, overlap/source protection, and secret-free failure recording.
 - 2026-07-28 — Implemented and verified the database-bound one-session FastF1 loading, normalization, and transactional persistence vertical slice.
 - 2026-07-28 — Implemented and verified the serialized cache-backed FastF1 one-session loader with messages enabled and telemetry/weather disabled.

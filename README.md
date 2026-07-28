@@ -30,6 +30,25 @@ timing ingestion are not implemented yet.
 Node.js 24 and CPython 3.13 are needed only when running services directly
 outside Docker.
 
+## Local Python editor setup
+
+VS Code and other host editors need a native virtual environment; a `.venv`
+created inside the Linux backend container is not usable on macOS.
+
+Install the required host tools and synchronize the locked backend environment:
+
+```bash
+brew install python@3.13 uv
+cd backend
+uv venv --clear --python 3.13 .venv
+uv sync --frozen
+```
+
+When the repository root is open in VS Code, select
+`backend/.venv/bin/python` with **Python: Select Interpreter**, then reload the
+window if import diagnostics remain cached. The generated `.venv` and local
+`.vscode` settings are ignored by Git.
+
 ## Local development
 
 Start the complete local stack:
