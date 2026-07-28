@@ -49,10 +49,12 @@ services:
       ]
     environment:
       DATABASE_URL: postgresql://formula1_dashboard@db:5432/formula1_dashboard
+      FASTF1_CACHE_PATH: /cache/fastf1
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./backend:/workspace
+      - fastf1_cache:/cache/fastf1
     depends_on:
       migrate:
         condition: service_completed_successfully

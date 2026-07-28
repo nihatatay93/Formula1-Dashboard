@@ -4,8 +4,8 @@ Formula1 Dashboard is a local-first Formula 1 data platform. It will combine
 historical FastF1 data and future SignalR live timing behind a single API for
 the web dashboard and a future iOS application.
 
-The repository currently contains the local development scaffold and three
-database migrations:
+The repository currently contains the local development scaffold, three
+database migrations, and the first historical backfill API slice:
 
 - FastAPI backend with liveness and PostgreSQL readiness endpoints
 - Single-concurrency archive worker using the same backend image
@@ -28,9 +28,13 @@ database migrations:
 - Advisory-locked active-job creation/reuse with idempotent session queuing
 - Transactional parent-job aggregation from locked session outcomes
 - Worker claim, heartbeat, recovery, failure/completion, and aggregation loop
+- Idempotent season backfill command with synchronous cached schedule discovery
+- Read-only season overview and backfill-job progress APIs
+- Stable versioned response, validation, and sanitized error contracts
 - Docker Compose health checks
 
-REST backfill APIs, telemetry, and live timing ingestion are not implemented yet.
+Historical session-result and lap-summary APIs, telemetry, and live timing
+ingestion are not implemented yet.
 
 ## Requirements
 
@@ -75,7 +79,14 @@ The services are exposed locally at:
 - Backend API: `http://localhost:8000`
 - API liveness: `http://localhost:8000/api/health/live`
 - API readiness: `http://localhost:8000/api/health/ready`
+- Season overview: `GET http://localhost:8000/api/v1/seasons/{season_year}`
+- Ensure season backfill: `POST http://localhost:8000/api/v1/seasons/{season_year}/backfill`
+- Backfill progress: `GET http://localhost:8000/api/v1/backfill-jobs/{job_id}`
 - PostgreSQL: `localhost:5432`
+
+The POST command may synchronously refresh the selected season schedule through
+FastF1's persistent cache. Session ingestion continues asynchronously in the
+single-concurrency worker.
 
 Stop the stack:
 

@@ -1,7 +1,6 @@
 # Historical Season and Backfill REST API Design
 
-Status: **accepted; API foundation, season overview endpoint, and job-progress
-endpoint implemented; backfill command endpoint not implemented**
+Status: **accepted and implemented**
 Date: **2026-07-28**
 
 ## Purpose
@@ -52,6 +51,8 @@ The command is idempotent by season:
 - Existing active work is returned rather than duplicated.
 - Only missing eligible child rows are appended.
 - No job is created when no session is currently archive eligible.
+
+The HTTP route and its connection to the season planner are implemented.
 
 Supported years are from 2018 through the current UTC calendar year.
 
@@ -333,12 +334,11 @@ separate pagination and query contracts.
 3. Implemented: read-model queries for latest season membership, session
    eligibility/state, active-job summary, derived season status, and detailed
    job progress, plus both read-only HTTP routes.
-4. Planned: connect the POST command to `ensure_season_backfill`.
-5. Partially implemented: season overview and job-progress routes, malformed
-   identifier handling, client-safe failures, generated OpenAPI, and PostgreSQL
-   season/job read-service coverage. Concurrent POST and API-to-worker handoff
-   tests remain planned.
-6. Planned: verify real API-to-worker handoff without adding a live upstream
-   request to automated tests.
+4. Implemented: connect the POST command to `ensure_season_backfill`.
+5. Implemented: season and job routes, invalid identifiers/years, client-safe
+   failures, generated OpenAPI, preserved completed data, PostgreSQL read
+   services, planner idempotency, and concurrent HTTP command requests.
+6. Implemented: verify API-to-worker database handoff without adding a live
+   upstream request to automated tests.
 
 No database migration is expected for this API slice.

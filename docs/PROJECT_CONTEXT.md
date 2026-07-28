@@ -16,7 +16,7 @@ The system is intended to:
 
 ## Current Architecture
 
-The local-development scaffold, three database migrations, locked FastF1 runtime, schedule discovery and season job planner, a managed database-bound one-session FastF1 archive worker, the first historical API foundation, the read-only season overview endpoint, and the read-only job-progress endpoint are implemented. The API foundation provides the `/api/v1` router boundary, strict response/error contracts, 2018-through-current-UTC-year validation, JavaScript-safe decimal-string database identifiers, UTC timestamp normalization, and pure derived season-status precedence. `GET /api/v1/seasons/{season_year}` reads one repeatable PostgreSQL snapshot, includes only latest-discovery calendar membership, evaluates archive eligibility and preserved data availability, summarizes active work, maps directly into the accepted response contract, disables response caching, and never contacts FastF1 or writes to the database. `GET /api/v1/backfill-jobs/{job_id}` reads one job and all children inside a repeatable-read, read-only snapshot, derives internally consistent progress counts, preserves deterministic round/session ordering, never runs parent aggregation, and exposes stable UUID validation and sanitized errors. The managed ingestion flow adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. Validated runtime settings, retryable/terminal exception classification, deterministic equal-jitter backoff calculations, transactional job-session claiming, synchronized retry/terminal failure transitions, ownership-fenced heartbeat writes, claim-aware atomic completion, bounded stale-lease recovery, deterministic season/session freshness eligibility, transactional parent-job aggregation, and single-concurrency worker execution are implemented. Claims use PostgreSQL row locking and return job-attempt and monotonic session-attempt ownership tokens; heartbeat, failure, and completion writes validate both tokens. Recovery fences the lost claim by leaving running state before a retry can be claimed. Freshness functions evaluate UTC coverage expiry, archive grace, and correction checkpoints. The season planner loads real FastF1 schedule start/end boundaries outside database locks, persists the latest calendar snapshot atomically, and creates or reuses one active year job under a season advisory lock. Aggregation locks all child rows before the parent, preserves monotonic job state, and returns progress counts. The worker polls eligible jobs, maintains heartbeats during blocking FastF1 work, runs recovery/parent reconciliation every 30 seconds, applies fenced outcomes, and stops gracefully without taking new work. The database contains the backfill control plane, schedule membership markers, and normalized sporting-data tables. The backfill command endpoint, telemetry, and live timing ingestion are not yet implemented.
+The local-development scaffold, three database migrations, locked FastF1 runtime, schedule discovery and season job planner, a managed database-bound one-session FastF1 archive worker, and the first historical API slice are implemented. The API slice provides `POST /api/v1/seasons/{season_year}/backfill`, `GET /api/v1/seasons/{season_year}`, and `GET /api/v1/backfill-jobs/{job_id}` with strict response/error contracts, 2018-through-current-UTC-year validation, JavaScript-safe decimal-string database identifiers, UTC timestamp normalization, dynamic `200/202` command behavior, and client-safe failures. The season overview reads one repeatable PostgreSQL snapshot and never writes or contacts FastF1. The job-progress endpoint reads one repeatable snapshot, derives internally consistent counts, preserves deterministic round/session ordering, and never runs parent aggregation. The idempotent backfill command synchronously checks schedule coverage through the persistent FastF1 cache, delegates all planning and concurrency control to the season planner, creates or reuses one active job, and exposes its polling location without performing session ingestion in the API process. The managed ingestion flow adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. Validated runtime settings, retryable/terminal exception classification, deterministic equal-jitter backoff calculations, transactional job-session claiming, synchronized retry/terminal failure transitions, ownership-fenced heartbeat writes, claim-aware atomic completion, bounded stale-lease recovery, deterministic season/session freshness eligibility, transactional parent-job aggregation, and single-concurrency worker execution are implemented. Claims use PostgreSQL row locking and return job-attempt and monotonic session-attempt ownership tokens; heartbeat, failure, and completion writes validate both tokens. Recovery fences the lost claim by leaving running state before a retry can be claimed. Freshness functions evaluate UTC coverage expiry, archive grace, and correction checkpoints. The season planner loads real FastF1 schedule start/end boundaries outside database locks, persists the latest calendar snapshot atomically, and creates or reuses one active year job under a season advisory lock. Aggregation locks all child rows before the parent, preserves monotonic job state, and returns progress counts. The worker polls eligible jobs, maintains heartbeats during blocking FastF1 work, runs recovery/parent reconciliation every 30 seconds, applies fenced outcomes, and stops gracefully without taking new work. The database contains the backfill control plane, schedule membership markers, and normalized sporting-data tables. Product UI beyond the readiness scaffold, telemetry, and live timing ingestion are not yet implemented.
 
 Implemented services in `compose.yaml`:
 
@@ -29,6 +29,7 @@ Implemented services in `compose.yaml`:
 Implemented supporting infrastructure:
 
 - A persistent `fastf1_cache` Docker volume is declared for the worker.
+- The API and worker mount the same persistent `fastf1_cache` volume; the API uses it only for synchronous schedule discovery and the worker uses it for archive session loading.
 - FastF1 cache activation and session loads are serialized within one process.
 - One-session archive requests are derived from stored session and event identity, checked against the loaded FastF1 session, and revalidated under database row locks before replacement.
 - Archive attempts expose committed running state, reject overlap and non-archive ownership, and record fixed secret-free failure diagnostics without deleting a previous completed snapshot.
@@ -119,6 +120,8 @@ Formula1-Dashboard/
 │   │   ├── test_runtime_policy.py
 │   │   ├── test_season_endpoint.py
 │   │   ├── test_season_backfill.py
+│   │   ├── test_season_backfill_endpoint.py
+│   │   ├── test_season_backfill_endpoint_integration.py
 │   │   ├── test_season_overview.py
 │   │   ├── test_season_status.py
 │   │   ├── test_sporting_data_integration.py
@@ -144,7 +147,7 @@ Formula1-Dashboard/
 ```
 
 - `backend/app/`: FastAPI and worker process source.
-- `backend/app/api/`: Versioned router boundary, strict historical response/error models, supported-year validation, pure derived season-status policy, read-only season overview service and route, and read-only job-progress service and route.
+- `backend/app/api/`: Versioned historical API, strict response/error models, supported-year validation, season and job read models/routes, and the idempotent backfill command boundary.
 - `backend/app/db/`: SQLAlchemy metadata, connection configuration, session factory, and Revision 1–3 models.
 - `backend/app/ingestion/`: Managed attempt state, schedule discovery and season planning, transactional backfill claiming/failure/aggregation transitions, single-concurrency worker execution, database-bound one-session orchestration, cache-backed loading, pure upstream-to-domain normalization, atomic archive persistence, and runtime/freshness policy primitives.
 - `backend/alembic/`: Alembic environment and reviewed migration revisions.
@@ -154,7 +157,7 @@ Formula1-Dashboard/
 - `docs/BACKFILL_RUNTIME_POLICY.md`: Accepted retry, backoff, heartbeat, lease recovery, fencing, current-season freshness, parent aggregation, and worker execution policy.
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic conventions, migration phases, tables, constraints, indexes, and recovery behavior.
 - `docs/FASTF1_INGESTION_CONTRACT.md`: Accepted one-session validation, identity, atomic replacement, failure, and idempotency contract.
-- `docs/HISTORICAL_API_DESIGN.md`: Accepted first historical season and backfill REST API contract; its shared API foundation, season overview endpoint, and job-progress endpoint are implemented.
+- `docs/HISTORICAL_API_DESIGN.md`: Accepted and implemented first historical season and backfill REST API contract.
 - `docs/SCHEDULE_DISCOVERY_DESIGN.md`: Implemented FastF1 schedule source, atomic calendar snapshot, membership, and active-job planning contract.
 - `docs/SPORTING_DATA_DESIGN.md`: Evidence-based implemented Revision 2 driver, entry, result, and lap schema.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
@@ -540,6 +543,20 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: implemented
 
+### Backfill command HTTP boundary
+
+- Decision: Expose `POST /api/v1/seasons/{season_year}/backfill` without a request body; delegate to `ensure_season_backfill`; return `202` plus `Location` and `Retry-After: 2` when a job exists, otherwise `200`; and map planner, schedule, cache, and database failures to the accepted stable error contract.
+- Rationale: Complete the explicit command/read separation, retain planner idempotency and advisory-lock guarantees, and give clients one predictable transition from season selection to progress polling.
+- Date: 2026-07-28
+- Status: implemented
+
+### API schedule-cache access
+
+- Decision: Mount the persistent FastF1 cache volume into both API and worker containers. The API uses it for synchronous season schedule discovery only; archive session ingestion remains worker-only.
+- Rationale: The accepted backfill command may need schedule coverage before it can queue work, while session ingestion must remain outside the request lifecycle.
+- Date: 2026-07-28
+- Status: implemented
+
 ## Database Model
 
 Alembic revision `20260727_0001` implements the backfill control plane:
@@ -621,6 +638,15 @@ Implemented endpoints:
 - Retains FastAPI's standard `422` validation response for a malformed integer path value.
 - Returns stable, sanitized `500 server_configuration_error` and `503 database_unavailable` responses.
 
+### `POST /api/v1/seasons/{season_year}/backfill`
+
+- Accepts no request body and supports seasons from 2018 through the current UTC year.
+- Returns `202 Accepted` with `Location: /api/v1/backfill-jobs/{job_id}` and `Retry-After: 2` when a job is created or reused.
+- Returns `200 OK` when coverage is refreshed without eligible work or no action is needed.
+- Returns the accepted `job_created`, `job_reused`, `coverage_refreshed`, or `no_action` response action.
+- Delegates schedule refresh and idempotent job planning to `ensure_season_backfill`; it does not ingest a FastF1 session in the request.
+- Returns stable, sanitized `409`, `500`, `502`, and `503` failures for planning conflicts, configuration, invalid snapshots, upstream availability, and database availability.
+
 ### `GET /api/v1/backfill-jobs/{job_id}`
 
 - Returns `200 OK` with parent lifecycle details, derived progress counts, and every child session in deterministic round/session order.
@@ -630,10 +656,11 @@ Implemented endpoints:
 - Returns stable `404 backfill_job_not_found` for unknown UUIDs.
 - Returns stable, sanitized `500 server_configuration_error` and `503 database_unavailable` responses.
 
-No session, backfill-command, lap, telemetry, or WebSocket endpoint has been
+No session-results, lap, telemetry, or WebSocket endpoint has been
 implemented. The versioned `/api/v1` router, strict historical response/error
 models, supported-year validation, pure derived season-status policy, read-only
-season endpoint, and read-only job-progress endpoint are implemented.
+season endpoint, read-only job-progress endpoint, and idempotent backfill command
+are implemented.
 
 The accepted first historical API contract is documented in
 `docs/HISTORICAL_API_DESIGN.md`.
@@ -667,7 +694,7 @@ Accepted behavior:
 15. Manual job cancellation is deferred from the historical MVP; no cancellation
     state or endpoint is added in this phase.
 
-The accepted one-session replacement and attempt contract is documented in `docs/FASTF1_INGESTION_CONTRACT.md`. A managed archive attempt commits running state and increments its attempt count before calling the vertical slice. The slice derives one request from database session identity, loads through the persistent serialized cache, verifies loaded identity, normalizes results and laps, and atomically replaces the target archive snapshot. Success marks ingestion completed/finalized with the snapshot. Failure is re-raised after a separate owning-attempt transaction stores only a fixed sanitized code and message; a previous completed snapshot and its timestamps remain available. The runtime policy in `docs/BACKFILL_RUNTIME_POLICY.md` is accepted. Its validated settings, original-exception retry classification, retry-budget validation, deterministic equal-jitter schedule calculations, and pure freshness eligibility decisions are implemented. The orchestration layer atomically claims eligible job-session and persistent-session state, starts the parent job, increments the two distinct attempt counters, records an initial database-clock heartbeat, synchronizes retryable or terminal failures, and exposes an ownership-fenced heartbeat transaction. The one-session vertical slice accepts an optional claim and a pre-persistence heartbeat guard. Claim-aware persistence validates both ownership tokens before sporting writes and completes the job-session and persistent session in the same transaction as the archive snapshot. Bounded stale-lease recovery moves abandoned synchronized state to pending with normal backoff or to failed after attempt four, while preserving any prior completed snapshot and fencing the original worker. Parent aggregation locks child rows before the job, applies monotonic status precedence, preserves terminal timestamps, records fixed aggregate diagnostics, and returns all progress counts. The worker composes these operations sequentially, heartbeats active blocking work, runs recovery/active-parent maintenance, and handles graceful shutdown. The schedule contract in `docs/SCHEDULE_DISCOVERY_DESIGN.md` connects freshness decisions to a pinned FastF1 season-index snapshot, atomic current-membership persistence, and advisory-locked job creation/reuse. The direct non-job path remains supported. No REST endpoint invokes the season planner yet.
+The accepted one-session replacement and attempt contract is documented in `docs/FASTF1_INGESTION_CONTRACT.md`. A managed archive attempt commits running state and increments its attempt count before calling the vertical slice. The slice derives one request from database session identity, loads through the persistent serialized cache, verifies loaded identity, normalizes results and laps, and atomically replaces the target archive snapshot. Success marks ingestion completed/finalized with the snapshot. Failure is re-raised after a separate owning-attempt transaction stores only a fixed sanitized code and message; a previous completed snapshot and its timestamps remain available. The runtime policy in `docs/BACKFILL_RUNTIME_POLICY.md` is accepted. Its validated settings, original-exception retry classification, retry-budget validation, deterministic equal-jitter schedule calculations, and pure freshness eligibility decisions are implemented. The orchestration layer atomically claims eligible job-session and persistent-session state, starts the parent job, increments the two distinct attempt counters, records an initial database-clock heartbeat, synchronizes retryable or terminal failures, and exposes an ownership-fenced heartbeat transaction. The one-session vertical slice accepts an optional claim and a pre-persistence heartbeat guard. Claim-aware persistence validates both ownership tokens before sporting writes and completes the job-session and persistent session in the same transaction as the archive snapshot. Bounded stale-lease recovery moves abandoned synchronized state to pending with normal backoff or to failed after attempt four, while preserving any prior completed snapshot and fencing the original worker. Parent aggregation locks child rows before the job, applies monotonic status precedence, preserves terminal timestamps, records fixed aggregate diagnostics, and returns all progress counts. The worker composes these operations sequentially, heartbeats active blocking work, runs recovery/active-parent maintenance, and handles graceful shutdown. The schedule contract in `docs/SCHEDULE_DISCOVERY_DESIGN.md` connects freshness decisions to a pinned FastF1 season-index snapshot, atomic current-membership persistence, and advisory-locked job creation/reuse. The POST backfill endpoint invokes this planner, and the resulting database work is claimable by the worker.
 
 ## Live Timing Design
 
@@ -770,17 +797,22 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Added 8 job-progress policy and PostgreSQL integration tests; verified the complete 269-test backend suite against a fresh isolated PostgreSQL 17 database.
 - Implemented `GET /api/v1/backfill-jobs/{job_id}` with UUID validation, dependency-injected database access, no-store caching, strict response/OpenAPI schemas, and sanitized not-found, configuration, and database failure mappings.
 - Added 6 job-progress endpoint tests; verified the complete 275-test backend suite against a fresh isolated PostgreSQL 17 database.
+- Implemented `POST /api/v1/seasons/{season_year}/backfill` with dynamic `200/202` behavior, polling headers, stable action mapping, supported-year validation, and sanitized planner/schedule/cache/database failures.
+- Mounted the persistent FastF1 cache into the API for synchronous schedule discovery while retaining worker-only archive ingestion.
+- Added 15 focused command-endpoint tests and one concurrent HTTP-to-planner-to-worker integration test; verified the complete 291-test backend suite against a fresh isolated PostgreSQL 17 database.
+- Verified local Compose database, migration, API, and worker startup; API/worker health; API cache-path configuration; and the shared persistent cache mount without an upstream request.
+- Updated the repository README to describe the implemented historical API slice and its local endpoints.
 
-No backfill-command, telemetry, or live timing endpoint has been completed.
+No product dashboard, telemetry, or live timing feature has been completed.
 
 ## Work in Progress
 
-- The backfill-command service and HTTP route remain unimplemented.
+- The first product dashboard visualization has not started.
 
 ## Next Steps
 
-1. Implement the backfill command endpoint over the existing season planner.
-2. Add the basic season selection and progress UI.
+1. Add a basic season selection, coverage, session-status, and job-progress dashboard over the implemented APIs.
+2. Add historical session result and lap-summary read APIs and UI views.
 3. Measure telemetry volume before deciding on TimescaleDB.
 4. Design SignalR live timing and reconciliation separately.
 
@@ -820,7 +852,7 @@ uv sync --frozen
 .venv/bin/pytest tests/test_archive_attempt.py
 ```
 
-Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The complete suite passed with 275 tests against a fresh isolated PostgreSQL 17 database after the job-progress endpoint was added.
+Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The complete suite passed with 291 tests against a fresh isolated PostgreSQL 17 database after the backfill command, sequential handoff coverage, and concurrent HTTP idempotency coverage were added.
 
 ## Known Issues and Technical Debt
 
@@ -829,12 +861,13 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - Failure recording requires a separate database transaction; if the database is unavailable, the original exception is re-raised with a diagnostic note but failed state cannot be persisted.
 - Session-row locking serializes callers that use persistence, recovery, aggregation, and worker services.
 - FastF1 loading is serialized per process; cross-process concurrency must be controlled by worker claiming and leases.
+- The API and worker share the persistent FastF1 cache, but FastF1 access locks are process-local. Local operation uses one API process and one worker; multi-process deployment will require an explicit cross-process cache/upstream coordination decision.
 - TimescaleDB usage has not been decided.
 - Recovery deliberately skips inconsistent rows whose persistent session is missing, owned by another source, completed, non-running, or has a fresh heartbeat. Such rows can remain running at job-session level until a future reconciliation policy is implemented.
-- The worker does not invoke season planning; a future REST season request must call the implemented planner before the worker can process newly eligible rows.
+- The worker does not invoke season planning; the implemented POST backfill command must run before newly eligible rows can be processed.
 - Graceful shutdown waits for active in-process FastF1 work; local Compose allows two minutes before forced termination, after which lease recovery applies.
 - Manual job cancellation is intentionally deferred from the historical MVP.
-- Historical API paths and response schemas are accepted; the shared contracts, season overview endpoint, and job-progress endpoint are implemented, while the backfill-command endpoint remains planned.
+- The accepted first historical season/backfill API slice is implemented. Historical session results and lap-summary read contracts remain undesigned.
 - FastF1 ingestion time and storage volume have not been measured.
 - Live SignalR protocol and reconciliation rules have not been designed.
 - PostgreSQL trust authentication is suitable only for the current loopback-bound local environment.
@@ -847,15 +880,15 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `docs/BACKFILL_RUNTIME_POLICY.md`: Accepted runtime retry, backoff, heartbeat, lease recovery, fencing, and freshness decisions.
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic layout, relational model, migration phases, idempotency, locking, and recovery design.
 - `docs/FASTF1_INGESTION_CONTRACT.md`: Accepted one-session archive snapshot identity, validation, atomic replacement, and failure behavior.
-- `docs/HISTORICAL_API_DESIGN.md`: Accepted historical API contract with implemented shared foundations, season overview endpoint, and job-progress endpoint; the backfill-command endpoint remains planned.
+- `docs/HISTORICAL_API_DESIGN.md`: Accepted and implemented first historical season/backfill API contract.
 - `backend/app/api/backfill_job.py`: Repeatable-read, database-read-only job and child-session mapping with derived counts, deterministic ordering, and dedicated not-found behavior.
 - `backend/app/api/backfill_jobs.py`: Read-only job-progress HTTP route, UUID validation, response contract, no-store policy, and sanitized failure mappings.
 - `backend/app/api/contracts.py`: Strict historical API response/error models, enum values, UTC timestamps, decimal-string identifiers, and cross-field validation.
-- `backend/app/api/dependencies.py`: Supported 2018-through-current-UTC-year validation, database session-factory injection, and stable API dependency errors.
+- `backend/app/api/dependencies.py`: Supported 2018-through-current-UTC-year validation, database and schedule-loader injection, and stable API dependency errors.
 - `backend/app/api/errors.py`: Stable client-safe FastAPI error envelope.
 - `backend/app/api/router.py`: Mounted `/api/v1` router boundary for historical product endpoints.
 - `backend/app/api/season_overview.py`: Repeatable-read, database-read-only latest-membership season overview, eligibility/count mapping, active-job summary, and derived status.
-- `backend/app/api/seasons.py`: Read-only season overview HTTP route, response contract, no-store policy, and sanitized database failure mapping.
+- `backend/app/api/seasons.py`: Season overview and backfill-command routes, dynamic command response mapping, polling headers, and sanitized failure mappings.
 - `backend/app/api/season_status.py`: Pure validated derived season-status precedence.
 - `docs/SCHEDULE_DISCOVERY_DESIGN.md`: Implemented FastF1 schedule source, normalized snapshot, atomic membership persistence, and season job-planning contract.
 - `docs/SPORTING_DATA_DESIGN.md`: Implemented Revision 2 schema, FastF1 inspection evidence, normalization rules, and decisions.
@@ -883,6 +916,8 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `backend/tests/test_backfill_job_endpoint.py`: Job-progress route response, UUID validation, sanitized failure, caching, and OpenAPI tests.
 - `backend/tests/test_season_overview.py`: PostgreSQL missing-season, latest-membership, preserved-snapshot, eligibility, ordering, and read-only transaction tests.
 - `backend/tests/test_season_endpoint.py`: Season route response, year validation, sanitized failure, caching, and OpenAPI tests.
+- `backend/tests/test_season_backfill_endpoint.py`: Backfill command actions, dynamic status/headers, supported-year handling, sanitized failure mappings, dependency behavior, and OpenAPI coverage.
+- `backend/tests/test_season_backfill_endpoint_integration.py`: Concurrent POST idempotency, single-job persistence, worker claimability, and progress-read integration coverage.
 - `backend/tests/test_season_status.py`: Derived season-status precedence and input-validation tests.
 - `backend/tests/test_backfill_orchestration.py`: PostgreSQL claim locking, heartbeat synchronization, retry, lease recovery, parent aggregation, row-lock serialization, source protection, rollback, and ownership-token coverage.
 - `backend/tests/test_archive_persistence.py`: PostgreSQL transactional persistence, idempotency, stale replacement, source protection, and rollback coverage.
@@ -904,6 +939,7 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 
 ## Change Log
 
+- 2026-07-28 — Implemented and verified the idempotent backfill command, API schedule-cache mount, and API-to-worker database handoff; prioritized the first dashboard visualization.
 - 2026-07-28 — Implemented and verified the read-only job-progress HTTP endpoint with UUID validation and sanitized failures.
 - 2026-07-28 — Implemented and verified the read-only job-progress database service with consistent derived counts and deterministic session ordering.
 - 2026-07-28 — Implemented and verified the read-only season overview HTTP endpoint with strict contracts and sanitized failures.

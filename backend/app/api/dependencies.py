@@ -5,6 +5,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.errors import ApiError
 from app.db.session import create_session_factory
+from app.ingestion.fastf1_loader import FastF1LoaderConfigurationError
+from app.ingestion.fastf1_schedule import (
+    FastF1ScheduleLoaderProtocol,
+    create_fastf1_schedule_loader,
+)
 
 MINIMUM_SEASON_YEAR = 2018
 
@@ -50,4 +55,15 @@ def get_database_session_factory() -> sessionmaker[Session]:
             status_code=500,
             code="server_configuration_error",
             message="Server database configuration is invalid.",
+        ) from None
+
+
+def get_fastf1_schedule_loader() -> FastF1ScheduleLoaderProtocol:
+    try:
+        return create_fastf1_schedule_loader()
+    except FastF1LoaderConfigurationError:
+        raise ApiError(
+            status_code=500,
+            code="server_configuration_error",
+            message="Server cache configuration is invalid.",
         ) from None
