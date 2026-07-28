@@ -1,7 +1,7 @@
 # Historical Season and Backfill REST API Design
 
-Status: **accepted; API foundation, season overview read service, and season
-overview endpoint implemented; command and job-progress endpoints not implemented**
+Status: **accepted; API foundation, season overview endpoint, and job-progress
+read service implemented; command and job-progress endpoints not implemented**
 Date: **2026-07-28**
 
 ## Purpose
@@ -222,6 +222,9 @@ currently due without implying that the championship has finished.
 Returns `200 OK` for a known UUID and `404 Not Found` for an unknown job.
 This endpoint is read-only and does not run parent aggregation.
 
+The database read service behind this endpoint is implemented. The route itself
+is not yet mounted.
+
 The response contains:
 
 - Job identity, season, request reason, status, and lifecycle timestamps.
@@ -328,13 +331,14 @@ separate pagination and query contracts.
    and client-safe configuration/database failure mappings for the season
    overview endpoint.
 2. Implemented: pure/testable derived season-status policy.
-3. Partially implemented: read-model queries for latest season membership,
-   session eligibility/state, active-job summary, and derived season status, plus
-   the read-only season overview HTTP route. Job-progress reads remain planned.
+3. Implemented: read-model queries for latest season membership, session
+   eligibility/state, active-job summary, derived season status, and detailed
+   job progress. The season overview route is implemented; the job-progress
+   route remains planned.
 4. Planned: connect the POST command to `ensure_season_backfill`.
 5. Partially implemented: season overview route, invalid-year, client-safe
-   failure, generated OpenAPI, and PostgreSQL read-service coverage. Concurrent
-   POST and API-to-worker handoff tests remain planned.
+   failure, generated OpenAPI, and PostgreSQL season/job read-service coverage.
+   Concurrent POST and API-to-worker handoff tests remain planned.
 6. Planned: verify real API-to-worker handoff without adding a live upstream
    request to automated tests.
 
