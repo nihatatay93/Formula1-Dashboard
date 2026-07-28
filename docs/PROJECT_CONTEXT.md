@@ -286,10 +286,28 @@ Formula1-Dashboard/
 
 ### Database foundation
 
-- Decision: Use PostgreSQL as the primary database and evaluate TimescaleDB separately for high-frequency telemetry.
-- Rationale: Store relational race data reliably while keeping a telemetry-specific optimization path open.
+- Decision: Use PostgreSQL as the primary database. Use standard PostgreSQL
+  for the first on-demand, lap-scoped historical telemetry implementation and
+  defer TimescaleDB until the documented volume or query-pattern triggers are
+  reached.
+- Rationale: Three controlled FastF1 laps measured a 371-sample median and
+  452-sample average. Explicit one-lap reads are narrow indexed access, while
+  eager 2018-wide storage would already project to about 26.2 million samples
+  and 3.91 GiB before operational overhead.
 - Date: 2026-07-27
-- Status: accepted
+- Status: implemented
+
+### Historical telemetry measurement
+
+- Decision: Measure telemetry through a reproducible command that uses the
+  pinned FastF1 runtime, serialized persistent cache, and PostgreSQL request
+  ledger. Keep X/Y/Z optional because representative historical position data
+  was absent in Practice 2 and Race but present in Qualifying.
+- Rationale: Base schema and ingestion decisions on observed frequency,
+  nullability, and scale without bypassing upstream safeguards or assuming
+  uniform historical channel availability.
+- Date: 2026-07-28
+- Status: implemented
 
 ### Migration approach
 
@@ -822,7 +840,9 @@ The implemented Revision 2 model is documented in `docs/SPORTING_DATA_DESIGN.md`
 
 Planned but not implemented behavior:
 
-- Keep TimescaleDB and telemetry table shape outside the initial relational migrations.
+- Add standard PostgreSQL lap-telemetry ingestion state and sample tables in
+  the next independently reversible migration. TimescaleDB remains deferred
+  under `docs/TELEMETRY_STORAGE_DECISION.md`.
 
 ## API Contract
 
@@ -1227,32 +1247,43 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
   clear controls, and completed-snapshot invalidation.
 - Verified nine frontend unit/component tests, six desktop/mobile browser
   scenarios including two-driver analysis, and the production build.
+- Added a deterministic telemetry-frame measurement utility, controlled
+  persistent-cache/request-budget command, storage projection, and four focused
+  tests.
+- Measured 2018 Australian Grand Prix Practice 2, Qualifying, and Race laps:
+  368, 617, and 371 samples respectively; 371 median and 452 average samples per
+  lap; approximately 4.1–7.6 samples per second; and variable position-channel
+  availability.
+- Accepted standard PostgreSQL for explicitly requested lap telemetry and
+  documented a projected 26,216,904 samples/about 3.91 GiB for eagerly storing
+  telemetry against all 58,002 local 2018 laps, which remains prohibited.
+- Verified Ruff, the measurement command, four focused measurement tests, and
+  all 383 backend tests against an isolated migrated PostgreSQL 17 database;
+  removed the test database and restored the healthy local worker afterward.
 
 No telemetry feature or live timing feature has been completed. Saved analyses
 and automatic race-run classification remain intentionally unimplemented.
 
 ## Work in Progress
 
-- Representative FastF1 telemetry measurement and the evidence-based first
-  storage decision are the active milestone.
+- Bounded lap-scoped historical telemetry persistence, worker ingestion, and
+  REST contracts are the active milestone.
 
 ## Next Steps
 
-1. Measure representative FastF1 telemetry volume and access patterns before
-   deciding whether PostgreSQL alone or TimescaleDB should own telemetry.
-2. Design and implement bounded telemetry ingestion and APIs queried by session,
+1. Design and implement bounded telemetry ingestion and APIs queried by session,
    driver, and lap; never include season-wide telemetry in overview responses.
-3. Add automatic current-season planning so newly published event/session
+2. Add automatic current-season planning so newly published event/session
    boundaries and correction checkpoints do not depend indefinitely on a manual
    dashboard command. Revisit persistent deferred-event metadata at this point.
-4. Design the SignalR live-timing protocol boundary, reconnect/resume,
+3. Design the SignalR live-timing protocol boundary, reconnect/resume,
    deduplication, provisional schema, and FastF1 finalization/reconciliation
    rules before implementing live ingestion.
-5. Implement the live collector, provisional persistence, backend WebSocket
+4. Implement the live collector, provisional persistence, backend WebSocket
    fan-out, session finalization, and dashboard live views.
-6. Stabilize the shared API for the SwiftUI client, then implement the iOS
+5. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
-7. Before production, add authentication/authorization, secret management,
+6. Before production, add authentication/authorization, secret management,
    secure PostgreSQL configuration, observability, backups, CI, deployment,
    and any demonstrated background-job infrastructure. Reconsider manual job
    cancellation and Redis only when measurements justify them.
@@ -1265,6 +1296,9 @@ Verified:
 npm run build --prefix frontend
 npm test --prefix frontend
 npm run test:e2e --prefix frontend
+cd backend
+.venv/bin/python -m scripts.measure_fastf1_telemetry --help
+.venv/bin/pytest tests/test_telemetry_measurement.py
 docker compose config --quiet
 docker compose up --detach
 docker compose up --build --detach
@@ -1297,9 +1331,9 @@ uv sync --frozen
 ```
 
 Database integration tests additionally require `TEST_DATABASE_URL` and a
-migrated PostgreSQL database. The complete suite passed with 379 tests against
-a fresh isolated PostgreSQL 17 database after the historical session HTTP
-routes and endpoint tests were added.
+migrated PostgreSQL database. The complete suite passed with 383 tests against
+a fresh isolated PostgreSQL 17 database after the telemetry measurement
+milestone.
 
 ## Known Issues and Technical Debt
 
@@ -1325,7 +1359,10 @@ routes and endpoint tests were added.
 - Earlier terminal 2018 jobs remain immutable failure history. A later targeted
   retry job completed all seven repaired sessions, and the current local season
   snapshot contains 105 completed and zero failed sessions.
-- TimescaleDB usage has not been decided.
+- Standard PostgreSQL is selected for the first explicitly requested,
+  lap-scoped telemetry slice. TimescaleDB remains deferred until a documented
+  storage, cross-session query, live append, retention, or operational trigger
+  is measured.
 - Recovery deliberately skips inconsistent rows whose persistent session is missing, owned by another source, completed, non-running, or has a fresh heartbeat. Such rows can remain running at job-session level until a future reconciliation policy is implemented.
 - The worker does not invoke season planning; the implemented POST backfill command must run before newly eligible rows can be processed.
 - Graceful shutdown waits for active in-process FastF1 work; local Compose allows two minutes before forced termination, after which lease recovery applies.
@@ -1338,7 +1375,9 @@ routes and endpoint tests were added.
   coverage threshold yet. Dedicated component and desktop/mobile browser
   interaction suites are implemented, but CI execution remains future work.
 - Docker registry metadata timed out during the latest image rebuild attempt; the existing images and bind-mounted source started successfully, and the local dashboard/API health checks passed.
-- FastF1 ingestion time and storage volume have not been measured.
+- Representative per-lap FastF1 telemetry frequency and planning volume have
+  been measured, but actual migrated PostgreSQL relation/index size and
+  end-to-end telemetry ingestion duration remain to be measured in Milestone 4.
 - Live SignalR protocol and reconciliation rules have not been designed.
 - PostgreSQL trust authentication is suitable only for the current loopback-bound local environment.
 - Virtual environments are platform-specific. Never reuse a `.venv` created inside the Linux container on macOS; recreate the ignored host environment from `uv.lock`.
@@ -1379,6 +1418,9 @@ routes and endpoint tests were added.
   sanitized failure mappings, and strict OpenAPI contracts.
 - `docs/SCHEDULE_DISCOVERY_DESIGN.md`: Implemented FastF1 schedule source, normalized snapshot, atomic membership persistence, and season job-planning contract.
 - `docs/SPORTING_DATA_DESIGN.md`: Implemented Revision 2 schema, FastF1 inspection evidence, normalization rules, and decisions.
+- `docs/TELEMETRY_STORAGE_DECISION.md`: Representative FastF1 telemetry
+  measurements, scale projection, PostgreSQL-first decision, limitations, and
+  TimescaleDB review triggers.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
 - `backend/alembic/versions/20260727_0001_backfill_control_plane.py`: Reviewed Revision 1 schema and downgrade.
 - `backend/alembic/versions/20260728_0002_sporting_data.py`: Reviewed Revision 2 sporting-data schema and downgrade.
@@ -1411,6 +1453,10 @@ routes and endpoint tests were added.
 - `backend/app/ingestion/freshness_policy.py`: Pure UTC season-coverage, archive-grace, and correction-checkpoint eligibility decisions.
 - `backend/app/ingestion/archive_persistence.py`: Atomic normalized archive upserts, stale-row replacement, source/identity guards, optional claim fencing, and synchronized completion.
 - `backend/app/ingestion/runtime_policy.py`: Validated runtime settings, retry classification, SQLSTATE handling, and deterministic equal-jitter retry schedules.
+- `backend/app/ingestion/telemetry_measurement.py`: Pure telemetry frequency,
+  channel-coverage, memory, and PostgreSQL planning estimates.
+- `backend/scripts/measure_fastf1_telemetry.py`: Controlled representative-lap
+  measurement through the persistent cache and shared request budget.
 - `backend/tests/test_archive_attempt.py`: Stable failure-code and fixed secret-free message mapping coverage.
 - `backend/tests/test_api_contracts.py`: Strict API model, UTC timestamp, progress-count, and response consistency tests.
 - `backend/tests/test_api_foundation.py`: Versioned router, existing-path preservation, year-boundary, and stable error tests.
@@ -1481,6 +1527,9 @@ routes and endpoint tests were added.
 
 ## Change Log
 
+- 2026-07-28 — Measured representative Practice 2, Qualifying, and Race
+  telemetry, selected standard PostgreSQL for on-demand lap-scoped storage,
+  documented TimescaleDB review triggers, and verified all 383 backend tests.
 - 2026-07-28 — Implemented and verified ephemeral snapshot-bound manual lap
   selection, two-participant/team pace comparison, quality visibility, and
   automatic invalidation when the archive snapshot changes.

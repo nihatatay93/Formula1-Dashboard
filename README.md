@@ -34,6 +34,7 @@ database migrations, the historical backfill API, and session exploration:
 - Read-only historical session detail, result, and paginated lap-summary APIs
 - Snapshot-safe session dashboard with explicit two-participant lap analysis
 - Vitest component coverage and Playwright desktop/mobile browser workflows
+- Reproducible FastF1 lap-telemetry measurement and PostgreSQL-first storage decision
 - Docker Compose health checks
 
 Historical telemetry and live timing ingestion are not implemented yet.
@@ -148,3 +149,5 @@ development scaffold. This configuration must not be reused for production.
 
 Read [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md) before making changes.
 It is the authoritative record of implemented behavior and accepted decisions.
+Telemetry evidence and the TimescaleDB review triggers are recorded in
+[`docs/TELEMETRY_STORAGE_DECISION.md`](docs/TELEMETRY_STORAGE_DECISION.md).
