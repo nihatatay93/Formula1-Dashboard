@@ -109,7 +109,12 @@ services:
   frontend:
     build:
       context: ./frontend
-    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+    command:
+      [
+        "sh",
+        "-c",
+        "npm ci --prefer-offline --no-audit --no-fund && exec npm run dev -- --host 0.0.0.0",
+      ]
     ports:
       - "127.0.0.1:5173:5173"
     volumes:
@@ -124,7 +129,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:5173/').then((response) => { if (!response.ok) process.exit(1) }).catch(() => process.exit(1))",
+          "Promise.all(['/','/src/main.tsx','/src/index.css'].map((path) => fetch('http://127.0.0.1:5173' + path).then((response) => { if (!response.ok) throw new Error(path + ': ' + response.status) }))).catch(() => process.exit(1))",
         ]
       interval: 5s
       timeout: 3s

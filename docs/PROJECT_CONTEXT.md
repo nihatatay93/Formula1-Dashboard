@@ -49,7 +49,11 @@ Implemented services in `compose.yaml`:
   the backend image. It automatically plans the current UTC season, prioritizes
   archive job-sessions, then processes explicitly requested laps, heartbeats
   active claims, and performs periodic recovery/aggregation maintenance.
-- `frontend`: React, TypeScript, and Vite application for season selection, coverage and event/session state visualization, backfill commands, and active-job polling.
+- `frontend`: React, TypeScript, and Vite application for season selection,
+  coverage and event/session state visualization, backfill commands, and
+  active-job polling. Local startup reconciles the exact npm lockfile into its
+  persistent Linux `node_modules` volume before Vite starts, and readiness
+  checks the HTML, TypeScript entry module, and transformed CSS module.
 
 Implemented supporting infrastructure:
 
@@ -78,6 +82,9 @@ Implemented supporting infrastructure:
 - Host-side Python editing uses a native macOS Python 3.13 environment synchronized from `backend/uv.lock`; Docker-created virtual environments are not reused by the host editor.
 - The backend uses Python 3.13, `uv`, FastAPI, FastF1 3.8.3, pandas, SQLAlchemy 2, Alembic, psycopg, Uvicorn, pytest, and Ruff.
 - The frontend uses Node.js 24, npm, React, TypeScript, and Vite.
+- The frontend Vite configuration supplies an explicit empty PostCSS plugin
+  configuration because the project does not use a separate PostCSS
+  configuration file.
 - PostgreSQL trust authentication is restricted to loopback-bound local development and must not be reused for production.
 - SQLAlchemy uses synchronous sessions with the explicit `postgresql+psycopg` dialect.
 - The application never calls `create_all`; Alembic is the only schema-authoring mechanism.
@@ -300,6 +307,21 @@ Formula1-Dashboard/
 - Decision: Use React and TypeScript with Vite for the web dashboard.
 - Rationale: Provide a typed, component-based dashboard with a lightweight development server.
 - Date: 2026-07-27
+- Status: implemented
+
+### Frontend container dependency and readiness contract
+
+- Decision: Reconcile `frontend/package-lock.json` with `npm ci` before the
+  Compose Vite process starts, retain the Linux-only `node_modules` volume, use
+  an explicit empty Vite PostCSS plugin configuration, and require successful
+  HTML, TypeScript entry-module, and CSS transformation responses for frontend
+  health.
+- Rationale: A persistent dependency volume can otherwise hide newer
+  image dependencies, and an HTML-only Vite health check can report healthy
+  while CSS transformation is failing. Explicit PostCSS configuration also
+  avoids caching a transient failed package-config discovery during file or
+  branch updates.
+- Date: 2026-07-29
 - Status: implemented
 
 ### First dashboard product slice
@@ -1443,6 +1465,17 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Verified nine frontend unit/component tests, six desktop/mobile Playwright
   workflows, the TypeScript/Vite production build, and horizontal viewport
   containment after the navigation redesign.
+- Diagnosed the live Vite failure where HTML and the TypeScript entry returned
+  `200` while CSS transformation returned `500`; confirmed the bind mount and
+  package file were present and isolated the stale cached PostCSS discovery
+  state.
+- Added explicit Vite PostCSS configuration, lockfile-exact dependency
+  reconciliation for the persistent frontend dependency volume, and a
+  module-aware Compose health check.
+- Recreated the local frontend container and verified healthy startup with
+  live `200` responses for HTML, TypeScript, transformed CSS, and the proxied
+  backend readiness endpoint; nine frontend tests and the production build
+  also passed.
 
 No live timing feature has been completed. Saved analyses and automatic
 race-run classification remain intentionally unimplemented.
@@ -1604,7 +1637,9 @@ repair. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
 - `docs/AUTOMATIC_CURRENT_SEASON_PLANNING.md`: Implemented automatic planning
   cadence, deferred-event snapshot semantics, worker safety, dashboard
   behavior, and verification.
-- `compose.yaml`: Local service topology, health checks, and persistent volumes.
+- `compose.yaml`: Local service topology, migration ordering, lockfile-exact
+  frontend dependency startup, module-aware health checks, and persistent
+  volumes.
 - `backend/alembic/versions/20260727_0001_backfill_control_plane.py`: Reviewed Revision 1 schema and downgrade.
 - `backend/alembic/versions/20260728_0002_sporting_data.py`: Reviewed Revision 2 sporting-data schema and downgrade.
 - `backend/alembic/versions/20260728_0003_schedule_discovery.py`: Revision 3 schedule membership markers, coverage invalidation, indexes, and downgrade.
@@ -1733,10 +1768,15 @@ repair. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
   exploration, pagination, mobile action clearance, and viewport containment.
 - `frontend/playwright.config.ts`: Deterministic desktop/mobile browser project
   and local Vite server configuration.
+- `frontend/vite.config.ts`: Vite/Vitest development, test, API-proxy, and
+  explicit PostCSS configuration.
 - `README.md`: Local development overview and commands.
 
 ## Change Log
 
+- 2026-07-29 — Repaired the live Docker Vite CSS failure by reconciling the
+  persistent frontend dependency volume, avoiding transient PostCSS discovery,
+  and making frontend health verify transformed source modules.
 - 2026-07-28 — Fast-forwarded the reviewed feature branch into `main` and
   replaced the single long dashboard page with tested responsive Overview,
   Season Sessions, and Session Workspace navigation.
