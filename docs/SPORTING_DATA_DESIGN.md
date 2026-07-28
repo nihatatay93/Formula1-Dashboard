@@ -3,7 +3,7 @@
 Status: **accepted; schema implemented**
 Date: **2026-07-28**
 
-This document defines the accepted Revision 2 database model. It is based on direct inspection of representative FastF1 3.8.3 data and the official FastF1 data reference. The SQLAlchemy models, Alembic revision, locked FastF1 runtime dependency, database-bound one-session loader orchestration, pure normalization layer, and atomic one-session archive persistence are implemented. Year-level backfill and worker execution are not implemented yet.
+This document defines the accepted Revision 2 database model. It is based on direct inspection of representative FastF1 3.8.3 data and the official FastF1 data reference. The SQLAlchemy models, Alembic revision, locked FastF1 runtime dependency, database-bound one-session loader orchestration, pure normalization layer, atomic one-session archive persistence, and single-concurrency archive worker are implemented. Schedule discovery and year-level job creation are not implemented yet.
 
 ## Scope
 
@@ -24,7 +24,7 @@ Out of scope:
 - Weather, race-control message, track-status event, and session-status event tables.
 - Constructor/team history as a separate entity.
 - Championship standings.
-- FastF1 worker orchestration.
+- Schedule discovery and year-level job creation.
 - API response schemas.
 
 ## Inspection Baseline

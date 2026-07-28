@@ -53,6 +53,7 @@ def ingest_fastf1_archive_session(
     completed_at: datetime | None = None,
     source_updated_at: datetime | None = None,
     claim: ArchiveClaimProtocol | None = None,
+    before_persist: Callable[[], None] | None = None,
 ) -> ArchiveIngestionSummary:
     """Load, normalize, and atomically persist one database session."""
 
@@ -70,6 +71,8 @@ def ingest_fastf1_archive_session(
         loaded.laps,
         session_name=loaded.session_name,
     )
+    if before_persist is not None:
+        before_persist()
 
     with session_factory() as database:
         persistence = replace_archive_session(

@@ -48,6 +48,7 @@ def database_error(
 def test_default_settings_match_the_accepted_policy() -> None:
     settings = BackfillRuntimeSettings()
 
+    assert settings.worker_poll_interval_seconds == 2
     assert settings.max_attempts == 4
     assert settings.backoff_base_seconds == 60
     assert settings.backoff_multiplier == 2
@@ -88,6 +89,7 @@ def test_partial_environment_preserves_other_defaults() -> None:
 def test_environment_overrides_are_typed() -> None:
     settings = BackfillRuntimeSettings.from_environment(
         {
+            "BACKFILL_WORKER_POLL_INTERVAL_SECONDS": "1",
             "BACKFILL_MAX_ATTEMPTS": "6",
             "BACKFILL_BACKOFF_BASE_SECONDS": "10",
             "BACKFILL_BACKOFF_MULTIPLIER": "3",
@@ -104,6 +106,7 @@ def test_environment_overrides_are_typed() -> None:
     )
 
     assert settings == BackfillRuntimeSettings(
+        worker_poll_interval_seconds=1,
         max_attempts=6,
         backoff_base_seconds=10,
         backoff_multiplier=3,
@@ -122,6 +125,7 @@ def test_environment_overrides_are_typed() -> None:
 @pytest.mark.parametrize(
     "settings",
     [
+        {"worker_poll_interval_seconds": 0},
         {"max_attempts": 0},
         {"backoff_base_seconds": True},
         {"backoff_base_seconds": 60, "backoff_cap_seconds": 59},

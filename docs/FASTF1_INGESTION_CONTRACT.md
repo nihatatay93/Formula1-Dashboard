@@ -240,6 +240,8 @@ Implemented:
 - Bounded stale-lease recovery that fences the original claim before it can
   complete archive persistence.
 - Transactional parent-job aggregation from locked job-session outcomes.
+- Single-concurrency worker composition with periodic heartbeat/recovery,
+  claim-aware success/failure handling, and active-parent reconciliation.
 - Idempotent pending state and single-increment running attempts.
 - Overlapping-running and non-archive state protection.
 - Separate failed-state transactions with fixed secret-free diagnostics.
@@ -248,4 +250,4 @@ Implemented:
 
 Not implemented:
 
-- Worker heartbeat/recovery scheduling and worker execution.
+- Schedule discovery and freshness-triggered job creation.

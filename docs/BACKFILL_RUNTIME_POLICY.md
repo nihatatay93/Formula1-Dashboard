@@ -1,12 +1,12 @@
 # Backfill Runtime Policy
 
-Status: **accepted; settings through parent-job aggregation implemented**
+Status: **accepted; worker execution implemented**
 Date: **2026-07-28**
 
 ## Purpose
 
-This document defines the runtime policy that should surround the implemented
-one-session FastF1 archive attempt before worker orchestration is built.
+This document defines the implemented runtime policy around the one-session
+FastF1 archive attempt and worker.
 
 It covers:
 
@@ -23,7 +23,8 @@ transitions are implemented. Ownership-fenced heartbeat writes and claim-aware
 atomic completion are also implemented. Bounded stale-lease recovery is
 implemented. Deterministic coverage and archive-correction eligibility evaluation
 is implemented. Transactional parent-job aggregation is implemented. Worker
-heartbeat/recovery scheduling and freshness-triggered job creation remain
+claiming, execution, heartbeat/recovery scheduling, failure/completion handling,
+and aggregation are implemented. Freshness-triggered job creation remains
 unimplemented.
 
 ## Recommended Configuration
@@ -38,6 +39,7 @@ unimplemented.
 | Heartbeat interval | 30 seconds |
 | Lease timeout | 5 minutes |
 | Recovery scan interval | 30 seconds |
+| Idle worker poll interval | 2 seconds |
 | Initial worker concurrency | One FastF1 session at a time |
 | Current-season coverage TTL | 6 hours |
 | Historical-season coverage TTL | 30 days |
@@ -49,6 +51,7 @@ All policy timestamps and eligibility comparisons use PostgreSQL UTC time.
 
 The implemented `BackfillRuntimeSettings.from_environment()` loader reads:
 
+- `BACKFILL_WORKER_POLL_INTERVAL_SECONDS`
 - `BACKFILL_MAX_ATTEMPTS`
 - `BACKFILL_BACKOFF_BASE_SECONDS`
 - `BACKFILL_BACKOFF_MULTIPLIER`
@@ -169,8 +172,11 @@ must stop without persisting.
 
 The implemented `heartbeat_archive_job_session` transaction performs one
 ownership-checked refresh of all three heartbeat fields using PostgreSQL time.
-The future worker must schedule this operation every 30 seconds and stop work if
-ownership validation fails.
+The worker schedules this operation every 30 seconds in a dedicated thread while
+FastF1 loading, normalization, and persistence run synchronously. A
+pre-persistence guard aborts before any sporting write when the heartbeat thread
+has already failed. Claim-aware persistence remains the final ownership fence for
+a failure racing the persistence transaction.
 
 ## Lease Expiry and Recovery
 
@@ -333,6 +339,33 @@ the parent receives the fixed `session_ingestion_failed` code and message.
 Aggregation returns all four child counts for future progress reporting. An empty
 job never completes vacuously.
 
+## Worker Execution
+
+The implemented worker:
+
+1. Validates runtime settings, cache configuration, and database connectivity
+   before creating its readiness file.
+2. Runs lease recovery and active-parent reconciliation immediately at startup
+   and every 30 seconds afterward.
+3. Polls every two seconds while idle and claims at most one eligible session.
+4. Processes the claimed session synchronously through the cache-backed loader,
+   normalization, and claim-aware atomic persistence.
+5. Runs periodic heartbeats in a separate thread for the duration of blocking
+   session work.
+6. Records retryable or terminal failure through the fenced transition, then
+   aggregates the parent after success, failure, or ownership loss.
+7. Reconciles every active parent during maintenance so a transient aggregation
+   failure or worker restart cannot leave terminal child outcomes permanently
+   hidden by an active parent.
+
+The worker performs no upstream work when there is no pre-existing eligible
+job-session. Schedule discovery and job creation remain separate future work.
+Logs include operation and exception type but deliberately omit raw exception
+text. SIGINT/SIGTERM stops new claims and idle waits; an in-process active attempt
+is allowed to finish while its heartbeat thread continues. Local Compose grants
+the worker a two-minute stop grace period. If the container is forcibly terminated
+after that period, normal lease recovery handles the abandoned claim.
+
 ## Implementation Sequence
 
 1. Implemented: typed runtime settings and validation for the accepted values.
@@ -349,5 +382,6 @@ job never completes vacuously.
 7. Implemented: transactional parent-job aggregation with monotonic status,
    deterministic locking, fixed diagnostics, terminal idempotency, and progress
    counts.
-8. Connect the placeholder worker only after the above behavior is covered by
-   PostgreSQL integration tests.
+8. Implemented: single-concurrency worker execution with two-second polling,
+   periodic heartbeats/recovery, fenced outcomes, parent reconciliation, and
+   graceful shutdown.

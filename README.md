@@ -8,7 +8,7 @@ The repository currently contains the local development scaffold and the first
 two database migrations:
 
 - FastAPI backend with liveness and PostgreSQL readiness endpoints
-- Separate worker process using the same backend image
+- Single-concurrency archive worker using the same backend image
 - React, TypeScript, and Vite frontend
 - PostgreSQL with SQLAlchemy 2 models and Alembic migrations
 - Backfill control-plane tables for seasons, sessions, ingestion state, and jobs
@@ -24,9 +24,10 @@ two database migrations:
 - Bounded stale-lease recovery with retry-budget and stale-worker fencing
 - Deterministic season-coverage and archive-correction eligibility decisions
 - Transactional parent-job aggregation from locked session outcomes
+- Worker claim, heartbeat, recovery, failure/completion, and aggregation loop
 - Docker Compose health checks
 
-End-to-end year-level FastF1 backfill orchestration and worker execution,
+Schedule discovery, freshness-triggered job creation, REST backfill APIs,
 telemetry, and live timing ingestion are not implemented yet.
 
 ## Requirements

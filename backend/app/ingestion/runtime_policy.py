@@ -44,6 +44,7 @@ class RetryDisposition(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class BackfillRuntimeSettings:
+    worker_poll_interval_seconds: int = 2
     max_attempts: int = 4
     backoff_base_seconds: int = 60
     backoff_multiplier: int = 2
@@ -60,6 +61,10 @@ class BackfillRuntimeSettings:
     )
 
     def __post_init__(self) -> None:
+        _positive_integer(
+            self.worker_poll_interval_seconds,
+            "worker_poll_interval_seconds",
+        )
         _positive_integer(self.max_attempts, "max_attempts")
         _positive_integer(self.backoff_base_seconds, "backoff_base_seconds")
         _positive_integer(self.backoff_multiplier, "backoff_multiplier")
@@ -133,6 +138,11 @@ class BackfillRuntimeSettings:
         values = os.environ if environ is None else environ
         defaults = cls()
         return cls(
+            worker_poll_interval_seconds=_environment_integer(
+                values,
+                "BACKFILL_WORKER_POLL_INTERVAL_SECONDS",
+                defaults.worker_poll_interval_seconds,
+            ),
             max_attempts=_environment_integer(
                 values,
                 "BACKFILL_MAX_ATTEMPTS",

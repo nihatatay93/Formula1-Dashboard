@@ -76,6 +76,7 @@ services:
     environment:
       DATABASE_URL: postgresql://formula1_dashboard@db:5432/formula1_dashboard
       FASTF1_CACHE_PATH: /cache/fastf1
+      BACKFILL_WORKER_POLL_INTERVAL_SECONDS: "2"
       WORKER_READY_FILE: /tmp/formula1-dashboard-worker.ready
     volumes:
       - ./backend:/workspace
@@ -83,6 +84,7 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    stop_grace_period: 2m
     healthcheck:
       test:
         [

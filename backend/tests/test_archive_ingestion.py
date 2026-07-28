@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.engine import sqlalchemy_database_url
 from app.db.models import (
+    BackfillJob,
     BackfillJobSession,
     Lap,
     SessionEntry,
@@ -34,6 +36,12 @@ from app.ingestion.archive_persistence import (
 )
 from app.ingestion.backfill_orchestration import (
     claim_next_archive_job_session,
+    recover_stale_archive_job_sessions,
+)
+from app.ingestion.backfill_worker import (
+    WorkerSessionOutcome,
+    perform_worker_maintenance,
+    process_next_archive_job_session,
 )
 from app.ingestion.fastf1_loader import (
     FastF1SessionLoadError,
@@ -145,6 +153,94 @@ class StateInspectingLoader(StubLoader):
             assert ingestion.last_started_at == self.expected_started_at
             assert ingestion.last_error_code is None
             assert ingestion.last_error_message is None
+        return super().load(request)
+
+
+class HeartbeatInspectingLoader(StubLoader):
+    def __init__(
+        self,
+        *,
+        target: IngestionTarget,
+        job_id: uuid.UUID,
+        results: pd.DataFrame,
+        laps: pd.DataFrame,
+    ) -> None:
+        super().__init__(results=results, laps=laps)
+        self.target = target
+        self.job_id = job_id
+        self.observed_heartbeat_advance = False
+
+    def load(self, request: FastF1SessionRequest) -> LoadedFastF1Session:
+        with self.target.session_factory() as database:
+            job_session = database.get(
+                BackfillJobSession,
+                (self.job_id, self.target.session_id),
+            )
+            assert job_session is not None
+            initial_heartbeat = job_session.heartbeat_at
+
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            time.sleep(0.01)
+            with self.target.session_factory() as database:
+                job_session = database.get(
+                    BackfillJobSession,
+                    (self.job_id, self.target.session_id),
+                )
+                assert job_session is not None
+                if job_session.heartbeat_at != initial_heartbeat:
+                    self.observed_heartbeat_advance = True
+                    break
+
+        assert self.observed_heartbeat_advance
+        return super().load(request)
+
+
+class LeaseRecoveringLoader(StubLoader):
+    def __init__(
+        self,
+        *,
+        target: IngestionTarget,
+        job_id: uuid.UUID,
+        results: pd.DataFrame,
+        laps: pd.DataFrame,
+    ) -> None:
+        super().__init__(results=results, laps=laps)
+        self.target = target
+        self.job_id = job_id
+
+    def load(self, request: FastF1SessionRequest) -> LoadedFastF1Session:
+        with self.target.engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    UPDATE backfill_job_sessions
+                    SET heartbeat_at = clock_timestamp() - interval '10 minutes'
+                    WHERE job_id = :job_id
+                      AND session_id = :session_id
+                    """
+                ),
+                {
+                    "job_id": self.job_id,
+                    "session_id": self.target.session_id,
+                },
+            )
+            connection.execute(
+                text(
+                    """
+                    UPDATE session_ingestions
+                    SET heartbeat_at = clock_timestamp() - interval '10 minutes'
+                    WHERE session_id = :session_id
+                    """
+                ),
+                {"session_id": self.target.session_id},
+            )
+        with self.target.session_factory() as database:
+            recovered = recover_stale_archive_job_sessions(
+                database,
+                jitter_fraction_factory=lambda: 0.5,
+            )
+        assert len(recovered) == 1
         return super().load(request)
 
 
@@ -356,6 +452,59 @@ def archive_tables(target: IngestionTarget) -> tuple[pd.DataFrame, pd.DataFrame]
         ]
     )
     return results, laps
+
+
+def queue_backfill_job(
+    target: IngestionTarget,
+    *,
+    attempt_count: int = 0,
+) -> uuid.UUID:
+    job_id = uuid.uuid4()
+    with target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO backfill_jobs (
+                    id,
+                    season_year,
+                    status,
+                    request_reason
+                )
+                VALUES (
+                    :job_id,
+                    :season_year,
+                    'pending',
+                    'missing'
+                )
+                """
+            ),
+            {
+                "job_id": job_id,
+                "season_year": target.season_year,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO backfill_job_sessions (
+                    job_id,
+                    session_id,
+                    attempt_count
+                )
+                VALUES (
+                    :job_id,
+                    :session_id,
+                    :attempt_count
+                )
+                """
+            ),
+            {
+                "job_id": job_id,
+                "session_id": target.session_id,
+                "attempt_count": attempt_count,
+            },
+        )
+    return job_id
 
 
 def test_composes_loading_normalization_and_persistence_idempotently(
@@ -825,6 +974,253 @@ def test_missing_database_session_does_not_call_loader(
         )
 
     assert loader.requests == []
+
+
+def test_pre_persistence_guard_aborts_before_any_database_write(
+    ingestion_target: IngestionTarget,
+) -> None:
+    results, laps = archive_tables(ingestion_target)
+    guard_calls = 0
+
+    def reject_persistence() -> None:
+        nonlocal guard_calls
+        guard_calls += 1
+        raise RuntimeError("controlled guard rejection")
+
+    with pytest.raises(RuntimeError, match="guard rejection"):
+        ingest_fastf1_archive_session(
+            session_id=ingestion_target.session_id,
+            session_factory=ingestion_target.session_factory,
+            loader=StubLoader(results=results, laps=laps),
+            before_persist=reject_persistence,
+        )
+
+    assert guard_calls == 1
+    assert_session_has_no_archive_state(ingestion_target)
+
+
+def test_worker_processes_one_session_with_periodic_heartbeats(
+    ingestion_target: IngestionTarget,
+) -> None:
+    job_id = queue_backfill_job(ingestion_target)
+    results, laps = archive_tables(ingestion_target)
+    loader = HeartbeatInspectingLoader(
+        target=ingestion_target,
+        job_id=job_id,
+        results=results,
+        laps=laps,
+    )
+
+    processed = process_next_archive_job_session(
+        session_factory=ingestion_target.session_factory,
+        loader=loader,
+        heartbeat_interval=timedelta(milliseconds=10),
+    )
+
+    assert processed is not None
+    assert processed.claim.job_id == job_id
+    assert processed.outcome is WorkerSessionOutcome.COMPLETED
+    assert processed.ingestion is not None
+    assert processed.failure_transition is None
+    assert processed.aggregation.status == "completed"
+    assert processed.aggregation.completed_sessions == 1
+    assert loader.observed_heartbeat_advance is True
+    with ingestion_target.session_factory() as database:
+        job = database.get(BackfillJob, job_id)
+        job_session = database.get(
+            BackfillJobSession,
+            (job_id, ingestion_target.session_id),
+        )
+        ingestion = database.get(
+            SessionIngestion,
+            ingestion_target.session_id,
+        )
+        assert job is not None
+        assert job.status == "completed"
+        assert job_session is not None
+        assert job_session.status == "completed"
+        assert ingestion is not None
+        assert ingestion.status == "completed"
+
+
+def test_worker_records_retryable_loader_failure_and_keeps_job_running(
+    ingestion_target: IngestionTarget,
+) -> None:
+    job_id = queue_backfill_job(ingestion_target)
+
+    processed = process_next_archive_job_session(
+        session_factory=ingestion_target.session_factory,
+        loader=FailingLoader(),
+        jitter_fraction_factory=lambda: 0.5,
+    )
+
+    assert processed is not None
+    assert processed.outcome is WorkerSessionOutcome.RETRY_PENDING
+    assert processed.ingestion is None
+    assert processed.failure_transition is not None
+    assert processed.failure_transition.status == "pending"
+    assert processed.aggregation.status == "running"
+    assert processed.aggregation.pending_sessions == 1
+    with ingestion_target.session_factory() as database:
+        job = database.get(BackfillJob, job_id)
+        job_session = database.get(
+            BackfillJobSession,
+            (job_id, ingestion_target.session_id),
+        )
+        ingestion = database.get(
+            SessionIngestion,
+            ingestion_target.session_id,
+        )
+        assert job is not None
+        assert job.status == "running"
+        assert job_session is not None
+        assert job_session.status == "pending"
+        assert job_session.next_retry_at is not None
+        assert ingestion is not None
+        assert ingestion.status == "pending"
+        assert ingestion.next_retry_at == job_session.next_retry_at
+
+
+def test_worker_does_not_persist_after_its_lease_is_recovered(
+    ingestion_target: IngestionTarget,
+) -> None:
+    job_id = queue_backfill_job(ingestion_target)
+    results, laps = archive_tables(ingestion_target)
+
+    processed = process_next_archive_job_session(
+        session_factory=ingestion_target.session_factory,
+        loader=LeaseRecoveringLoader(
+            target=ingestion_target,
+            job_id=job_id,
+            results=results,
+            laps=laps,
+        ),
+        heartbeat_interval=timedelta(hours=1),
+    )
+
+    assert processed is not None
+    assert processed.outcome is WorkerSessionOutcome.OWNERSHIP_LOST
+    assert processed.ingestion is None
+    assert processed.failure_transition is None
+    assert processed.aggregation.status == "running"
+    assert processed.aggregation.pending_sessions == 1
+    with ingestion_target.session_factory() as database:
+        job_session = database.get(
+            BackfillJobSession,
+            (job_id, ingestion_target.session_id),
+        )
+        ingestion = database.get(
+            SessionIngestion,
+            ingestion_target.session_id,
+        )
+        assert job_session is not None
+        assert job_session.status == "pending"
+        assert job_session.last_error_code == "worker_lease_expired"
+        assert ingestion is not None
+        assert ingestion.status == "pending"
+        assert database.scalar(
+            select(func.count(SessionEntry.id)).where(
+                SessionEntry.session_id == ingestion_target.session_id
+            )
+        ) == 0
+
+
+def test_worker_records_terminal_normalization_failure_and_fails_parent(
+    ingestion_target: IngestionTarget,
+) -> None:
+    job_id = queue_backfill_job(ingestion_target)
+    jitter_requested = False
+
+    def unexpected_jitter() -> float:
+        nonlocal jitter_requested
+        jitter_requested = True
+        return 0.5
+
+    processed = process_next_archive_job_session(
+        session_factory=ingestion_target.session_factory,
+        loader=StubLoader(
+            results=pd.DataFrame(),
+            laps=pd.DataFrame(),
+        ),
+        jitter_fraction_factory=unexpected_jitter,
+    )
+
+    assert processed is not None
+    assert processed.outcome is WorkerSessionOutcome.FAILED
+    assert processed.failure_transition is not None
+    assert processed.failure_transition.status == "failed"
+    assert processed.aggregation.status == "failed"
+    assert processed.aggregation.failed_sessions == 1
+    assert jitter_requested is False
+    with ingestion_target.session_factory() as database:
+        job = database.get(BackfillJob, job_id)
+        job_session = database.get(
+            BackfillJobSession,
+            (job_id, ingestion_target.session_id),
+        )
+        ingestion = database.get(
+            SessionIngestion,
+            ingestion_target.session_id,
+        )
+        assert job is not None
+        assert job.status == "failed"
+        assert job.last_error_code == "session_ingestion_failed"
+        assert job.last_error_message == (
+            "One or more session ingestions failed."
+        )
+        assert job_session is not None
+        assert job_session.status == "failed"
+        assert job_session.last_error_code == "fastf1_normalization_failed"
+        assert ingestion is not None
+        assert ingestion.status == "failed"
+
+
+def test_worker_maintenance_recovers_and_aggregates_terminal_lease(
+    ingestion_target: IngestionTarget,
+) -> None:
+    job_id = queue_backfill_job(
+        ingestion_target,
+        attempt_count=3,
+    )
+    with ingestion_target.session_factory() as database:
+        claim = claim_next_archive_job_session(database)
+    assert claim is not None
+    assert claim.job_attempt_count == 4
+    with ingestion_target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE backfill_job_sessions
+                SET heartbeat_at = clock_timestamp() - interval '10 minutes'
+                WHERE job_id = :job_id
+                  AND session_id = :session_id
+                """
+            ),
+            {
+                "job_id": job_id,
+                "session_id": ingestion_target.session_id,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                UPDATE session_ingestions
+                SET heartbeat_at = clock_timestamp() - interval '10 minutes'
+                WHERE session_id = :session_id
+                """
+            ),
+            {"session_id": ingestion_target.session_id},
+        )
+
+    maintenance = perform_worker_maintenance(
+        session_factory=ingestion_target.session_factory,
+    )
+
+    assert len(maintenance.recovered) == 1
+    assert maintenance.recovered[0].status == "failed"
+    assert len(maintenance.aggregations) == 1
+    assert maintenance.aggregations[0].job_id == job_id
+    assert maintenance.aggregations[0].status == "failed"
 
 
 def assert_session_has_no_archive_state(target: IngestionTarget) -> None:

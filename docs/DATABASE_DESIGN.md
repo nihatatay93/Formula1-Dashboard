@@ -420,13 +420,14 @@ Implemented behavior:
 - Error fields contain sanitized summaries only and never contain credentials,
   cookies, raw authorization headers, or raw exception text.
 
-Accepted but not implemented:
+Implemented worker behavior:
 
-- The initial worker processes one FastF1 session at a time.
-- The worker must schedule the implemented heartbeat transaction every 30
-  seconds.
-- The worker must schedule the implemented recovery transaction every 30
-  seconds.
+- The worker processes one FastF1 session at a time.
+- A dedicated attempt thread schedules the heartbeat transaction every 30
+  seconds during blocking FastF1 work.
+- Maintenance schedules recovery and active-parent reconciliation immediately at
+  startup and every 30 seconds.
+- The idle worker polls for claims every two seconds.
 
 Implemented recovery behavior:
 
