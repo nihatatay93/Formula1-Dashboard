@@ -226,7 +226,7 @@ Stores one normalized lap summary. It does not contain raw telemetry samples.
 | `speed_i2_kph` | `REAL` | Nullable intermediate speed. |
 | `speed_fl_kph` | `REAL` | Nullable finish-line speed. |
 | `speed_st_kph` | `REAL` | Nullable speed-trap speed. |
-| `is_personal_best` | `BOOLEAN` | Non-null. |
+| `is_personal_best` | `BOOLEAN` | Nullable; null preserves an unknown value in older FastF1 data. |
 | `compound` | `TEXT` | Nullable tyre compound. |
 | `tyre_life_laps` | `SMALLINT` | Nullable validated integral tyre age. |
 | `fresh_tyre` | `BOOLEAN` | Nullable source value. |

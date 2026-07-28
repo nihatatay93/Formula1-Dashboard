@@ -5,6 +5,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
+from numbers import Integral
 from pathlib import Path
 from typing import Protocol
 
@@ -29,6 +30,10 @@ class FastF1ScheduleLoadError(FastF1ScheduleError):
 
 class FastF1ScheduleNormalizationError(FastF1ScheduleError):
     """Raised when an upstream schedule snapshot is incomplete or ambiguous."""
+
+
+class FastF1ScheduleRoundConflictError(FastF1ScheduleNormalizationError):
+    """Raised when the private schedule assigns one round more than once."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,10 +101,35 @@ class FastF1ScheduleLoader:
                     f"FastF1 failed to load the {season_year} schedule"
                 ) from error
 
-        return normalize_fastf1_schedule(
-            season_year=season_year,
-            meetings=meetings,
-        )
+            try:
+                return normalize_fastf1_schedule(
+                    season_year=season_year,
+                    meetings=meetings,
+                )
+            except FastF1ScheduleRoundConflictError:
+                try:
+                    public_schedule = fastf1.get_event_schedule(
+                        season_year,
+                        include_testing=False,
+                        backend="fastf1",
+                    )
+                    round_numbers_by_event_name = (
+                        curated_round_numbers_by_event_name(
+                            public_schedule
+                        )
+                    )
+                except Exception as error:
+                    raise FastF1ScheduleLoadError(
+                        f"FastF1 failed to reconcile the {season_year} schedule"
+                    ) from error
+
+                return normalize_fastf1_schedule(
+                    season_year=season_year,
+                    meetings=meetings,
+                    round_numbers_by_event_name=(
+                        round_numbers_by_event_name
+                    ),
+                )
 
 
 def create_fastf1_schedule_loader(
@@ -119,6 +149,7 @@ def normalize_fastf1_schedule(
     *,
     season_year: int,
     meetings: object,
+    round_numbers_by_event_name: Mapping[str, int] | None = None,
 ) -> NormalizedSeasonSchedule:
     """Normalize FastF1's season-index meetings without network or DB writes."""
 
@@ -139,7 +170,7 @@ def normalize_fastf1_schedule(
                 "FastF1 schedule event must be a mapping"
             )
 
-        round_number = _positive_integer(
+        raw_round_number = _positive_integer(
             raw_event.get("Number"),
             "event Number",
         )
@@ -147,12 +178,33 @@ def normalize_fastf1_schedule(
             raw_event.get("Name"),
             "event Name",
         )
-        if round_number == 0 or "test" in event_name.casefold():
+        if raw_round_number == 0 or "test" in event_name.casefold():
             continue
-        if round_number in round_numbers:
-            raise FastF1ScheduleNormalizationError(
-                f"duplicate championship round {round_number}"
+        if round_numbers_by_event_name is None:
+            round_number = raw_round_number
+        else:
+            event_key = _event_name_key(event_name)
+            try:
+                round_number = round_numbers_by_event_name[event_key]
+            except KeyError:
+                raise FastF1ScheduleNormalizationError(
+                    f"event {event_name!r} is absent from the curated schedule"
+                ) from None
+            round_number = _positive_integer(
+                round_number,
+                f"event {event_name!r} curated RoundNumber",
             )
+            if round_number == 0:
+                raise FastF1ScheduleNormalizationError(
+                    f"event {event_name!r} has no championship round"
+                )
+        if round_number in round_numbers:
+            error_type = (
+                FastF1ScheduleRoundConflictError
+                if round_numbers_by_event_name is None
+                else FastF1ScheduleNormalizationError
+            )
+            raise error_type(f"duplicate championship round {round_number}")
 
         raw_sessions = raw_event.get("Sessions")
         if not isinstance(raw_sessions, Sequence) or isinstance(
@@ -270,6 +322,53 @@ def normalize_fastf1_schedule(
     )
 
 
+def curated_round_numbers_by_event_name(
+    schedule: object,
+) -> dict[str, int]:
+    """Validate the public FastF1 schedule as an event-name round authority."""
+
+    if not isinstance(schedule, pd.DataFrame):
+        raise FastF1ScheduleNormalizationError(
+            "FastF1 curated schedule must be a DataFrame"
+        )
+    if not {"EventName", "RoundNumber"} <= set(schedule.columns):
+        raise FastF1ScheduleNormalizationError(
+            "FastF1 curated schedule is missing required columns"
+        )
+
+    round_numbers: dict[str, int] = {}
+    used_rounds: set[int] = set()
+    for row_number, row in schedule.iterrows():
+        event_name = _required_text(
+            row.get("EventName"),
+            f"curated schedule row {row_number} EventName",
+        )
+        round_number = _positive_integer(
+            row.get("RoundNumber"),
+            f"curated schedule row {row_number} RoundNumber",
+        )
+        if round_number == 0:
+            continue
+
+        event_key = _event_name_key(event_name)
+        if event_key in round_numbers:
+            raise FastF1ScheduleNormalizationError(
+                f"duplicate curated event name {event_name!r}"
+            )
+        if round_number in used_rounds:
+            raise FastF1ScheduleNormalizationError(
+                f"duplicate curated championship round {round_number}"
+            )
+        round_numbers[event_key] = round_number
+        used_rounds.add(round_number)
+
+    if not round_numbers:
+        raise FastF1ScheduleNormalizationError(
+            "FastF1 curated schedule has no championship events"
+        )
+    return round_numbers
+
+
 def _validate_season_year(value: object) -> None:
     if (
         isinstance(value, bool)
@@ -283,7 +382,7 @@ def _validate_season_year(value: object) -> None:
 
 
 def _positive_integer(value: object, field: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    if isinstance(value, bool) or not isinstance(value, Integral) or value < 0:
         raise FastF1ScheduleNormalizationError(
             f"{field} must be a non-negative integer"
         )
@@ -291,7 +390,7 @@ def _positive_integer(value: object, field: str) -> int:
         raise FastF1ScheduleNormalizationError(
             f"{field} exceeds the database range"
         )
-    return value
+    return int(value)
 
 
 def _required_text(value: object, field: str) -> str:
@@ -314,6 +413,10 @@ def _country_name(value: object) -> str | None:
     if isinstance(value, Mapping):
         return _optional_text(value.get("Name"))
     return _optional_text(value)
+
+
+def _event_name_key(event_name: str) -> str:
+    return " ".join(event_name.casefold().split())
 
 
 def _session_key(session_name: str) -> str:

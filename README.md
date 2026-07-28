@@ -9,7 +9,7 @@ database migrations, and the first historical backfill API slice:
 
 - FastAPI backend with liveness and PostgreSQL readiness endpoints
 - Single-concurrency archive worker using the same backend image
-- React, TypeScript, and Vite frontend
+- React, TypeScript, and Vite season archive dashboard
 - PostgreSQL with SQLAlchemy 2 models and Alembic migrations
 - Backfill control-plane tables for seasons, sessions, ingestion state, and jobs
 - Sporting-data tables for drivers, session entries, results, and lap summaries
@@ -87,6 +87,11 @@ The services are exposed locally at:
 The POST command may synchronously refresh the selected season schedule through
 FastF1's persistent cache. Session ingestion continues asynchronously in the
 single-concurrency worker.
+
+The dashboard defaults to the current UTC season and supports every configured
+season from 2018 onward. It reads season coverage, displays event and
+session-level archive state, starts or reuses an idempotent backfill, and polls
+active job progress every two seconds. It never requests full telemetry.
 
 Stop the stack:
 

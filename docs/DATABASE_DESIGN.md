@@ -170,6 +170,18 @@ The revision invalidates existing non-null season coverage so the next discovery
 refresh assigns authoritative membership markers. It preserves all calendar and
 sporting rows.
 
+### Revision 4: Ingestion resilience
+
+Adds:
+
+- `upstream_request_gates`, seeded with the singleton
+  `fastf1_archive` coordination row.
+- Nullable `laps.is_personal_best` for historical FastF1 rows where the source
+  value is unknown.
+
+The request-gate row stores the next permitted archive session start and whether
+the current restriction represents normal pacing or a rate-limit cooldown.
+
 ### Telemetry revision
 
 Deferred until FastF1 storage volume and query patterns are measured. The decision will cover:
@@ -435,6 +447,12 @@ Implemented behavior:
 
 - Retry is scoped to a session, never to the entire season from the beginning.
 - `attempt_count` increments when a worker successfully claims a session.
+- Claims lock the `fastf1_archive` row in `upstream_request_gates` before
+  session state and reserve a minimum 90-second interval between archive
+  session starts across processes.
+- FastF1's explicit rate-limit exception closes the global gate for one hour
+  and does not consume the job-session retry budget; the lifetime ingestion
+  attempt token remains monotonic.
 - Retryable failures set `next_retry_at`; permanent validation failures remain failed.
 - Maximum attempts and backoff are configuration values, not schema constants.
 - Job-session and persistent session states change atomically during claims and
@@ -546,3 +564,15 @@ Verified on 2026-07-28 against PostgreSQL 17:
 - Concurrent season planners reuse one active job.
 - Removed schedule rows remain stored but are not queued from the latest
   snapshot.
+
+## Revision 4 Verification
+
+Verified on 2026-07-28 against PostgreSQL 17:
+
+- Upgrade from Revision 3 to Revision 4 succeeds.
+- Downgrade returns to Revision 3 and re-upgrade succeeds.
+- Existing completed session data is preserved.
+- PostgreSQL-backed pacing blocks a second immediate archive claim.
+- FastF1 rate-limit cooldown is shared globally and preserves the job-session
+  retry budget.
+- Unknown historical `IsPersonalBest` values normalize and persist as null.

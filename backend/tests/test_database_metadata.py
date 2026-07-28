@@ -17,6 +17,7 @@ def test_metadata_contains_all_migrated_tables() -> None:
         "session_ingestions",
         "session_results",
         "sessions",
+        "upstream_request_gates",
     }
 
 
@@ -77,6 +78,12 @@ def test_unresolved_session_entry_driver_is_nullable() -> None:
     driver_id = Base.metadata.tables["session_entries"].c.driver_id
 
     assert driver_id.nullable is True
+
+
+def test_unknown_historical_personal_best_flag_is_nullable() -> None:
+    is_personal_best = Base.metadata.tables["laps"].c.is_personal_best
+
+    assert is_personal_best.nullable is True
 
 
 def test_calendar_discovery_markers_and_indexes_are_declared() -> None:

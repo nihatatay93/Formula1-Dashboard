@@ -15,6 +15,7 @@ It covers:
 - Heartbeats and lease expiry.
 - Crash recovery and stale-worker fencing.
 - Current-season schedule and archive freshness.
+- Cross-worker FastF1 request pacing and rate-limit cooldown.
 
 It does not define REST APIs or UI behavior. Manual job cancellation is
 explicitly deferred from the historical MVP; the operational shutdown behavior
@@ -28,7 +29,9 @@ is implemented. Transactional parent-job aggregation is implemented. Worker
 claiming, execution, heartbeat/recovery scheduling, failure/completion handling,
 and aggregation are implemented. Cache-backed schedule discovery, atomic
 calendar refresh, and freshness-triggered active-job creation/reuse are
-implemented.
+implemented. A persistent PostgreSQL request gate now serializes FastF1 archive
+session starts across workers, enforces a 90-second minimum interval, and applies
+a one-hour global cooldown when FastF1 raises its rate-limit exception.
 
 ## Recommended Configuration
 
@@ -44,6 +47,8 @@ implemented.
 | Recovery scan interval | 30 seconds |
 | Idle worker poll interval | 2 seconds |
 | Initial worker concurrency | One FastF1 session at a time |
+| Minimum interval between FastF1 archive session starts | 90 seconds |
+| FastF1 rate-limit cooldown | 1 hour |
 | Current-season coverage TTL | 6 hours |
 | Historical-season coverage TTL | 30 days |
 | Archive availability grace | 2 hours after scheduled session end |
@@ -55,6 +60,8 @@ All policy timestamps and eligibility comparisons use PostgreSQL UTC time.
 The implemented `BackfillRuntimeSettings.from_environment()` loader reads:
 
 - `BACKFILL_WORKER_POLL_INTERVAL_SECONDS`
+- `FASTF1_ARCHIVE_SESSION_MIN_INTERVAL_SECONDS`
+- `FASTF1_RATE_LIMIT_COOLDOWN_SECONDS`
 - `BACKFILL_MAX_ATTEMPTS`
 - `BACKFILL_BACKOFF_BASE_SECONDS`
 - `BACKFILL_BACKOFF_MULTIPLIER`
@@ -84,6 +91,10 @@ The two existing attempt counters have different responsibilities:
 A manual or later freshness-triggered job receives a new job-session retry budget,
 but the persistent session-ingestion token continues increasing.
 
+FastF1's explicit rate-limit signal does not consume the job-session retry
+budget. The lifetime session-ingestion token still increases because an owned
+attempt was started and must remain monotonic for fencing.
+
 ## Failure Classification
 
 ### Retryable
@@ -99,6 +110,23 @@ configuration:
 The sanitized code alone must not classify every database or persistence error as
 retryable. The original in-process exception type and database error category make
 that decision before only sanitized diagnostics are persisted.
+
+### FastF1 rate limit
+
+`fastf1_rate_limited` is handled separately from ordinary retryable load
+failures:
+
+1. Persist fixed, secret-free diagnostics.
+2. Return both session states to `pending`.
+3. Restore the job-session retry counter because the shared upstream budget,
+   rather than session data, prevented the request.
+4. Preserve the monotonic lifetime ingestion attempt token.
+5. Set both session retry timestamps and the global `fastf1_archive` request
+   gate to one hour after the database failure timestamp.
+
+While that gate is closed, no worker can claim another FastF1 archive session.
+This prevents a rate-limit response from consuming every pending session's retry
+budget.
 
 ### Terminal
 
@@ -385,6 +413,8 @@ The implemented worker:
 2. Runs lease recovery and active-parent reconciliation immediately at startup
    and every 30 seconds afterward.
 3. Polls every two seconds while idle and claims at most one eligible session.
+   A claim first locks the persistent FastF1 request gate; successful claims
+   reserve the next start at least 90 seconds later.
 4. Processes the claimed session synchronously through the cache-backed loader,
    normalization, and claim-aware atomic persistence.
 5. Runs periodic heartbeats in a separate thread for the duration of blocking
@@ -443,3 +473,6 @@ measured or before production or multi-user operation requires it.
    graceful shutdown.
 9. Implemented: cache-backed FastF1 schedule discovery, atomic latest-snapshot
    persistence, and advisory-locked active-job creation/reuse.
+10. Implemented: PostgreSQL-backed archive request pacing, distinct FastF1
+    rate-limit classification, one-hour global cooldown, and retry-budget
+    preservation.

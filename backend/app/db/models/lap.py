@@ -128,7 +128,7 @@ class Lap(TimestampMixin, Base):
     speed_i2_kph: Mapped[float | None] = mapped_column(REAL)
     speed_fl_kph: Mapped[float | None] = mapped_column(REAL)
     speed_st_kph: Mapped[float | None] = mapped_column(REAL)
-    is_personal_best: Mapped[bool] = mapped_column(Boolean)
+    is_personal_best: Mapped[bool | None] = mapped_column(Boolean)
     compound: Mapped[str | None] = mapped_column(Text)
     tyre_life_laps: Mapped[int | None] = mapped_column(SmallInteger)
     fresh_tyre: Mapped[bool | None] = mapped_column(Boolean)

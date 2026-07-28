@@ -45,6 +45,8 @@ class RetryDisposition(StrEnum):
 @dataclass(frozen=True, slots=True)
 class BackfillRuntimeSettings:
     worker_poll_interval_seconds: int = 2
+    archive_session_min_interval_seconds: int = 90
+    fastf1_rate_limit_cooldown_seconds: int = 3_600
     max_attempts: int = 4
     backoff_base_seconds: int = 60
     backoff_multiplier: int = 2
@@ -64,6 +66,14 @@ class BackfillRuntimeSettings:
         _positive_integer(
             self.worker_poll_interval_seconds,
             "worker_poll_interval_seconds",
+        )
+        _positive_integer(
+            self.archive_session_min_interval_seconds,
+            "archive_session_min_interval_seconds",
+        )
+        _positive_integer(
+            self.fastf1_rate_limit_cooldown_seconds,
+            "fastf1_rate_limit_cooldown_seconds",
         )
         _positive_integer(self.max_attempts, "max_attempts")
         _positive_integer(self.backoff_base_seconds, "backoff_base_seconds")
@@ -94,6 +104,14 @@ class BackfillRuntimeSettings:
         if self.backoff_cap_seconds < self.backoff_base_seconds:
             raise BackfillRuntimePolicyError(
                 "backoff_cap_seconds must be at least backoff_base_seconds"
+            )
+        if (
+            self.fastf1_rate_limit_cooldown_seconds
+            <= self.archive_session_min_interval_seconds
+        ):
+            raise BackfillRuntimePolicyError(
+                "fastf1_rate_limit_cooldown_seconds must exceed "
+                "archive_session_min_interval_seconds"
             )
         if (
             isinstance(self.jitter_min_ratio, bool)
@@ -142,6 +160,16 @@ class BackfillRuntimeSettings:
                 values,
                 "BACKFILL_WORKER_POLL_INTERVAL_SECONDS",
                 defaults.worker_poll_interval_seconds,
+            ),
+            archive_session_min_interval_seconds=_environment_integer(
+                values,
+                "FASTF1_ARCHIVE_SESSION_MIN_INTERVAL_SECONDS",
+                defaults.archive_session_min_interval_seconds,
+            ),
+            fastf1_rate_limit_cooldown_seconds=_environment_integer(
+                values,
+                "FASTF1_RATE_LIMIT_COOLDOWN_SECONDS",
+                defaults.fastf1_rate_limit_cooldown_seconds,
             ),
             max_attempts=_environment_integer(
                 values,
@@ -208,6 +236,14 @@ class BackfillRuntimeSettings:
     @property
     def heartbeat_interval(self) -> timedelta:
         return timedelta(seconds=self.heartbeat_interval_seconds)
+
+    @property
+    def archive_session_min_interval(self) -> timedelta:
+        return timedelta(seconds=self.archive_session_min_interval_seconds)
+
+    @property
+    def fastf1_rate_limit_cooldown(self) -> timedelta:
+        return timedelta(seconds=self.fastf1_rate_limit_cooldown_seconds)
 
     @property
     def lease_timeout(self) -> timedelta:

@@ -23,6 +23,7 @@ from app.ingestion.archive_persistence import (
 )
 from app.ingestion.fastf1_loader import (
     FastF1LoaderConfigurationError,
+    FastF1RateLimitError,
     FastF1SessionLoadError,
 )
 from app.ingestion.fastf1_normalization import (
@@ -158,6 +159,13 @@ def sanitize_archive_failure(error: Exception) -> SanitizedArchiveFailure:
         tuple[type[Exception], SanitizedArchiveFailure],
         ...,
     ] = (
+        (
+            FastF1RateLimitError,
+            SanitizedArchiveFailure(
+                "fastf1_rate_limited",
+                "FastF1 archive request rate limit was reached.",
+            ),
+        ),
         (
             FastF1LoaderConfigurationError,
             SanitizedArchiveFailure(

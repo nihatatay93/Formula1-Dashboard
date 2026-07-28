@@ -12,7 +12,12 @@ from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.engine import sqlalchemy_database_url
-from app.db.models import BackfillJob, BackfillJobSession, SessionIngestion
+from app.db.models import (
+    BackfillJob,
+    BackfillJobSession,
+    SessionIngestion,
+    UpstreamRequestGate,
+)
 from app.ingestion.archive_persistence import ArchiveSourceConflictError
 from app.ingestion.backfill_orchestration import (
     SESSION_INGESTION_FAILED,
@@ -29,7 +34,10 @@ from app.ingestion.backfill_orchestration import (
     recover_stale_archive_job_sessions,
     transition_archive_job_failure,
 )
-from app.ingestion.fastf1_loader import FastF1SessionLoadError
+from app.ingestion.fastf1_loader import (
+    FastF1RateLimitError,
+    FastF1SessionLoadError,
+)
 from app.ingestion.fastf1_normalization import FastF1NormalizationError
 from app.ingestion.runtime_policy import (
     BackfillRuntimePolicyError,
@@ -285,6 +293,20 @@ def expire_lease(
         )
 
 
+def reopen_fastf1_request_gate(target: OrchestrationTarget) -> None:
+    with target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE upstream_request_gates
+                SET next_request_at = clock_timestamp(),
+                    reason = 'pacing'
+                WHERE source = 'fastf1_archive'
+                """
+            )
+        )
+
+
 def set_job_session_status(
     target: OrchestrationTarget,
     session_id: int,
@@ -375,6 +397,84 @@ def test_claim_synchronizes_job_and_persistent_session_state(
         assert ingestion.last_started_at == claim.claimed_at
         assert ingestion.heartbeat_at == claim.claimed_at
         assert ingestion.next_retry_at is None
+
+
+def test_claim_reserves_the_global_fastf1_request_interval(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    queue_session(
+        orchestration_target,
+        orchestration_target.session_ids[0],
+    )
+    queue_session(
+        orchestration_target,
+        orchestration_target.session_ids[1],
+    )
+
+    with orchestration_target.session_factory() as database:
+        first_claim = claim_next_archive_job_session(database)
+    with orchestration_target.session_factory() as database:
+        second_claim = claim_next_archive_job_session(database)
+        request_gate = database.get(
+            UpstreamRequestGate,
+            "fastf1_archive",
+        )
+
+    assert first_claim is not None
+    assert second_claim is None
+    assert request_gate is not None
+    assert request_gate.reason == "pacing"
+    assert request_gate.next_request_at >= (
+        first_claim.claimed_at + timedelta(seconds=90)
+    )
+
+
+def test_rate_limit_sets_global_cooldown_without_consuming_attempt_budget(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    session_id = orchestration_target.session_ids[0]
+    queue_session(orchestration_target, session_id)
+
+    with orchestration_target.session_factory() as database:
+        claim = claim_next_archive_job_session(database)
+    assert claim is not None
+
+    with orchestration_target.session_factory() as database:
+        transition = transition_archive_job_failure(
+            database,
+            claim=claim,
+            error=FastF1RateLimitError("RAW-UPSTREAM-DETAIL"),
+            jitter_fraction=0.0,
+        )
+
+    assert transition.status == "pending"
+    assert transition.failure.code == "fastf1_rate_limited"
+    assert transition.next_retry_at == (
+        transition.failed_at + timedelta(hours=1)
+    )
+
+    with orchestration_target.session_factory() as database:
+        job_session = database.get(
+            BackfillJobSession,
+            (orchestration_target.job_id, session_id),
+        )
+        ingestion = database.get(SessionIngestion, session_id)
+        request_gate = database.get(
+            UpstreamRequestGate,
+            "fastf1_archive",
+        )
+    with orchestration_target.session_factory() as database:
+        blocked_claim = claim_next_archive_job_session(database)
+
+    assert job_session is not None
+    assert job_session.attempt_count == 0
+    assert job_session.next_retry_at == transition.next_retry_at
+    assert ingestion is not None
+    assert ingestion.attempt_count == 1
+    assert request_gate is not None
+    assert request_gate.reason == "rate_limit"
+    assert request_gate.next_request_at == transition.next_retry_at
+    assert blocked_claim is None
 
 
 def test_retryable_failure_synchronizes_pending_state_and_preserves_snapshot(
@@ -670,6 +770,7 @@ def test_stale_lease_recovery_schedules_retry_and_fences_lost_worker(
             {"session_id": claim.session_id},
         )
 
+    reopen_fastf1_request_gate(orchestration_target)
     with orchestration_target.session_factory() as database:
         next_claim = claim_next_archive_job_session(database)
 
@@ -732,6 +833,7 @@ def test_stale_recovery_is_bounded_and_ignores_fresh_leases(
 
     claims = []
     for _ in orchestration_target.session_ids:
+        reopen_fastf1_request_gate(orchestration_target)
         with orchestration_target.session_factory() as database:
             claim = claim_next_archive_job_session(database)
         assert claim is not None
@@ -781,6 +883,7 @@ def test_stale_recovery_skips_locked_rows(
     first_session_id, second_session_id = orchestration_target.session_ids[:2]
     for session_id in (first_session_id, second_session_id):
         queue_session(orchestration_target, session_id)
+        reopen_fastf1_request_gate(orchestration_target)
         with orchestration_target.session_factory() as database:
             claim = claim_next_archive_job_session(database)
         assert claim is not None

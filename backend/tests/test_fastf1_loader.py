@@ -10,6 +10,7 @@ import pytest
 from app.ingestion import fastf1_loader
 from app.ingestion.fastf1_loader import (
     FastF1LoaderConfigurationError,
+    FastF1RateLimitError,
     FastF1SessionLoader,
     FastF1SessionLoadError,
     FastF1SessionRequest,
@@ -196,6 +197,36 @@ def test_wraps_fastf1_load_failures_without_returning_partial_data(
         )
 
     assert isinstance(error.value.__cause__, ConnectionError)
+
+
+def test_preserves_fastf1_rate_limit_as_a_distinct_retry_signal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        fastf1_loader.fastf1.Cache,
+        "enable_cache",
+        lambda *_args, **_kwargs: None,
+    )
+
+    def rate_limited(*_args: Any) -> None:
+        raise fastf1_loader.fastf1.exceptions.RateLimitExceededError
+
+    monkeypatch.setattr(
+        fastf1_loader.fastf1,
+        "get_session",
+        rate_limited,
+    )
+
+    with pytest.raises(FastF1RateLimitError) as error:
+        FastF1SessionLoader(tmp_path / "cache").load(
+            FastF1SessionRequest(2024, 1, "Race")
+        )
+
+    assert isinstance(
+        error.value.__cause__,
+        fastf1_loader.fastf1.exceptions.RateLimitExceededError,
+    )
 
 
 def test_rejects_loaded_sessions_without_required_tables(

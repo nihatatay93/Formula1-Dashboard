@@ -25,6 +25,11 @@ This is an explicitly pinned upstream boundary:
 - FastF1 cache-version checks and HTTP request caching remain enabled.
 - No estimated duration is invented when an end timestamp is missing.
 - An incomplete or ambiguous snapshot fails before database writes.
+- If the private season index assigns the same positive round number to two
+  championship events, the loader obtains only the authoritative round mapping
+  from FastF1's curated public schedule. Matching is strict by normalized event
+  name; raw session boundaries remain authoritative, and any missing,
+  duplicated, or ambiguous mapping still fails before database writes.
 
 The loader is isolated behind a protocol and controlled doubles in tests. No live
 upstream request is part of the automated suite.

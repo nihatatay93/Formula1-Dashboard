@@ -78,6 +78,8 @@ services:
     environment:
       DATABASE_URL: postgresql://formula1_dashboard@db:5432/formula1_dashboard
       FASTF1_CACHE_PATH: /cache/fastf1
+      FASTF1_ARCHIVE_SESSION_MIN_INTERVAL_SECONDS: "90"
+      FASTF1_RATE_LIMIT_COOLDOWN_SECONDS: "3600"
       BACKFILL_WORKER_POLL_INTERVAL_SECONDS: "2"
       WORKER_READY_FILE: /tmp/formula1-dashboard-worker.ready
     volumes:

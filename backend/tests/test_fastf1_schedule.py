@@ -4,6 +4,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+import pandas as pd
 import pytest
 
 from app.ingestion import fastf1_loader, fastf1_schedule
@@ -13,6 +14,7 @@ from app.ingestion.fastf1_schedule import (
     FastF1ScheduleLoadError,
     FastF1ScheduleNormalizationError,
     create_fastf1_schedule_loader,
+    curated_round_numbers_by_event_name,
     normalize_fastf1_schedule,
 )
 
@@ -248,6 +250,103 @@ def test_loader_wraps_upstream_failure_without_partial_schedule(
         FastF1ScheduleLoader(tmp_path / "cache").load(2024)
 
     assert isinstance(error.value.__cause__, ConnectionError)
+
+
+def test_loader_reconciles_duplicate_private_rounds_by_curated_event_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        fastf1_loader.fastf1.Cache,
+        "enable_cache",
+        lambda *_args, **_kwargs: None,
+    )
+    private_meetings = [
+        meeting(6, name="Miami Grand Prix"),
+        meeting(6, name="Monaco Grand Prix"),
+    ]
+    public_schedule = pd.DataFrame(
+        [
+            {"EventName": "Miami Grand Prix", "RoundNumber": 6},
+            {"EventName": "Monaco Grand Prix", "RoundNumber": 8},
+        ]
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1._api,
+        "season_schedule",
+        lambda _path: private_meetings,
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1,
+        "get_event_schedule",
+        lambda *_args, **_kwargs: public_schedule,
+    )
+
+    loaded = FastF1ScheduleLoader(tmp_path / "cache").load(2026)
+
+    assert [
+        (event.round_number, event.event_name)
+        for event in loaded.events
+    ] == [
+        (6, "Miami Grand Prix"),
+        (8, "Monaco Grand Prix"),
+    ]
+    assert loaded.events[1].sessions[0].scheduled_end_at.isoformat() == (
+        "2024-03-01T13:00:00+00:00"
+    )
+
+
+def test_curated_round_authority_rejects_ambiguous_events() -> None:
+    with pytest.raises(
+        FastF1ScheduleNormalizationError,
+        match="duplicate curated event name",
+    ):
+        curated_round_numbers_by_event_name(
+            pd.DataFrame(
+                [
+                    {
+                        "EventName": "Monaco Grand Prix",
+                        "RoundNumber": 7,
+                    },
+                    {
+                        "EventName": " monaco   grand prix ",
+                        "RoundNumber": 8,
+                    },
+                ]
+            )
+        )
+
+
+def test_loader_rejects_duplicate_round_when_curated_mapping_is_incomplete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        fastf1_loader.fastf1.Cache,
+        "enable_cache",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1._api,
+        "season_schedule",
+        lambda _path: [
+            meeting(6, name="Miami Grand Prix"),
+            meeting(6, name="Monaco Grand Prix"),
+        ],
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1,
+        "get_event_schedule",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            [{"EventName": "Miami Grand Prix", "RoundNumber": 6}]
+        ),
+    )
+
+    with pytest.raises(
+        FastF1ScheduleNormalizationError,
+        match="absent from the curated schedule",
+    ):
+        FastF1ScheduleLoader(tmp_path / "cache").load(2026)
 
 
 def test_schedule_loads_share_the_fastf1_process_lock(

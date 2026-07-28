@@ -81,7 +81,7 @@ class NormalizedLap:
     speed_i2_kph: float | None
     speed_fl_kph: float | None
     speed_st_kph: float | None
-    is_personal_best: bool
+    is_personal_best: bool | None
     compound: str | None
     tyre_life_laps: int | None
     fresh_tyre: bool | None
@@ -443,7 +443,7 @@ def _normalize_laps(
                     f"laps row {row_number} SpeedST",
                     minimum=0,
                 ),
-                is_personal_best=_required_bool(
+                is_personal_best=_optional_bool(
                     row.get("IsPersonalBest"),
                     f"laps row {row_number} IsPersonalBest",
                 ),

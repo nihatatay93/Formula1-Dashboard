@@ -14,6 +14,7 @@ from app.db.models import (
     BackfillJobSession,
     RaceSession,
     SessionIngestion,
+    UpstreamRequestGate,
 )
 from app.ingestion.archive_attempt import (
     SanitizedArchiveFailure,
@@ -23,6 +24,7 @@ from app.ingestion.archive_persistence import (
     ArchiveSessionNotFoundError,
     ArchiveSourceConflictError,
 )
+from app.ingestion.fastf1_loader import FastF1RateLimitError
 from app.ingestion.fastf1_normalization import ARCHIVE_SOURCE, FINALIZED_STATE
 from app.ingestion.runtime_policy import (
     BackfillRuntimeSettings,
@@ -112,6 +114,8 @@ SESSION_INGESTION_FAILED = SanitizedArchiveFailure(
     message="One or more session ingestions failed.",
 )
 
+FASTF1_ARCHIVE_GATE_SOURCE = "fastf1_archive"
+
 
 def aggregate_backfill_job(
     database: Session,
@@ -184,6 +188,11 @@ def claim_next_archive_job_session(
     runtime_settings = settings or BackfillRuntimeSettings()
 
     with database.begin():
+        database_now = _database_now(database)
+        request_gate = _get_fastf1_request_gate_for_update(database)
+        if request_gate.next_request_at > database_now:
+            return None
+
         job_session = database.scalar(
             select(BackfillJobSession)
             .join(
@@ -238,6 +247,10 @@ def claim_next_archive_job_session(
                 )
 
         claimed_at = _database_now(database)
+        request_gate.next_request_at = (
+            claimed_at + runtime_settings.archive_session_min_interval
+        )
+        request_gate.reason = "pacing"
         job_attempt_count = job_session.attempt_count + 1
         session_attempt_token = (
             ingestion.attempt_count + 1
@@ -460,8 +473,14 @@ def transition_archive_job_failure(
     runtime_settings = settings or BackfillRuntimeSettings()
     disposition = classify_retry(error)
     failure = sanitize_archive_failure(error)
+    rate_limited = isinstance(error, FastF1RateLimitError)
 
     with database.begin():
+        request_gate = (
+            _get_fastf1_request_gate_for_update(database)
+            if rate_limited
+            else None
+        )
         job_session = _get_job_session_for_update(database, claim)
         job = _get_job_for_update(database, claim.job_id)
         if job is None or job.status != "running":
@@ -485,7 +504,19 @@ def transition_archive_job_failure(
         failed_at = _database_now(database)
         next_retry_at: datetime | None = None
         status = "failed"
-        if (
+        if rate_limited:
+            next_retry_at = (
+                failed_at + runtime_settings.fastf1_rate_limit_cooldown
+            )
+            status = "pending"
+            job_session.attempt_count -= 1
+            assert request_gate is not None
+            request_gate.next_request_at = max(
+                request_gate.next_request_at,
+                next_retry_at,
+            )
+            request_gate.reason = "rate_limit"
+        elif (
             disposition is RetryDisposition.RETRYABLE
             and claim.job_attempt_count < runtime_settings.max_attempts
         ):
@@ -643,6 +674,23 @@ def _get_ingestion_for_update(
         .where(SessionIngestion.session_id == session_id)
         .with_for_update()
     )
+
+
+def _get_fastf1_request_gate_for_update(
+    database: Session,
+) -> UpstreamRequestGate:
+    request_gate = database.scalar(
+        select(UpstreamRequestGate)
+        .where(
+            UpstreamRequestGate.source == FASTF1_ARCHIVE_GATE_SOURCE
+        )
+        .with_for_update()
+    )
+    if request_gate is None:
+        raise BackfillPersistentStateConflictError(
+            "FastF1 archive request gate is missing"
+        )
+    return request_gate
 
 
 def _database_now(database: Session) -> datetime:

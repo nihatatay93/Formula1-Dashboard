@@ -28,6 +28,10 @@ class FastF1SessionLoadError(FastF1LoaderError):
     """Raised when FastF1 cannot produce a usable loaded session."""
 
 
+class FastF1RateLimitError(FastF1SessionLoadError):
+    """Raised when FastF1 reports that its upstream request budget is exhausted."""
+
+
 @dataclass(frozen=True, slots=True)
 class FastF1SessionRequest:
     season_year: int
@@ -93,6 +97,10 @@ class FastF1SessionLoader:
                     weather=False,
                     messages=True,
                 )
+            except fastf1.exceptions.RateLimitExceededError as error:
+                raise FastF1RateLimitError(
+                    "FastF1 archive request rate limit was reached"
+                ) from error
             except Exception as error:
                 raise FastF1SessionLoadError(
                     "FastF1 failed to load "

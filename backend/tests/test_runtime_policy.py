@@ -49,6 +49,8 @@ def test_default_settings_match_the_accepted_policy() -> None:
     settings = BackfillRuntimeSettings()
 
     assert settings.worker_poll_interval_seconds == 2
+    assert settings.archive_session_min_interval == timedelta(seconds=90)
+    assert settings.fastf1_rate_limit_cooldown == timedelta(hours=1)
     assert settings.max_attempts == 4
     assert settings.backoff_base_seconds == 60
     assert settings.backoff_multiplier == 2
@@ -90,6 +92,8 @@ def test_environment_overrides_are_typed() -> None:
     settings = BackfillRuntimeSettings.from_environment(
         {
             "BACKFILL_WORKER_POLL_INTERVAL_SECONDS": "1",
+            "FASTF1_ARCHIVE_SESSION_MIN_INTERVAL_SECONDS": "120",
+            "FASTF1_RATE_LIMIT_COOLDOWN_SECONDS": "7200",
             "BACKFILL_MAX_ATTEMPTS": "6",
             "BACKFILL_BACKOFF_BASE_SECONDS": "10",
             "BACKFILL_BACKOFF_MULTIPLIER": "3",
@@ -107,6 +111,8 @@ def test_environment_overrides_are_typed() -> None:
 
     assert settings == BackfillRuntimeSettings(
         worker_poll_interval_seconds=1,
+        archive_session_min_interval_seconds=120,
+        fastf1_rate_limit_cooldown_seconds=7200,
         max_attempts=6,
         backoff_base_seconds=10,
         backoff_multiplier=3,
@@ -126,6 +132,11 @@ def test_environment_overrides_are_typed() -> None:
     "settings",
     [
         {"worker_poll_interval_seconds": 0},
+        {"archive_session_min_interval_seconds": 0},
+        {
+            "archive_session_min_interval_seconds": 90,
+            "fastf1_rate_limit_cooldown_seconds": 90,
+        },
         {"max_attempts": 0},
         {"backoff_base_seconds": True},
         {"backoff_base_seconds": 60, "backoff_cap_seconds": 59},
@@ -147,6 +158,7 @@ def test_rejects_invalid_settings(settings: dict[str, object]) -> None:
     "environment",
     [
         {"BACKFILL_MAX_ATTEMPTS": "four"},
+        {"FASTF1_ARCHIVE_SESSION_MIN_INTERVAL_SECONDS": "slow"},
         {"BACKFILL_JITTER_MIN_RATIO": "half"},
         {"ARCHIVE_CORRECTION_CHECKPOINTS_SECONDS": "86400,seven-days"},
     ],

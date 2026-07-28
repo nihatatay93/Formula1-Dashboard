@@ -11,6 +11,7 @@ from app.ingestion.archive_persistence import (
 )
 from app.ingestion.fastf1_loader import (
     FastF1LoaderConfigurationError,
+    FastF1RateLimitError,
     FastF1SessionLoadError,
 )
 from app.ingestion.fastf1_normalization import FastF1NormalizationError
@@ -19,6 +20,11 @@ from app.ingestion.fastf1_normalization import FastF1NormalizationError
 @pytest.mark.parametrize(
     ("error", "expected_code", "expected_message"),
     [
+        (
+            FastF1RateLimitError("RAW-ERROR-SENTINEL"),
+            "fastf1_rate_limited",
+            "FastF1 archive request rate limit was reached.",
+        ),
         (
             FastF1LoaderConfigurationError("RAW-ERROR-SENTINEL"),
             "fastf1_configuration_failed",

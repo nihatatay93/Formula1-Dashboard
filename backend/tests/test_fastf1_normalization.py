@@ -176,6 +176,19 @@ def test_normalizes_complete_race_snapshot() -> None:
     assert lap.deleted_reason is None
 
 
+def test_preserves_unknown_historical_personal_best_flag() -> None:
+    historical_lap = lap_row()
+    historical_lap["IsPersonalBest"] = pd.NA
+
+    normalized = normalize_fastf1_session(
+        pd.DataFrame([result_row()]),
+        pd.DataFrame([historical_lap]),
+        session_name="Race",
+    )
+
+    assert normalized.laps[0].is_personal_best is None
+
+
 def test_normalizes_qualifying_times_without_race_gap_semantics() -> None:
     qualifying_result = result_row(time=timedelta(minutes=1, seconds=29))
     qualifying_result.update(
