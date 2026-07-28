@@ -16,7 +16,7 @@ The system is intended to:
 
 ## Current Architecture
 
-The local-development scaffold, first two database migrations, locked FastF1 runtime, and a managed database-bound one-session FastF1 archive vertical slice are implemented. The managed slice adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. Retry, backoff, heartbeat, lease recovery, fencing, and current-season freshness policies are accepted but not yet implemented. The database contains the backfill control plane and normalized sporting-data tables. Year-level backfill orchestration, worker job processing, telemetry, and live timing ingestion are not yet implemented.
+The local-development scaffold, first two database migrations, locked FastF1 runtime, and a managed database-bound one-session FastF1 archive vertical slice are implemented. The managed slice adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. Validated runtime settings, retryable/terminal exception classification, and deterministic equal-jitter backoff calculations are implemented as pure policy primitives. Job-state retry transitions, heartbeat execution, lease recovery, fencing enforcement, and current-season freshness evaluation are accepted but not yet implemented. The database contains the backfill control plane and normalized sporting-data tables. Year-level backfill orchestration, worker job processing, telemetry, and live timing ingestion are not yet implemented.
 
 Implemented services in `compose.yaml`:
 
@@ -73,7 +73,8 @@ Formula1-Dashboard/
 │   │   │   ├── archive_ingestion.py
 │   │   │   ├── archive_persistence.py
 │   │   │   ├── fastf1_loader.py
-│   │   │   └── fastf1_normalization.py
+│   │   │   ├── fastf1_normalization.py
+│   │   │   └── runtime_policy.py
 │   │   ├── main.py
 │   │   └── worker.py
 │   ├── tests/
@@ -85,6 +86,7 @@ Formula1-Dashboard/
 │   │   ├── test_fastf1_loader.py
 │   │   ├── test_fastf1_normalization.py
 │   │   ├── test_health.py
+│   │   ├── test_runtime_policy.py
 │   │   └── test_sporting_data_integration.py
 │   ├── alembic.ini
 │   ├── Dockerfile
@@ -106,12 +108,12 @@ Formula1-Dashboard/
 
 - `backend/app/`: FastAPI and worker process source.
 - `backend/app/db/`: SQLAlchemy metadata, connection configuration, session factory, and Revision 1 and 2 models.
-- `backend/app/ingestion/`: Managed attempt state, database-bound one-session orchestration, cache-backed loading, pure upstream-to-domain normalization, and atomic archive persistence.
+- `backend/app/ingestion/`: Managed attempt state, database-bound one-session orchestration, cache-backed loading, pure upstream-to-domain normalization, atomic archive persistence, and runtime-policy primitives.
 - `backend/alembic/`: Alembic environment and reviewed migration revisions.
 - `backend/tests/`: Backend tests.
 - `frontend/src/`: React dashboard source.
 - `docs/`: Architecture, decisions, and persistent project context.
-- `docs/BACKFILL_RUNTIME_POLICY.md`: Accepted retry, backoff, heartbeat, lease recovery, fencing, and current-season freshness policy; not yet implemented.
+- `docs/BACKFILL_RUNTIME_POLICY.md`: Accepted retry, backoff, heartbeat, lease recovery, fencing, and current-season freshness policy; typed settings, retry classification, and backoff are implemented.
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic conventions, migration phases, tables, constraints, indexes, and recovery behavior.
 - `docs/FASTF1_INGESTION_CONTRACT.md`: Accepted one-session validation, identity, atomic replacement, failure, and idempotency contract.
 - `docs/SPORTING_DATA_DESIGN.md`: Evidence-based implemented Revision 2 driver, entry, result, and lap schema.
@@ -365,6 +367,13 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: accepted
 
+### Runtime policy primitives
+
+- Decision: Represent the accepted runtime values in one immutable validated settings object, classify retries from original in-process exceptions, and calculate equal-jitter schedules as a pure function of injected PostgreSQL time and a caller-provided jitter fraction.
+- Rationale: Keep policy configuration fail-fast and make retry behavior deterministic to test before it is connected to transactional job-state transitions.
+- Date: 2026-07-28
+- Status: implemented
+
 ### Heartbeat, lease, and fencing policy
 
 - Decision: Heartbeat every 30 seconds, expire leases after 5 minutes, scan for recovery every 30 seconds, and fence all heartbeat/failure/completion writes with job ID, job attempt count, and the monotonic session-ingestion attempt token.
@@ -475,7 +484,7 @@ Accepted behavior:
 13. FastF1 cache must be used, and aggressive parallel requests must be avoided.
 14. Telemetry must be queried separately by session, driver, and lap.
 
-The accepted one-session replacement and attempt contract is documented in `docs/FASTF1_INGESTION_CONTRACT.md`. A managed archive attempt commits running state and increments its attempt count before calling the vertical slice. The slice derives one request from database session identity, loads through the persistent serialized cache, verifies loaded identity, normalizes results and laps, and atomically replaces the target archive snapshot. Success marks ingestion completed/finalized with the snapshot. Failure is re-raised after a separate owning-attempt transaction stores only a fixed sanitized code and message; a previous completed snapshot and its timestamps remain available. The runtime policy in `docs/BACKFILL_RUNTIME_POLICY.md` is accepted. Year-level job orchestration, job-session synchronization, retry scheduling, heartbeat execution, lease recovery, fencing enforcement, freshness evaluation, and worker processing are not implemented.
+The accepted one-session replacement and attempt contract is documented in `docs/FASTF1_INGESTION_CONTRACT.md`. A managed archive attempt commits running state and increments its attempt count before calling the vertical slice. The slice derives one request from database session identity, loads through the persistent serialized cache, verifies loaded identity, normalizes results and laps, and atomically replaces the target archive snapshot. Success marks ingestion completed/finalized with the snapshot. Failure is re-raised after a separate owning-attempt transaction stores only a fixed sanitized code and message; a previous completed snapshot and its timestamps remain available. The runtime policy in `docs/BACKFILL_RUNTIME_POLICY.md` is accepted. Its validated settings, original-exception retry classification, retry-budget validation, and deterministic equal-jitter schedule calculations are implemented. Year-level job orchestration, job-session synchronization, retry state persistence, heartbeat execution, lease recovery, fencing enforcement, freshness evaluation, and worker processing are not implemented.
 
 ## Live Timing Design
 
@@ -540,22 +549,30 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Verified the complete 66-test suite against an isolated PostgreSQL 17 database.
 - Diagnosed the VS Code unresolved-import issue as a Linux-container virtual environment being reused on macOS while the host had only Python 3.9.
 - Installed host Python 3.13 and `uv`, recreated the ignored `backend/.venv` natively from `uv.lock`, and verified SQLAlchemy, pandas, FastF1, Ruff, and focused pytest execution.
-- Created and accepted the runtime policy for retry budgets, backoff, heartbeat, lease recovery, stale-worker fencing, and current-season freshness; no policy behavior has been implemented yet.
+- Created and accepted the runtime policy for retry budgets, backoff, heartbeat, lease recovery, stale-worker fencing, and current-season freshness.
+- Implemented immutable validated runtime settings with typed environment overrides and duration accessors.
+- Implemented retryable/terminal classification from original FastF1, archive, SQLAlchemy, and PostgreSQL failure categories.
+- Implemented deterministic equal-jitter backoff scheduling with retry-budget, timezone, and jitter validation.
+- Added 46 focused runtime-policy tests and verified the complete 112-test suite against an isolated PostgreSQL 17 database.
 
 No year-level FastF1 backfill orchestration, worker job execution, telemetry, or live timing feature has been completed.
 
 ## Work in Progress
 
-- No runtime policy implementation is currently in progress after acceptance of `docs/BACKFILL_RUNTIME_POLICY.md`.
+- No development change remains in progress after the runtime-policy primitive implementation.
 
 ## Next Steps
 
-1. Implement typed runtime settings, retryable/terminal exception classification, and deterministic backoff calculations with tests.
-2. Decide whether manual backfill cancellation belongs in the first phase.
-3. Add season coverage and job-progress REST APIs.
-4. Add the basic season selection and progress UI.
-5. Measure telemetry volume before deciding on TimescaleDB.
-6. Design SignalR live timing and reconciliation separately.
+1. Implement synchronized job-session and persistent-session claim and retry transitions.
+2. Add heartbeat ownership updates and session-attempt fencing to persistence.
+3. Add stale-lease recovery.
+4. Add current-season coverage and correction-checkpoint eligibility functions.
+5. Connect the placeholder worker after the orchestration behavior has PostgreSQL integration coverage.
+6. Decide whether manual backfill cancellation belongs in the first phase.
+7. Add season coverage and job-progress REST APIs.
+8. Add the basic season selection and progress UI.
+9. Measure telemetry volume before deciding on TimescaleDB.
+10. Design SignalR live timing and reconciliation separately.
 
 ## Run and Test Commands
 
@@ -590,7 +607,7 @@ uv sync --frozen
 .venv/bin/pytest tests/test_archive_attempt.py
 ```
 
-Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The complete suite passed with 66 tests against an isolated PostgreSQL 17 database after managed attempt state and sanitized failure recording were added.
+Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The complete suite passed with 112 tests against an isolated PostgreSQL 17 database after runtime-policy settings, classification, and backoff coverage were added.
 
 ## Known Issues and Technical Debt
 
@@ -602,7 +619,8 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - Session-row locking serializes callers that use the persistence service; worker claiming and lease recovery remain unimplemented.
 - FastF1 loading is serialized per process; cross-process concurrency must be controlled by worker claiming and leases.
 - TimescaleDB usage has not been decided.
-- Job recovery, retry, lease, heartbeat, and locking fields exist, and their policy is accepted, but processing behavior has not been implemented.
+- Runtime settings, exception classification, and backoff calculations exist, but they are not yet connected to `backfill_jobs`, `backfill_job_sessions`, or `session_ingestions`.
+- Job recovery, retry transitions, lease, heartbeat, and locking fields exist, and their policy is accepted, but processing behavior has not been implemented.
 - Season/backfill API paths and response schemas have not been finalized.
 - FastF1 ingestion time and storage volume have not been measured.
 - Live SignalR protocol and reconciliation rules have not been designed.
@@ -627,6 +645,7 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `backend/app/ingestion/fastf1_loader.py`: Deterministic, cache-backed, process-serialized one-session FastF1 loading.
 - `backend/app/ingestion/fastf1_normalization.py`: Pure FastF1 results-and-laps normalization and validation.
 - `backend/app/ingestion/archive_persistence.py`: Atomic normalized archive upserts, stale-row replacement, source and locked-target identity guards, and ingestion completion.
+- `backend/app/ingestion/runtime_policy.py`: Validated runtime settings, retry classification, SQLSTATE handling, and deterministic equal-jitter retry schedules.
 - `backend/tests/test_archive_attempt.py`: Stable failure-code and fixed secret-free message mapping coverage.
 - `backend/tests/test_archive_persistence.py`: PostgreSQL transactional persistence, idempotency, stale replacement, source protection, and rollback coverage.
 - `backend/tests/test_archive_ingestion.py`: PostgreSQL one-session vertical-slice identity, idempotency, and pre-persistence failure coverage.
@@ -634,6 +653,7 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `backend/tests/test_sporting_data_integration.py`: Revision 2 identity, constraint, number-reuse, nullable-field, and idempotency integration coverage.
 - `backend/tests/test_fastf1_loader.py`: FastF1 loader cache, configuration, flags, errors, and serialization tests.
 - `backend/tests/test_fastf1_normalization.py`: FastF1 normalization happy-path and rejection coverage.
+- `backend/tests/test_runtime_policy.py`: Runtime setting, environment parsing, retry classification, and backoff boundary coverage.
 - `backend/app/main.py`: FastAPI scaffold and health endpoints.
 - `backend/app/worker.py`: Placeholder worker lifecycle.
 - `backend/tests/test_health.py`: Backend health endpoint unit tests.
@@ -642,6 +662,7 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 
 ## Change Log
 
+- 2026-07-28 — Implemented and verified typed runtime settings, original-exception retry classification, and deterministic equal-jitter backoff calculations.
 - 2026-07-28 — Accepted retry, backoff, heartbeat, lease recovery, stale-worker fencing, and current-season freshness policies.
 - 2026-07-28 — Recreated the ignored backend virtual environment with native macOS Python 3.13 and verified VS Code dependency imports against the locked environment.
 - 2026-07-28 — Implemented and verified managed archive attempt states, attempt counting, overlap/source protection, and secret-free failure recording.

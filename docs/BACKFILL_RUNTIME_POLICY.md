@@ -1,11 +1,11 @@
 # Backfill Runtime Policy
 
-Status: **accepted; not yet implemented**
+Status: **accepted; typed settings, retry classification, and backoff implemented**
 Date: **2026-07-28**
 
 ## Purpose
 
-This proposal defines the runtime policy that should surround the implemented
+This document defines the runtime policy that should surround the implemented
 one-session FastF1 archive attempt before worker orchestration is built.
 
 It covers:
@@ -16,8 +16,10 @@ It covers:
 - Crash recovery and stale-worker fencing.
 - Current-season schedule and archive freshness.
 
-It does not implement worker claiming, job aggregation, cancellation, REST APIs,
-or UI behavior. The policy is accepted, but its runtime behavior remains
+It does not define job aggregation, cancellation, REST APIs, or UI behavior.
+Typed settings, exception classification, and deterministic backoff calculation
+are implemented. Worker claiming, synchronized retry transitions, heartbeat,
+lease recovery, fencing enforcement, and freshness evaluation remain
 unimplemented.
 
 ## Recommended Configuration
@@ -40,6 +42,24 @@ unimplemented.
 
 These values must be application configuration, not database schema constants.
 All policy timestamps and eligibility comparisons use PostgreSQL UTC time.
+
+The implemented `BackfillRuntimeSettings.from_environment()` loader reads:
+
+- `BACKFILL_MAX_ATTEMPTS`
+- `BACKFILL_BACKOFF_BASE_SECONDS`
+- `BACKFILL_BACKOFF_MULTIPLIER`
+- `BACKFILL_BACKOFF_CAP_SECONDS`
+- `BACKFILL_JITTER_MIN_RATIO`
+- `BACKFILL_HEARTBEAT_INTERVAL_SECONDS`
+- `BACKFILL_LEASE_TIMEOUT_SECONDS`
+- `BACKFILL_RECOVERY_SCAN_INTERVAL_SECONDS`
+- `CURRENT_SEASON_COVERAGE_TTL_SECONDS`
+- `HISTORICAL_SEASON_COVERAGE_TTL_SECONDS`
+- `ARCHIVE_AVAILABILITY_GRACE_SECONDS`
+- `ARCHIVE_CORRECTION_CHECKPOINTS_SECONDS`
+
+The final setting is a comma-separated list of integer seconds. Invalid values
+fail during settings construction instead of silently falling back.
 
 ## Attempt Counters
 
@@ -241,11 +261,11 @@ session reaches seven days.
   through a later freshness-triggered or manual job; the active-job constraint and
   six-hour coverage TTL prevent tight recreation loops.
 
-## Implementation Sequence After Acceptance
+## Implementation Sequence
 
-1. Add typed runtime settings and validation for the accepted values.
-2. Add retryable/terminal exception classification and deterministic backoff tests
-   with injectable randomness and database time.
+1. Implemented: typed runtime settings and validation for the accepted values.
+2. Implemented: retryable/terminal exception classification and deterministic
+   backoff tests with injectable randomness and database time.
 3. Add job-session and persistent-session claim synchronization.
 4. Add heartbeat ownership updates and session-attempt fencing to persistence.
 5. Add stale-lease recovery.

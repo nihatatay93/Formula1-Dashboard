@@ -18,6 +18,7 @@ two database migrations:
 - Atomic persistence and stale-row replacement for one normalized archive session
 - A database-bound one-session loading, normalization, and persistence vertical slice
 - Observable pending/running/completed/failed archive attempts with sanitized errors
+- Validated runtime settings, retry classification, and equal-jitter backoff calculations
 - Docker Compose health checks
 
 Year-level FastF1 backfill orchestration and worker execution, telemetry, and live
