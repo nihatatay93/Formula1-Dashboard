@@ -2,6 +2,7 @@ import type {
   ApiErrorResponse,
   BackfillJob,
   EnsureBackfillResponse,
+  FastF1RequestBudget,
   SeasonOverview,
 } from "./contracts";
 
@@ -75,6 +76,15 @@ export function getBackfillJob(
   return requestJson<BackfillJob>(`/api/v1/backfill-jobs/${jobId}`, {
     signal,
   });
+}
+
+export function getFastF1RequestBudget(
+  signal?: AbortSignal,
+): Promise<FastF1RequestBudget> {
+  return requestJson<FastF1RequestBudget>(
+    "/api/v1/upstreams/fastf1/usage",
+    { signal },
+  );
 }
 
 export async function checkApiReadiness(signal?: AbortSignal): Promise<boolean> {

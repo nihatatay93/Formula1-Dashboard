@@ -82,6 +82,7 @@ The services are exposed locally at:
 - Season overview: `GET http://localhost:8000/api/v1/seasons/{season_year}`
 - Ensure season backfill: `POST http://localhost:8000/api/v1/seasons/{season_year}/backfill`
 - Backfill progress: `GET http://localhost:8000/api/v1/backfill-jobs/{job_id}`
+- Local FastF1 request usage: `GET http://localhost:8000/api/v1/upstreams/fastf1/usage`
 - PostgreSQL: `localhost:5432`
 
 The POST command may synchronously refresh the selected season schedule through
@@ -91,7 +92,13 @@ single-concurrency worker.
 The dashboard defaults to the current UTC season and supports every configured
 season from 2018 onward. It reads season coverage, displays event and
 session-level archive state, starts or reuses an idempotent backfill, and polls
-active job progress every two seconds. It never requests full telemetry.
+active job progress every two seconds. The progress view identifies the current,
+next, and last-completed Grand Prix session, groups child work by event, and
+shows a live countdown for pacing, retry, rate-limit, or local request-budget
+waits. A separately polled budget panel displays observed archive/schedule
+cache-miss requests in the rolling hour against the 400-warning and
+450-application-pause thresholds. This is explicitly a local estimate, not an
+authoritative upstream quota. The dashboard never requests full telemetry.
 
 Stop the stack:
 

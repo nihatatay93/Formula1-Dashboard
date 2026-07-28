@@ -7,8 +7,11 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.backfill_job import BackfillJobNotFoundError
 from app.api.contracts import (
+    BackfillExecution,
+    BackfillExecutionPhase,
     BackfillJobResponse,
     BackfillJobSession,
+    BackfillSessionReference,
     IngestionStatus,
     JobProgress,
 )
@@ -44,6 +47,19 @@ def _job_response() -> BackfillJobResponse:
             completed=0,
             failed=0,
             terminal=0,
+        ),
+        execution=BackfillExecution(
+            observed_at=REQUESTED_AT + timedelta(seconds=32),
+            phase=BackfillExecutionPhase.FETCHING,
+            current_session=BackfillSessionReference(
+                session_id=210,
+                round_number=1,
+                event_name="Bahrain Grand Prix",
+                session_name="Race",
+            ),
+            next_session=None,
+            last_completed_session=None,
+            next_action_at=None,
         ),
         sessions=(
             BackfillJobSession(
@@ -105,6 +121,19 @@ def test_backfill_job_endpoint_returns_contract_and_disables_caching(
             "completed": 0,
             "failed": 0,
             "terminal": 0,
+        },
+        "execution": {
+            "observed_at": "2026-07-28T12:00:32Z",
+            "phase": "fetching",
+            "current_session": {
+                "session_id": "210",
+                "round_number": 1,
+                "event_name": "Bahrain Grand Prix",
+                "session_name": "Race",
+            },
+            "next_session": None,
+            "last_completed_session": None,
+            "next_action_at": None,
         },
         "sessions": [
             {

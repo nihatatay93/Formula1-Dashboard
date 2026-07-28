@@ -343,6 +343,7 @@ p {
 }
 
 .overview-panel,
+.budget-panel,
 .job-panel,
 .calendar-section {
   padding: clamp(2rem, 4vw, 3.5rem);
@@ -350,6 +351,7 @@ p {
   background: rgb(11 13 16 / 92%);
 }
 
+.budget-panel,
 .job-panel,
 .calendar-section {
   margin-top: 1rem;
@@ -598,6 +600,226 @@ p {
   font-family: ui-monospace, "SFMono-Regular", monospace;
 }
 
+.budget-panel {
+  display: grid;
+  grid-template-columns:
+    minmax(15rem, 0.7fr) minmax(12rem, 1fr) minmax(14rem, 0.7fr);
+  gap: 2rem;
+  align-items: center;
+  border-left: 0.2rem solid var(--success);
+}
+
+.budget-panel--warning {
+  border-left-color: var(--warning);
+}
+
+.budget-panel--paused,
+.budget-panel--rate_limited {
+  border-left-color: var(--danger);
+}
+
+.budget-panel .section-kicker {
+  margin-bottom: 0.55rem;
+}
+
+.budget-panel > div:first-child > strong {
+  font-family: "Arial Narrow", "Avenir Next Condensed", sans-serif;
+  font-size: 2.6rem;
+  font-style: italic;
+}
+
+.budget-panel > div:first-child > strong span {
+  color: var(--muted);
+  font-size: 1.35rem;
+}
+
+.budget-panel p,
+.budget-panel__status small {
+  margin: 0.4rem 0 0;
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.budget-panel__meter {
+  height: 0.65rem;
+  overflow: hidden;
+  background: rgb(255 255 255 / 7%);
+}
+
+.budget-panel__meter span {
+  display: block;
+  height: 100%;
+  background: var(--success);
+}
+
+.budget-panel--warning .budget-panel__meter span {
+  background: var(--warning);
+}
+
+.budget-panel--paused .budget-panel__meter span,
+.budget-panel--rate_limited .budget-panel__meter span {
+  background: var(--danger);
+}
+
+.budget-panel__status {
+  text-align: right;
+}
+
+.budget-panel__status > span,
+.budget-panel__status > strong,
+.budget-panel__status > small {
+  display: block;
+}
+
+.budget-panel__status > span {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.budget-panel__status > strong {
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.job-execution {
+  display: grid;
+  grid-template-columns: 0.62fr repeat(3, minmax(0, 1fr));
+  margin-top: 1.7rem;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.job-execution > div {
+  min-height: 7.5rem;
+  padding: 1rem;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.job-execution span,
+.job-execution strong,
+.job-execution small {
+  display: block;
+}
+
+.job-execution span {
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.job-execution strong {
+  margin-top: 0.65rem;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.job-execution small {
+  margin-top: 0.35rem;
+  color: #69717c;
+  font-size: 0.56rem;
+}
+
+.job-execution__phase strong {
+  color: var(--active);
+  font-family: "Arial Narrow", "Avenir Next Condensed", sans-serif;
+  font-size: 2rem;
+  font-style: italic;
+  line-height: 1;
+}
+
+.job-session-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin-top: 1.8rem;
+}
+
+.job-event {
+  border: 1px solid var(--line);
+  background: rgb(255 255 255 / 1.5%);
+}
+
+.job-event summary {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  align-items: center;
+  min-height: 3.2rem;
+  padding: 0.7rem 0.85rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.job-event summary::-webkit-details-marker {
+  display: none;
+}
+
+.job-event summary > span {
+  color: var(--accent);
+  font-family: "Arial Narrow", "Avenir Next Condensed", sans-serif;
+  font-style: italic;
+  font-weight: 800;
+}
+
+.job-event summary strong {
+  overflow: hidden;
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.job-event summary small {
+  color: var(--muted);
+  font-size: 0.55rem;
+}
+
+.job-event[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.job-session-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.6rem;
+  align-items: center;
+  min-height: 3.4rem;
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid rgb(255 255 255 / 5%);
+}
+
+.job-session-row:last-child {
+  border-bottom: 0;
+}
+
+.job-session-row > div strong,
+.job-session-row > div span {
+  display: block;
+}
+
+.job-session-row > div strong {
+  font-size: 0.68rem;
+}
+
+.job-session-row > div span,
+.job-session-row > small {
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.55rem;
+}
+
+.job-session-row > small {
+  grid-column: 1 / -1;
+  margin-top: 0;
+  color: var(--danger);
+}
+
 .calendar-count {
   color: var(--muted);
   font-family: "Arial Narrow", "Avenir Next Condensed", sans-serif;
@@ -804,6 +1026,11 @@ footer {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .budget-panel,
+  .job-execution {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .event-grid {
     grid-template-columns: 1fr;
   }
@@ -829,6 +1056,7 @@ footer {
   }
 
   .overview-panel,
+  .budget-panel,
   .job-panel,
   .calendar-section {
     padding: 1.2rem;
@@ -847,6 +1075,20 @@ footer {
   .season-state {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .budget-panel {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .budget-panel__status {
+    text-align: left;
+  }
+
+  .job-execution,
+  .job-session-groups {
+    grid-template-columns: 1fr;
   }
 
   .event-card__header {

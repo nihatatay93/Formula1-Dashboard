@@ -11,6 +11,7 @@ from app.api.contracts import (
     CoverageRefreshReason,
     DecimalIdentifier,
     EnsureBackfillResponse,
+    FastF1RequestBudgetResponse,
     IngestionStatus,
     JobProgress,
     SeasonCoverage,
@@ -118,6 +119,30 @@ def test_job_progress_requires_internally_consistent_counts(
 ) -> None:
     with pytest.raises(ValidationError, match=message):
         JobProgress(**values)
+
+
+def test_request_budget_requires_consistent_request_counts() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="observed requests must equal",
+    ):
+        FastF1RequestBudgetResponse(
+            source="fastf1",
+            window_seconds=3600,
+            observed_at=datetime(2026, 7, 28, 12, tzinfo=UTC),
+            observed_requests=3,
+            archive_requests=1,
+            schedule_requests=1,
+            library_limit=500,
+            operational_ceiling=450,
+            warning_threshold=400,
+            remaining_before_pause=447,
+            next_capacity_at=None,
+            cooldown_until=None,
+            cooldown_reason=None,
+            status="available",
+            authoritative=False,
+        )
 
 
 def test_backfill_action_requires_matching_job_presence() -> None:

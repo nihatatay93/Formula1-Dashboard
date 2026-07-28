@@ -31,6 +31,9 @@ from app.ingestion.fastf1_normalization import (
     FINALIZED_STATE,
     FastF1NormalizationError,
 )
+from app.ingestion.request_budget_errors import (
+    FastF1RequestBudgetExhaustedError,
+)
 
 SessionFactory = Callable[[], Session]
 
@@ -159,6 +162,13 @@ def sanitize_archive_failure(error: Exception) -> SanitizedArchiveFailure:
         tuple[type[Exception], SanitizedArchiveFailure],
         ...,
     ] = (
+        (
+            FastF1RequestBudgetExhaustedError,
+            SanitizedArchiveFailure(
+                "fastf1_request_budget_paused",
+                "FastF1 requests are paused by the local safety budget.",
+            ),
+        ),
         (
             FastF1RateLimitError,
             SanitizedArchiveFailure(

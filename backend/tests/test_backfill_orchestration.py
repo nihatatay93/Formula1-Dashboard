@@ -425,7 +425,7 @@ def test_claim_reserves_the_global_fastf1_request_interval(
     assert request_gate is not None
     assert request_gate.reason == "pacing"
     assert request_gate.next_request_at >= (
-        first_claim.claimed_at + timedelta(seconds=90)
+        first_claim.claimed_at + timedelta(seconds=1)
     )
 
 

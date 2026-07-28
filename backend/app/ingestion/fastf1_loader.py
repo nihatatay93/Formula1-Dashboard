@@ -3,17 +3,48 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
+from typing import Any, Protocol
 
 import fastf1
+from fastf1 import req as fastf1_req
 from pandas import DataFrame
+
+from app.ingestion.request_budget_errors import (
+    FastF1RequestBudgetExhaustedError,
+)
 
 MINIMUM_ARCHIVE_YEAR = 2018
 
 _LOAD_LOCK = Lock()
 _active_cache_path: Path | None = None
+
+
+class FastF1RequestBudgetProtocol(Protocol):
+    def reserve(self) -> None: ...
+
+
+_ACTIVE_REQUEST_BUDGET: ContextVar[
+    FastF1RequestBudgetProtocol | None
+] = ContextVar("fastf1_request_budget", default=None)
+_ORIGINAL_FASTF1_SEND = fastf1_req._SessionWithRateLimiting.send
+
+
+def _budgeted_fastf1_send(
+    request_session: object,
+    request: object,
+    **kwargs: Any,
+) -> object:
+    budget = _ACTIVE_REQUEST_BUDGET.get()
+    if budget is not None:
+        budget.reserve()
+    return _ORIGINAL_FASTF1_SEND(request_session, request, **kwargs)
+
+
+fastf1_req._SessionWithRateLimiting.send = _budgeted_fastf1_send
 
 
 class FastF1LoaderError(RuntimeError):
@@ -75,13 +106,19 @@ class LoadedFastF1Session:
 class FastF1SessionLoader:
     """Load one FastF1 session at a time through a persistent process cache."""
 
-    def __init__(self, cache_path: str | Path) -> None:
+    def __init__(
+        self,
+        cache_path: str | Path,
+        *,
+        request_budget: FastF1RequestBudgetProtocol | None = None,
+    ) -> None:
         candidate = Path(cache_path)
         if not candidate.is_absolute():
             raise FastF1LoaderConfigurationError(
                 "FastF1 cache path must be absolute"
             )
         self.cache_path = candidate.resolve(strict=False)
+        self.request_budget = request_budget
 
     def load(self, request: FastF1SessionRequest) -> LoadedFastF1Session:
         with serialized_fastf1_access(self):
@@ -97,6 +134,8 @@ class FastF1SessionLoader:
                     weather=False,
                     messages=True,
                 )
+            except FastF1RequestBudgetExhaustedError:
+                raise
             except fastf1.exceptions.RateLimitExceededError as error:
                 raise FastF1RateLimitError(
                     "FastF1 archive request rate limit was reached"
@@ -172,11 +211,17 @@ def serialized_fastf1_access(
 
     with _LOAD_LOCK:
         cache_client._enable_cache()
-        yield
+        token = _ACTIVE_REQUEST_BUDGET.set(cache_client.request_budget)
+        try:
+            yield
+        finally:
+            _ACTIVE_REQUEST_BUDGET.reset(token)
 
 
 def create_fastf1_session_loader(
     cache_path: str | Path | None = None,
+    *,
+    request_budget: FastF1RequestBudgetProtocol | None = None,
 ) -> FastF1SessionLoader:
     configured_path = cache_path
     if configured_path is None:
@@ -185,4 +230,7 @@ def create_fastf1_session_loader(
         raise FastF1LoaderConfigurationError(
             "FASTF1_CACHE_PATH is required"
         )
-    return FastF1SessionLoader(configured_path)
+    return FastF1SessionLoader(
+        configured_path,
+        request_budget=request_budget,
+    )

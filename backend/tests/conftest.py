@@ -34,6 +34,9 @@ def reset_fastf1_request_gate(request: pytest.FixtureRequest) -> Iterator[None]:
                     """
                 )
             )
+            connection.execute(
+                text("DELETE FROM upstream_request_events")
+            )
         yield
     finally:
         engine.dispose()

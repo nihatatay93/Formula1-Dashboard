@@ -231,6 +231,9 @@ The response contains:
 - Fixed sanitized parent error when present.
 - Explicit progress counts: total, pending, running, completed, failed, and
   terminal.
+- One derived execution snapshot with phase, database observation time, current
+  session, next eligible session, last completed session, and the next action
+  timestamp when waiting.
 - Every child session in deterministic event/round/session order.
 - Child attempt count, retry timestamp, lifecycle timestamps, and sanitized
   error.
@@ -259,6 +262,19 @@ Accepted shape:
     "failed": 0,
     "terminal": 18
   },
+  "execution": {
+    "observed_at": "2026-07-28T12:00:32Z",
+    "phase": "fetching",
+    "current_session": {
+      "session_id": "210",
+      "round_number": 1,
+      "event_name": "Bahrain Grand Prix",
+      "session_name": "Race"
+    },
+    "next_session": null,
+    "last_completed_session": null,
+    "next_action_at": null
+  },
   "sessions": [
     {
       "session_id": "210",
@@ -278,6 +294,50 @@ Accepted shape:
   ]
 }
 ```
+
+Execution phases are `ready`, `fetching`, `pacing`,
+`rate_limit_cooldown`, `request_budget_cooldown`, `retry_backoff`, `idle`,
+and `terminal`. They are derived from one repeatable-read database snapshot and
+are not stored as additional mutable job state.
+
+## Endpoint 4: Read Local FastF1 Request Usage
+
+### `GET /api/v1/upstreams/fastf1/usage`
+
+Returns `200 OK` with `Cache-Control: no-store`. The response reports the
+locally observed rolling-window count, archive/schedule split, warning and pause
+thresholds, remaining capacity before the application pause, exact next
+capacity/cooldown timestamps, and `available`, `warning`, `paused`, or
+`rate_limited` status.
+
+The response always includes `authoritative: false`. It measures only HTTP sends
+observed by this deployment after the request-ledger migration. It cannot see
+other applications or machines, and FastF1 does not expose a supported
+pre-limit remaining-quota check.
+
+```json
+{
+  "source": "fastf1",
+  "window_seconds": 3600,
+  "observed_at": "2026-07-28T12:00:00Z",
+  "observed_requests": 421,
+  "archive_requests": 419,
+  "schedule_requests": 2,
+  "library_limit": 500,
+  "operational_ceiling": 450,
+  "warning_threshold": 400,
+  "remaining_before_pause": 29,
+  "next_capacity_at": null,
+  "cooldown_until": null,
+  "cooldown_reason": null,
+  "status": "warning",
+  "authoritative": false
+}
+```
+
+Invalid server policy configuration returns the stable
+`500 server_configuration_error`; database unavailability returns
+`503 database_unavailable`.
 
 ## Error Contract
 
@@ -301,6 +361,7 @@ Accepted mappings:
 | Unknown job UUID | `404` | `backfill_job_not_found` |
 | Existing calendar natural key belongs to another source | `409` | `calendar_source_conflict` |
 | Season changed repeatedly during planning | `409` | `season_planning_conflict` |
+| Local FastF1 request budget is paused during schedule discovery | `429` | `fastf1_request_budget_paused` |
 | Upstream schedule snapshot violates the pinned contract | `502` | `invalid_schedule_snapshot` |
 | Schedule source is temporarily unavailable | `503` | `schedule_unavailable` |
 | Database is unavailable | `503` | `database_unavailable` |
@@ -340,5 +401,8 @@ separate pagination and query contracts.
    services, planner idempotency, and concurrent HTTP command requests.
 6. Implemented: verify API-to-worker database handoff without adding a live
    upstream request to automated tests.
+7. Implemented: derived execution state in job responses and a read-only local
+   FastF1 request-usage endpoint backed by Revision 5 request events.
 
-No database migration is expected for this API slice.
+Revision 5 is the only additional migration introduced by the request-usage
+extension; it is not required by the original season/job read contracts.

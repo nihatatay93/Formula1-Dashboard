@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
+from typing import Annotated
 
+from fastapi import Depends
 from sqlalchemy.exc import ArgumentError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -10,6 +12,8 @@ from app.ingestion.fastf1_schedule import (
     FastF1ScheduleLoaderProtocol,
     create_fastf1_schedule_loader,
 )
+from app.ingestion.request_budget import FastF1RequestBudget
+from app.ingestion.runtime_policy import BackfillRuntimeSettings
 
 MINIMUM_SEASON_YEAR = 2018
 
@@ -58,9 +62,21 @@ def get_database_session_factory() -> sessionmaker[Session]:
         ) from None
 
 
-def get_fastf1_schedule_loader() -> FastF1ScheduleLoaderProtocol:
+def get_fastf1_schedule_loader(
+    session_factory: Annotated[
+        sessionmaker[Session],
+        Depends(get_database_session_factory),
+    ],
+) -> FastF1ScheduleLoaderProtocol:
     try:
-        return create_fastf1_schedule_loader()
+        request_budget = FastF1RequestBudget(
+            session_factory=session_factory,
+            operation="schedule",
+            settings=BackfillRuntimeSettings.from_environment(),
+        )
+        return create_fastf1_schedule_loader(
+            request_budget=request_budget,
+        )
     except FastF1LoaderConfigurationError:
         raise ApiError(
             status_code=500,

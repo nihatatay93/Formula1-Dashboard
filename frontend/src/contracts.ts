@@ -137,6 +137,32 @@ export interface BackfillJobSession {
   last_error: LastError | null;
 }
 
+export type BackfillExecutionPhase =
+  | "ready"
+  | "fetching"
+  | "pacing"
+  | "rate_limit_cooldown"
+  | "request_budget_cooldown"
+  | "retry_backoff"
+  | "idle"
+  | "terminal";
+
+export interface BackfillSessionReference {
+  session_id: string;
+  round_number: number;
+  event_name: string;
+  session_name: string;
+}
+
+export interface BackfillExecution {
+  observed_at: string;
+  phase: BackfillExecutionPhase;
+  current_session: BackfillSessionReference | null;
+  next_session: BackfillSessionReference | null;
+  last_completed_session: BackfillSessionReference | null;
+  next_action_at: string | null;
+}
+
 export interface BackfillJob {
   id: string;
   season_year: number;
@@ -148,7 +174,26 @@ export interface BackfillJob {
   completed_at: string | null;
   last_error: LastError | null;
   progress: JobProgressCounts;
+  execution: BackfillExecution;
   sessions: BackfillJobSession[];
+}
+
+export interface FastF1RequestBudget {
+  source: "fastf1";
+  window_seconds: number;
+  observed_at: string;
+  observed_requests: number;
+  archive_requests: number;
+  schedule_requests: number;
+  library_limit: number;
+  operational_ceiling: number;
+  warning_threshold: number;
+  remaining_before_pause: number;
+  next_capacity_at: string | null;
+  cooldown_until: string | null;
+  cooldown_reason: "rate_limit" | "budget" | null;
+  status: "available" | "warning" | "paused" | "rate_limited";
+  authoritative: false;
 }
 
 export interface ApiErrorResponse {

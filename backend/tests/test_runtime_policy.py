@@ -49,8 +49,12 @@ def test_default_settings_match_the_accepted_policy() -> None:
     settings = BackfillRuntimeSettings()
 
     assert settings.worker_poll_interval_seconds == 2
-    assert settings.archive_session_min_interval == timedelta(seconds=90)
+    assert settings.archive_session_min_interval == timedelta(seconds=1)
     assert settings.fastf1_rate_limit_cooldown == timedelta(hours=1)
+    assert settings.fastf1_request_window_seconds == 3_600
+    assert settings.fastf1_request_library_limit == 500
+    assert settings.fastf1_request_operational_ceiling == 450
+    assert settings.fastf1_request_warning_threshold == 400
     assert settings.max_attempts == 4
     assert settings.backoff_base_seconds == 60
     assert settings.backoff_multiplier == 2
@@ -94,6 +98,10 @@ def test_environment_overrides_are_typed() -> None:
             "BACKFILL_WORKER_POLL_INTERVAL_SECONDS": "1",
             "FASTF1_ARCHIVE_SESSION_MIN_INTERVAL_SECONDS": "120",
             "FASTF1_RATE_LIMIT_COOLDOWN_SECONDS": "7200",
+            "FASTF1_REQUEST_WINDOW_SECONDS": "1800",
+            "FASTF1_REQUEST_LIBRARY_LIMIT": "600",
+            "FASTF1_REQUEST_OPERATIONAL_CEILING": "500",
+            "FASTF1_REQUEST_WARNING_THRESHOLD": "450",
             "BACKFILL_MAX_ATTEMPTS": "6",
             "BACKFILL_BACKOFF_BASE_SECONDS": "10",
             "BACKFILL_BACKOFF_MULTIPLIER": "3",
@@ -113,6 +121,10 @@ def test_environment_overrides_are_typed() -> None:
         worker_poll_interval_seconds=1,
         archive_session_min_interval_seconds=120,
         fastf1_rate_limit_cooldown_seconds=7200,
+        fastf1_request_window_seconds=1800,
+        fastf1_request_library_limit=600,
+        fastf1_request_operational_ceiling=500,
+        fastf1_request_warning_threshold=450,
         max_attempts=6,
         backoff_base_seconds=10,
         backoff_multiplier=3,
@@ -133,6 +145,14 @@ def test_environment_overrides_are_typed() -> None:
     [
         {"worker_poll_interval_seconds": 0},
         {"archive_session_min_interval_seconds": 0},
+        {
+            "fastf1_request_warning_threshold": 450,
+            "fastf1_request_operational_ceiling": 450,
+        },
+        {
+            "fastf1_request_operational_ceiling": 500,
+            "fastf1_request_library_limit": 500,
+        },
         {
             "archive_session_min_interval_seconds": 90,
             "fastf1_rate_limit_cooldown_seconds": 90,

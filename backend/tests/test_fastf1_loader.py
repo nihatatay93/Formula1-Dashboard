@@ -15,6 +15,7 @@ from app.ingestion.fastf1_loader import (
     FastF1SessionLoadError,
     FastF1SessionRequest,
     create_fastf1_session_loader,
+    serialized_fastf1_access,
 )
 
 
@@ -27,6 +28,14 @@ class FakeFastF1Session:
 
     def load(self, **options: bool) -> None:
         self.load_calls.append(options)
+
+
+class FakeRequestBudget:
+    def __init__(self) -> None:
+        self.reservations = 0
+
+    def reserve(self) -> None:
+        self.reservations += 1
 
 
 @pytest.fixture(autouse=True)
@@ -227,6 +236,41 @@ def test_preserves_fastf1_rate_limit_as_a_distinct_retry_signal(
         error.value.__cause__,
         fastf1_loader.fastf1.exceptions.RateLimitExceededError,
     )
+
+
+def test_reserves_budget_only_inside_serialized_fastf1_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        fastf1_loader.fastf1.Cache,
+        "enable_cache",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        fastf1_loader,
+        "_ORIGINAL_FASTF1_SEND",
+        lambda *_args, **_kwargs: "sent",
+    )
+    budget = FakeRequestBudget()
+    loader = FastF1SessionLoader(
+        tmp_path / "cache",
+        request_budget=budget,
+    )
+
+    assert fastf1_loader._budgeted_fastf1_send(
+        object(),
+        object(),
+    ) == "sent"
+    assert budget.reservations == 0
+
+    with serialized_fastf1_access(loader):
+        assert fastf1_loader._budgeted_fastf1_send(
+            object(),
+            object(),
+        ) == "sent"
+
+    assert budget.reservations == 1
 
 
 def test_rejects_loaded_sessions_without_required_tables(

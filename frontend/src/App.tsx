@@ -5,10 +5,13 @@ import {
   checkApiReadiness,
   ensureSeasonBackfill,
   getBackfillJob,
+  getFastF1RequestBudget,
   getSeasonOverview,
 } from "./api";
 import type {
   BackfillJob,
+  BackfillJobSession,
+  FastF1RequestBudget,
   IngestionStatus,
   SeasonEvent,
   SeasonOverview,
@@ -51,6 +54,19 @@ function formatDate(value: string | null): string {
 
 function formatDateTime(value: string | null): string {
   return value ? dateTimeFormatter.format(new Date(value)) : "Not available";
+}
+
+function formatCountdown(value: string | null, now: number): string {
+  if (!value) {
+    return "Ready now";
+  }
+  const seconds = Math.max(
+    0,
+    Math.ceil((new Date(value).getTime() - now) / 1_000),
+  );
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 }
 
 function errorMessage(error: unknown): string {
@@ -232,7 +248,118 @@ function EventCard({ event }: { event: SeasonEvent }) {
   );
 }
 
-function JobPanel({ job }: { job: BackfillJob }) {
+function sessionReferenceLabel(
+  session: BackfillJob["execution"]["current_session"],
+): string {
+  return session
+    ? `R${session.round_number} · ${session.event_name} — ${session.session_name}`
+    : "None";
+}
+
+function RequestBudgetPanel({
+  budget,
+  now,
+}: {
+  budget: FastF1RequestBudget;
+  now: number;
+}) {
+  const percentage = Math.min(
+    100,
+    (budget.observed_requests / budget.operational_ceiling) * 100,
+  );
+  const cooldownTarget = budget.cooldown_until ?? budget.next_capacity_at;
+
+  return (
+    <section className={`budget-panel budget-panel--${budget.status}`}>
+      <div>
+        <p className="section-kicker">FastF1 local safety budget</p>
+        <strong>
+          {budget.observed_requests}
+          <span> / {budget.operational_ceiling}</span>
+        </strong>
+        <p>
+          {budget.archive_requests} archive · {budget.schedule_requests} schedule
+          requests in the rolling hour
+        </p>
+      </div>
+      <div className="budget-panel__meter">
+        <span style={{ width: `${percentage}%` }} />
+      </div>
+      <div className="budget-panel__status">
+        <span>{humanize(budget.status)}</span>
+        <strong>
+          {cooldownTarget
+            ? `${formatCountdown(cooldownTarget, now)} until capacity`
+            : `${budget.remaining_before_pause} requests available`}
+        </strong>
+        <small>
+          Local estimate · FastF1 library threshold {budget.library_limit}
+        </small>
+      </div>
+    </section>
+  );
+}
+
+function JobSessionGroups({
+  sessions,
+}: {
+  sessions: BackfillJobSession[];
+}) {
+  const groups = Array.from(
+    sessions.reduce((grouped, session) => {
+      const key = `${session.round_number}:${session.event_name}`;
+      const group = grouped.get(key) ?? [];
+      group.push(session);
+      grouped.set(key, group);
+      return grouped;
+    }, new Map<string, BackfillJobSession[]>()),
+  );
+
+  return (
+    <div className="job-session-groups">
+      {groups.map(([key, group]) => {
+        const first = group[0];
+        const terminal = group.filter(
+          (session) =>
+            session.status === "completed" || session.status === "failed",
+        ).length;
+        const active = group.some((session) => session.status === "running");
+        return (
+          <details className="job-event" key={key} open={active}>
+            <summary>
+              <span>R{String(first.round_number).padStart(2, "0")}</span>
+              <strong>{first.event_name}</strong>
+              <small>
+                {terminal}/{group.length} terminal
+              </small>
+            </summary>
+            <div>
+              {group.map((session) => (
+                <div className="job-session-row" key={session.session_id}>
+                  <div>
+                    <strong>{session.session_name}</strong>
+                    <span>
+                      Attempt {session.attempt_count}
+                      {session.next_retry_at
+                        ? ` · retry ${formatDateTime(session.next_retry_at)}`
+                        : ""}
+                    </span>
+                  </div>
+                  <StatusPill status={session.status} />
+                  {session.last_error ? (
+                    <small>{session.last_error.message}</small>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
+function JobPanel({ job, now }: { job: BackfillJob; now: number }) {
   const completion =
     job.progress.total === 0
       ? 0
@@ -257,6 +384,40 @@ function JobPanel({ job }: { job: BackfillJob }) {
 
       <ProgressTrack {...job.progress} />
 
+      <div className="job-execution">
+        <div className="job-execution__phase">
+          <span>{humanize(job.execution.phase)}</span>
+          <strong>
+            {job.execution.next_action_at
+              ? formatCountdown(job.execution.next_action_at, now)
+              : job.execution.phase === "fetching"
+                ? "Live"
+                : "—"}
+          </strong>
+          <small>
+            {job.execution.next_action_at
+              ? "until next operation"
+              : "execution state"}
+          </small>
+        </div>
+        <div>
+          <span>Fetching now</span>
+          <strong>
+            {sessionReferenceLabel(job.execution.current_session)}
+          </strong>
+        </div>
+        <div>
+          <span>Next fetch</span>
+          <strong>{sessionReferenceLabel(job.execution.next_session)}</strong>
+        </div>
+        <div>
+          <span>Last completed</span>
+          <strong>
+            {sessionReferenceLabel(job.execution.last_completed_session)}
+          </strong>
+        </div>
+      </div>
+
       <div className="job-panel__meta">
         <span>Requested {formatDateTime(job.requested_at)}</span>
         <span>Reason: {humanize(job.request_reason)}</span>
@@ -270,6 +431,8 @@ function JobPanel({ job }: { job: BackfillJob }) {
           {job.last_error.message}
         </p>
       ) : null}
+
+      <JobSessionGroups sessions={job.sessions} />
     </section>
   );
 }
@@ -285,6 +448,12 @@ function App() {
   const [job, setJob] = useState<BackfillJob | null>(null);
   const [pollingJobId, setPollingJobId] = useState<string | null>(null);
   const [jobError, setJobError] = useState<string | null>(null);
+  const [requestBudget, setRequestBudget] =
+    useState<FastF1RequestBudget | null>(null);
+  const [requestBudgetError, setRequestBudgetError] = useState<string | null>(
+    null,
+  );
+  const [now, setNow] = useState(() => Date.now());
 
   const supportedYears = useMemo(
     () =>
@@ -329,6 +498,42 @@ function App() {
       window.clearInterval(timer);
     };
   }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (apiState !== "ready") {
+      return;
+    }
+    const controller = new AbortController();
+    let timer: number | undefined;
+
+    async function pollBudget() {
+      try {
+        setRequestBudget(
+          await getFastF1RequestBudget(controller.signal),
+        );
+        setRequestBudgetError(null);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setRequestBudgetError(errorMessage(error));
+      }
+      timer = window.setTimeout(() => void pollBudget(), 5_000);
+    }
+
+    void pollBudget();
+    return () => {
+      controller.abort();
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [apiState]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -603,7 +808,16 @@ function App() {
               </div>
             </section>
 
-            {job ? <JobPanel job={job} /> : null}
+            {requestBudget ? (
+              <RequestBudgetPanel budget={requestBudget} now={now} />
+            ) : null}
+            {requestBudgetError ? (
+              <p className="inline-alert inline-alert--danger" role="alert">
+                {requestBudgetError}
+              </p>
+            ) : null}
+
+            {job ? <JobPanel job={job} now={now} /> : null}
             {jobError ? (
               <p className="inline-alert inline-alert--danger" role="alert">
                 {jobError}

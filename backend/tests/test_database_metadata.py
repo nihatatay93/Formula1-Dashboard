@@ -18,6 +18,7 @@ def test_metadata_contains_all_migrated_tables() -> None:
         "session_results",
         "sessions",
         "upstream_request_gates",
+        "upstream_request_events",
     }
 
 

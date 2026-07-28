@@ -15,6 +15,9 @@ from app.ingestion.archive_persistence import (
     ArchivePersistenceTargetChangedError,
 )
 from app.ingestion.fastf1_loader import FastF1SessionLoadError
+from app.ingestion.request_budget_errors import (
+    FastF1RequestBudgetExhaustedError,
+)
 
 DEFAULT_CORRECTION_CHECKPOINTS_SECONDS = (86_400, 604_800)
 
@@ -45,8 +48,12 @@ class RetryDisposition(StrEnum):
 @dataclass(frozen=True, slots=True)
 class BackfillRuntimeSettings:
     worker_poll_interval_seconds: int = 2
-    archive_session_min_interval_seconds: int = 90
+    archive_session_min_interval_seconds: int = 1
     fastf1_rate_limit_cooldown_seconds: int = 3_600
+    fastf1_request_window_seconds: int = 3_600
+    fastf1_request_library_limit: int = 500
+    fastf1_request_operational_ceiling: int = 450
+    fastf1_request_warning_threshold: int = 400
     max_attempts: int = 4
     backoff_base_seconds: int = 60
     backoff_multiplier: int = 2
@@ -74,6 +81,22 @@ class BackfillRuntimeSettings:
         _positive_integer(
             self.fastf1_rate_limit_cooldown_seconds,
             "fastf1_rate_limit_cooldown_seconds",
+        )
+        _positive_integer(
+            self.fastf1_request_window_seconds,
+            "fastf1_request_window_seconds",
+        )
+        _positive_integer(
+            self.fastf1_request_library_limit,
+            "fastf1_request_library_limit",
+        )
+        _positive_integer(
+            self.fastf1_request_operational_ceiling,
+            "fastf1_request_operational_ceiling",
+        )
+        _positive_integer(
+            self.fastf1_request_warning_threshold,
+            "fastf1_request_warning_threshold",
         )
         _positive_integer(self.max_attempts, "max_attempts")
         _positive_integer(self.backoff_base_seconds, "backoff_base_seconds")
@@ -112,6 +135,16 @@ class BackfillRuntimeSettings:
             raise BackfillRuntimePolicyError(
                 "fastf1_rate_limit_cooldown_seconds must exceed "
                 "archive_session_min_interval_seconds"
+            )
+        if (
+            self.fastf1_request_warning_threshold
+            >= self.fastf1_request_operational_ceiling
+            or self.fastf1_request_operational_ceiling
+            >= self.fastf1_request_library_limit
+        ):
+            raise BackfillRuntimePolicyError(
+                "FastF1 request thresholds must satisfy warning < "
+                "operational ceiling < library limit"
             )
         if (
             isinstance(self.jitter_min_ratio, bool)
@@ -170,6 +203,26 @@ class BackfillRuntimeSettings:
                 values,
                 "FASTF1_RATE_LIMIT_COOLDOWN_SECONDS",
                 defaults.fastf1_rate_limit_cooldown_seconds,
+            ),
+            fastf1_request_window_seconds=_environment_integer(
+                values,
+                "FASTF1_REQUEST_WINDOW_SECONDS",
+                defaults.fastf1_request_window_seconds,
+            ),
+            fastf1_request_library_limit=_environment_integer(
+                values,
+                "FASTF1_REQUEST_LIBRARY_LIMIT",
+                defaults.fastf1_request_library_limit,
+            ),
+            fastf1_request_operational_ceiling=_environment_integer(
+                values,
+                "FASTF1_REQUEST_OPERATIONAL_CEILING",
+                defaults.fastf1_request_operational_ceiling,
+            ),
+            fastf1_request_warning_threshold=_environment_integer(
+                values,
+                "FASTF1_REQUEST_WARNING_THRESHOLD",
+                defaults.fastf1_request_warning_threshold,
             ),
             max_attempts=_environment_integer(
                 values,
@@ -287,6 +340,7 @@ def classify_retry(error: Exception) -> RetryDisposition:
     if isinstance(
         error,
         (
+            FastF1RequestBudgetExhaustedError,
             FastF1SessionLoadError,
             ArchivePersistenceTargetChangedError,
         ),

@@ -87,6 +87,24 @@ class BackfillAction(StrEnum):
     NO_ACTION = "no_action"
 
 
+class BackfillExecutionPhase(StrEnum):
+    READY = "ready"
+    FETCHING = "fetching"
+    PACING = "pacing"
+    RATE_LIMIT_COOLDOWN = "rate_limit_cooldown"
+    REQUEST_BUDGET_COOLDOWN = "request_budget_cooldown"
+    RETRY_BACKOFF = "retry_backoff"
+    IDLE = "idle"
+    TERMINAL = "terminal"
+
+
+class RequestBudgetStatus(StrEnum):
+    AVAILABLE = "available"
+    WARNING = "warning"
+    PAUSED = "paused"
+    RATE_LIMITED = "rate_limited"
+
+
 class ErrorDetail(ApiModel):
     code: str = Field(min_length=1)
     message: str = Field(min_length=1)
@@ -234,6 +252,22 @@ class BackfillJobSession(ApiModel):
     last_error: LastError | None
 
 
+class BackfillSessionReference(ApiModel):
+    session_id: DecimalIdentifier
+    round_number: int = Field(ge=1)
+    event_name: str = Field(min_length=1)
+    session_name: str = Field(min_length=1)
+
+
+class BackfillExecution(ApiModel):
+    observed_at: UtcDatetime
+    phase: BackfillExecutionPhase
+    current_session: BackfillSessionReference | None
+    next_session: BackfillSessionReference | None
+    last_completed_session: BackfillSessionReference | None
+    next_action_at: UtcDatetime | None
+
+
 class BackfillJobResponse(ApiModel):
     id: uuid.UUID
     season_year: int = Field(ge=2018)
@@ -245,5 +279,39 @@ class BackfillJobResponse(ApiModel):
     completed_at: UtcDatetime | None
     last_error: LastError | None
     progress: JobProgress
+    execution: BackfillExecution
     sessions: tuple[BackfillJobSession, ...]
 
+
+class FastF1RequestBudgetResponse(ApiModel):
+    source: str = Field(pattern="^fastf1$")
+    window_seconds: int = Field(gt=0)
+    observed_at: UtcDatetime
+    observed_requests: int = Field(ge=0)
+    archive_requests: int = Field(ge=0)
+    schedule_requests: int = Field(ge=0)
+    library_limit: int = Field(gt=0)
+    operational_ceiling: int = Field(gt=0)
+    warning_threshold: int = Field(gt=0)
+    remaining_before_pause: int = Field(ge=0)
+    next_capacity_at: UtcDatetime | None
+    cooldown_until: UtcDatetime | None
+    cooldown_reason: str | None
+    status: RequestBudgetStatus
+    authoritative: bool
+
+    @model_validator(mode="after")
+    def validate_request_counts(self) -> Self:
+        if self.observed_requests != (
+            self.archive_requests + self.schedule_requests
+        ):
+            raise ValueError(
+                "observed requests must equal archive plus schedule requests"
+            )
+        if not (
+            self.warning_threshold
+            < self.operational_ceiling
+            < self.library_limit
+        ):
+            raise ValueError("request-budget thresholds are inconsistent")
+        return self

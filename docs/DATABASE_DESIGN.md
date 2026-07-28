@@ -1,9 +1,9 @@
 # Alembic and Database Model Design
 
-Status: **accepted; Revisions 1, 2, and 3 implemented**
+Status: **accepted; Revisions 1 through 5 implemented**
 Date: **2026-07-27**
 
-This document defines the accepted database and migration design for the first historical backfill phase. Revisions 1, 2, and 3, the control-plane and sporting-data tables, schedule discovery membership, and the one-session archive ingestion lifecycle are implemented. Telemetry remains planned.
+This document defines the accepted database and migration design for the first historical backfill phase. Revisions 1 through 5, the control-plane and sporting-data tables, schedule discovery membership, the one-session archive ingestion lifecycle, and local FastF1 request accounting are implemented. Telemetry remains planned.
 
 ## Design Goals
 
@@ -181,6 +181,18 @@ Adds:
 
 The request-gate row stores the next permitted archive session start and whether
 the current restriction represents normal pacing or a rate-limit cooldown.
+
+### Revision 5: FastF1 request budget
+
+Adds:
+
+- `upstream_request_events`, recording each observed real FastF1 cache-miss
+  HTTP send as an `archive` or `schedule` operation.
+- `budget` as an allowed `upstream_request_gates.reason`.
+
+The append-only event ledger supplies a rolling one-hour local usage estimate.
+It is coordinated through the existing singleton gate so API schedule discovery
+and worker archive ingestion share one operational ceiling.
 
 ### Telemetry revision
 
@@ -448,11 +460,17 @@ Implemented behavior:
 - Retry is scoped to a session, never to the entire season from the beginning.
 - `attempt_count` increments when a worker successfully claims a session.
 - Claims lock the `fastf1_archive` row in `upstream_request_gates` before
-  session state and reserve a minimum 90-second interval between archive
+  session state and reserve a minimum one-second interval between archive
   session starts across processes.
+- Real FastF1 cache-miss HTTP sends are reserved transactionally in
+  `upstream_request_events`; cache hits do not create rows.
+- The rolling one-hour local budget warns at 400 observed sends and closes the
+  global gate at the 450-send operational ceiling until exact capacity returns.
 - FastF1's explicit rate-limit exception closes the global gate for one hour
   and does not consume the job-session retry budget; the lifetime ingestion
   attempt token remains monotonic.
+- A local request-budget pause also preserves the job-session retry budget and
+  uses the exact oldest-request-plus-window recovery timestamp.
 - Retryable failures set `next_retry_at`; permanent validation failures remain failed.
 - Maximum attempts and backoff are configuration values, not schema constants.
 - Job-session and persistent session states change atomically during claims and
@@ -576,3 +594,14 @@ Verified on 2026-07-28 against PostgreSQL 17:
 - FastF1 rate-limit cooldown is shared globally and preserves the job-session
   retry budget.
 - Unknown historical `IsPersonalBest` values normalize and persist as null.
+
+## Revision 5 Verification
+
+Verified on 2026-07-28 against PostgreSQL 17:
+
+- Upgrade from Revision 4 to Revision 5 succeeds.
+- Downgrade returns to Revision 4 and re-upgrade succeeds.
+- Alembic reports Revision 5 as head with zero model/schema drift.
+- Concurrent request reservations stop at the configured operational ceiling.
+- Archive and schedule counts share one rolling window.
+- The committed budget gate exposes its exact recovery timestamp.

@@ -15,8 +15,12 @@ import pandas as pd
 from app.ingestion.fastf1_loader import (
     MINIMUM_ARCHIVE_YEAR,
     FastF1LoaderConfigurationError,
+    FastF1RequestBudgetProtocol,
     FastF1SessionLoader,
     serialized_fastf1_access,
+)
+from app.ingestion.request_budget_errors import (
+    FastF1RequestBudgetExhaustedError,
 )
 
 
@@ -82,8 +86,16 @@ _CANONICAL_SESSION_KEYS = {
 class FastF1ScheduleLoader:
     """Load one championship schedule through FastF1's serialized cache."""
 
-    def __init__(self, cache_path: str | Path) -> None:
-        self._cache_client = FastF1SessionLoader(cache_path)
+    def __init__(
+        self,
+        cache_path: str | Path,
+        *,
+        request_budget: FastF1RequestBudgetProtocol | None = None,
+    ) -> None:
+        self._cache_client = FastF1SessionLoader(
+            cache_path,
+            request_budget=request_budget,
+        )
         self.cache_path = self._cache_client.cache_path
 
     def load(self, season_year: int) -> NormalizedSeasonSchedule:
@@ -103,6 +115,8 @@ class FastF1ScheduleLoader:
                     include_testing=False,
                     backend="fastf1",
                 )
+            except FastF1RequestBudgetExhaustedError:
+                raise
             except Exception as error:
                 raise FastF1ScheduleLoadError(
                     f"FastF1 failed to load the {season_year} schedule"
@@ -124,6 +138,8 @@ class FastF1ScheduleLoader:
                             missing_event,
                         )
                     )
+                except FastF1RequestBudgetExhaustedError:
+                    raise
                 except FastF1ScheduleNormalizationError:
                     raise
                 except Exception as error:
@@ -147,6 +163,8 @@ class FastF1ScheduleLoader:
 
 def create_fastf1_schedule_loader(
     cache_path: str | Path | None = None,
+    *,
+    request_budget: FastF1RequestBudgetProtocol | None = None,
 ) -> FastF1ScheduleLoader:
     configured_path = cache_path
     if configured_path is None:
@@ -155,7 +173,10 @@ def create_fastf1_schedule_loader(
         raise FastF1LoaderConfigurationError(
             "FASTF1_CACHE_PATH is required"
         )
-    return FastF1ScheduleLoader(configured_path)
+    return FastF1ScheduleLoader(
+        configured_path,
+        request_budget=request_budget,
+    )
 
 
 def normalize_fastf1_schedule(

@@ -26,6 +26,9 @@ from app.ingestion.archive_persistence import (
 )
 from app.ingestion.fastf1_loader import FastF1RateLimitError
 from app.ingestion.fastf1_normalization import ARCHIVE_SOURCE, FINALIZED_STATE
+from app.ingestion.request_budget_errors import (
+    FastF1RequestBudgetExhaustedError,
+)
 from app.ingestion.runtime_policy import (
     BackfillRuntimeSettings,
     RetryDisposition,
@@ -473,12 +476,17 @@ def transition_archive_job_failure(
     runtime_settings = settings or BackfillRuntimeSettings()
     disposition = classify_retry(error)
     failure = sanitize_archive_failure(error)
+    budget_exhausted = isinstance(
+        error,
+        FastF1RequestBudgetExhaustedError,
+    )
     rate_limited = isinstance(error, FastF1RateLimitError)
+    request_paused = rate_limited or budget_exhausted
 
     with database.begin():
         request_gate = (
             _get_fastf1_request_gate_for_update(database)
-            if rate_limited
+            if request_paused
             else None
         )
         job_session = _get_job_session_for_update(database, claim)
@@ -504,9 +512,12 @@ def transition_archive_job_failure(
         failed_at = _database_now(database)
         next_retry_at: datetime | None = None
         status = "failed"
-        if rate_limited:
+        if request_paused:
             next_retry_at = (
-                failed_at + runtime_settings.fastf1_rate_limit_cooldown
+                error.retry_at
+                if budget_exhausted
+                else failed_at
+                + runtime_settings.fastf1_rate_limit_cooldown
             )
             status = "pending"
             job_session.attempt_count -= 1
@@ -515,7 +526,9 @@ def transition_archive_job_failure(
                 request_gate.next_request_at,
                 next_retry_at,
             )
-            request_gate.reason = "rate_limit"
+            request_gate.reason = (
+                "budget" if budget_exhausted else "rate_limit"
+            )
         elif (
             disposition is RetryDisposition.RETRYABLE
             and claim.job_attempt_count < runtime_settings.max_attempts

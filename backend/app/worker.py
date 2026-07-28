@@ -9,6 +9,7 @@ import psycopg
 from app.db.session import create_session_factory
 from app.ingestion.backfill_worker import ArchiveBackfillWorker
 from app.ingestion.fastf1_loader import create_fastf1_session_loader
+from app.ingestion.request_budget import FastF1RequestBudget
 from app.ingestion.runtime_policy import BackfillRuntimeSettings
 
 logger = logging.getLogger("formula1_dashboard.worker")
@@ -49,9 +50,16 @@ def main() -> None:
     try:
         verify_database(database_url)
         settings = BackfillRuntimeSettings.from_environment()
-        loader = create_fastf1_session_loader()
+        session_factory = create_session_factory()
+        loader = create_fastf1_session_loader(
+            request_budget=FastF1RequestBudget(
+                session_factory=session_factory,
+                operation="archive",
+                settings=settings,
+            )
+        )
         worker = ArchiveBackfillWorker(
-            session_factory=create_session_factory(),
+            session_factory=session_factory,
             loader=loader,
             settings=settings,
         )

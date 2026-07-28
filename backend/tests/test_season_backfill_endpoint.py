@@ -15,6 +15,9 @@ from app.ingestion.fastf1_schedule import (
     FastF1ScheduleNormalizationError,
 )
 from app.ingestion.freshness_policy import CoverageRefreshReason
+from app.ingestion.request_budget_errors import (
+    FastF1RequestBudgetExhaustedError,
+)
 from app.ingestion.season_backfill import (
     SeasonBackfillError,
     SeasonBackfillPlan,
@@ -256,6 +259,35 @@ def test_backfill_endpoint_maps_failures_without_leaking_details(
     assert "RAW-" not in response.text
 
 
+def test_backfill_endpoint_returns_exact_budget_retry_boundary(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    _override_command_dependencies()
+    retry_at = datetime.now(UTC) + timedelta(seconds=90)
+
+    def pause_planning(**_kwargs):
+        raise FastF1RequestBudgetExhaustedError(retry_at=retry_at)
+
+    monkeypatch.setattr(
+        "app.api.seasons.ensure_season_backfill",
+        pause_planning,
+    )
+
+    response = client.post("/api/v1/seasons/2024/backfill")
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] in {"89", "90"}
+    assert response.json() == {
+        "detail": {
+            "code": "fastf1_request_budget_paused",
+            "message": (
+                "FastF1 requests are paused by the local safety budget."
+            ),
+        }
+    }
+
+
 @pytest.mark.parametrize("season_year", [2017, datetime.now(UTC).year + 1])
 def test_backfill_endpoint_rejects_unsupported_year_before_planning(
     client: TestClient,
@@ -289,7 +321,7 @@ def test_schedule_loader_dependency_maps_invalid_cache_configuration(
 ) -> None:
     app.dependency_overrides[get_database_session_factory] = lambda: object()
 
-    def invalid_configuration():
+    def invalid_configuration(**_kwargs):
         raise FastF1LoaderConfigurationError(
             "RAW-CACHE-CONFIGURATION-SENTINEL"
         )
@@ -326,7 +358,10 @@ def test_openapi_documents_backfill_command_responses_and_headers() -> None:
         "Location",
         "Retry-After",
     }
-    for status_code in ("409", "500", "502", "503"):
+    assert set(operation["responses"]["429"]["headers"]) == {
+        "Retry-After",
+    }
+    for status_code in ("409", "429", "500", "502", "503"):
         assert operation["responses"][status_code]["content"][
             "application/json"
         ]["schema"] == {"$ref": "#/components/schemas/ErrorResponse"}

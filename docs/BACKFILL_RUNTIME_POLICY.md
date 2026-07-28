@@ -15,7 +15,8 @@ It covers:
 - Heartbeats and lease expiry.
 - Crash recovery and stale-worker fencing.
 - Current-season schedule and archive freshness.
-- Cross-worker FastF1 request pacing and rate-limit cooldown.
+- Cross-worker FastF1 request accounting, budget pauses, pacing, and
+  rate-limit cooldown.
 
 It does not define REST APIs or UI behavior. Manual job cancellation is
 explicitly deferred from the historical MVP; the operational shutdown behavior
@@ -29,9 +30,12 @@ is implemented. Transactional parent-job aggregation is implemented. Worker
 claiming, execution, heartbeat/recovery scheduling, failure/completion handling,
 and aggregation are implemented. Cache-backed schedule discovery, atomic
 calendar refresh, and freshness-triggered active-job creation/reuse are
-implemented. A persistent PostgreSQL request gate now serializes FastF1 archive
-session starts across workers, enforces a 90-second minimum interval, and applies
-a one-hour global cooldown when FastF1 raises its rate-limit exception.
+implemented. A persistent PostgreSQL request gate serializes FastF1 archive
+session starts across workers, applies a one-second safety gap, and closes for a
+one-hour cooldown when FastF1 raises its explicit rate-limit exception. A
+rolling PostgreSQL ledger records real cache-miss HTTP sends made by FastF1.
+The application warns at 400 observed requests and pauses at 450 within one
+hour, leaving headroom below FastF1's 500-request library threshold.
 
 ## Recommended Configuration
 
@@ -47,7 +51,11 @@ a one-hour global cooldown when FastF1 raises its rate-limit exception.
 | Recovery scan interval | 30 seconds |
 | Idle worker poll interval | 2 seconds |
 | Initial worker concurrency | One FastF1 session at a time |
-| Minimum interval between FastF1 archive session starts | 90 seconds |
+| Minimum interval between FastF1 archive session starts | 1 second |
+| FastF1 request window | 1 hour |
+| FastF1 library threshold | 500 requests |
+| Application warning threshold | 400 observed requests |
+| Application operational ceiling | 450 observed requests |
 | FastF1 rate-limit cooldown | 1 hour |
 | Current-season coverage TTL | 6 hours |
 | Historical-season coverage TTL | 30 days |
@@ -62,6 +70,10 @@ The implemented `BackfillRuntimeSettings.from_environment()` loader reads:
 - `BACKFILL_WORKER_POLL_INTERVAL_SECONDS`
 - `FASTF1_ARCHIVE_SESSION_MIN_INTERVAL_SECONDS`
 - `FASTF1_RATE_LIMIT_COOLDOWN_SECONDS`
+- `FASTF1_REQUEST_WINDOW_SECONDS`
+- `FASTF1_REQUEST_LIBRARY_LIMIT`
+- `FASTF1_REQUEST_OPERATIONAL_CEILING`
+- `FASTF1_REQUEST_WARNING_THRESHOLD`
 - `BACKFILL_MAX_ATTEMPTS`
 - `BACKFILL_BACKOFF_BASE_SECONDS`
 - `BACKFILL_BACKOFF_MULTIPLIER`
@@ -77,6 +89,37 @@ The implemented `BackfillRuntimeSettings.from_environment()` loader reads:
 
 The final setting is a comma-separated list of integer seconds. Invalid values
 fail during settings construction instead of silently falling back.
+
+The request thresholds must satisfy
+`warning < operational ceiling < library threshold`.
+
+## Request Accounting and Cache-Aware Throttling
+
+The request ledger is a local operational estimate, not an authoritative
+upstream quota:
+
+- `upstream_request_events` stores one `fastf1` row immediately before each
+  real outbound send, split into `archive` and `schedule` operations.
+- FastF1's pinned requests-cache session reaches the instrumented raw
+  `_SessionWithRateLimiting.send` method only after a cache miss. Cache hits
+  therefore consume no local request budget.
+- Archive and schedule traffic share the same rolling one-hour budget and the
+  same `fastf1_archive` request gate.
+- Reservation locks the singleton gate row so concurrent API and worker
+  processes cannot exceed the operational ceiling through a race.
+- At 450 observed sends, the gate reason becomes `budget` and its next request
+  time is the oldest in-window request plus one hour.
+- The budget pause returns claimed session state to pending without consuming
+  its per-job retry allowance. The monotonic lifetime attempt token remains
+  consumed for stale-worker fencing.
+- Explicit FastF1 rate limiting remains distinct. Its one-hour cooldown takes
+  precedence in the API status as `rate_limited`.
+- Ledger rows older than 24 hours are pruned during later reservations.
+
+The ledger begins at migration/application deployment and cannot observe
+requests made by other programs, machines, or prior processes. FastF1 does not
+provide a supported endpoint or response header that reveals the true remaining
+quota before rate limiting. Clients must display `authoritative: false`.
 
 ## Attempt Counters
 
@@ -127,6 +170,14 @@ failures:
 While that gate is closed, no worker can claim another FastF1 archive session.
 This prevents a rate-limit response from consuming every pending session's retry
 budget.
+
+### Local request-budget pause
+
+`fastf1_request_budget_paused` follows the same retry-budget-preserving session
+transition as explicit rate limiting, but uses the exact rolling-window
+`retry_at` timestamp derived from the oldest observed request. It is not treated
+as a failed upstream request and does not invent a one-hour delay from the
+attempt time.
 
 ### Terminal
 
@@ -414,9 +465,9 @@ The implemented worker:
    and every 30 seconds afterward.
 3. Polls every two seconds while idle and claims at most one eligible session.
    A claim first locks the persistent FastF1 request gate; successful claims
-   reserve the next start at least 90 seconds later.
+   reserve the next start at least one second later.
 4. Processes the claimed session synchronously through the cache-backed loader,
-   normalization, and claim-aware atomic persistence.
+   request-level budget, normalization, and claim-aware atomic persistence.
 5. Runs periodic heartbeats in a separate thread for the duration of blocking
    session work.
 6. Records retryable or terminal failure through the fenced transition, then
@@ -476,3 +527,6 @@ measured or before production or multi-user operation requires it.
 10. Implemented: PostgreSQL-backed archive request pacing, distinct FastF1
     rate-limit classification, one-hour global cooldown, and retry-budget
     preservation.
+11. Implemented: cache-miss request instrumentation, a rolling PostgreSQL
+    request ledger, 400-request warning, 450-request operational pause, exact
+    capacity recovery, and retry-budget preservation for local budget pauses.

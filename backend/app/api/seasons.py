@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+from math import ceil
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response
@@ -24,6 +26,9 @@ from app.ingestion.fastf1_schedule import (
     FastF1ScheduleLoaderProtocol,
     FastF1ScheduleLoadError,
     FastF1ScheduleNormalizationError,
+)
+from app.ingestion.request_budget_errors import (
+    FastF1RequestBudgetExhaustedError,
 )
 from app.ingestion.season_backfill import (
     SeasonBackfillError,
@@ -57,6 +62,18 @@ router = APIRouter(prefix="/seasons", tags=["seasons"])
         409: {
             "model": ErrorResponse,
             "description": "Stored state conflicts with backfill planning.",
+        },
+        429: {
+            "model": ErrorResponse,
+            "description": "The local FastF1 request budget is paused.",
+            "headers": {
+                "Retry-After": {
+                    "description": (
+                        "Seconds until the rolling request budget has capacity."
+                    ),
+                    "schema": {"type": "integer"},
+                },
+            },
         },
         500: {
             "model": ErrorResponse,
@@ -92,6 +109,17 @@ def post_season_backfill(
             session_factory=session_factory,
             schedule_loader=schedule_loader,
         )
+    except FastF1RequestBudgetExhaustedError as error:
+        retry_seconds = max(
+            1,
+            ceil((error.retry_at - datetime.now(UTC)).total_seconds()),
+        )
+        raise ApiError(
+            status_code=429,
+            code="fastf1_request_budget_paused",
+            message="FastF1 requests are paused by the local safety budget.",
+            headers={"Retry-After": str(retry_seconds)},
+        ) from None
     except SeasonBackfillSourceConflictError:
         raise ApiError(
             status_code=409,

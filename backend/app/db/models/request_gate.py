@@ -14,7 +14,7 @@ class UpstreamRequestGate(TimestampMixin, Base):
             name="source_nonempty",
         ),
         CheckConstraint(
-            "reason IN ('pacing', 'rate_limit')",
+            "reason IN ('pacing', 'rate_limit', 'budget')",
             name="reason",
         ),
     )
