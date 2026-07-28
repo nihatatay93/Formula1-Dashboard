@@ -4,8 +4,8 @@ Formula1 Dashboard is a local-first Formula 1 data platform. It will combine
 historical FastF1 data and future SignalR live timing behind a single API for
 the web dashboard and a future iOS application.
 
-The repository currently contains the local development scaffold and the first
-two database migrations:
+The repository currently contains the local development scaffold and three
+database migrations:
 
 - FastAPI backend with liveness and PostgreSQL readiness endpoints
 - Single-concurrency archive worker using the same backend image
@@ -23,12 +23,14 @@ two database migrations:
 - Ownership-fenced heartbeat updates and atomic claimed archive completion
 - Bounded stale-lease recovery with retry-budget and stale-worker fencing
 - Deterministic season-coverage and archive-correction eligibility decisions
+- Cache-backed FastF1 schedule discovery with real session start/end boundaries
+- Atomic calendar refresh and latest-snapshot membership tracking
+- Advisory-locked active-job creation/reuse with idempotent session queuing
 - Transactional parent-job aggregation from locked session outcomes
 - Worker claim, heartbeat, recovery, failure/completion, and aggregation loop
 - Docker Compose health checks
 
-Schedule discovery, freshness-triggered job creation, REST backfill APIs,
-telemetry, and live timing ingestion are not implemented yet.
+REST backfill APIs, telemetry, and live timing ingestion are not implemented yet.
 
 ## Requirements
 
@@ -64,7 +66,7 @@ Start the complete local stack:
 docker compose up --build
 ```
 
-The one-shot `migrate` service applies reviewed Alembic migrations before the
+The one-shot `migrate` service applies repository Alembic migrations before the
 API and worker start.
 
 The services are exposed locally at:

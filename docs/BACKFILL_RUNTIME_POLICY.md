@@ -24,8 +24,9 @@ atomic completion are also implemented. Bounded stale-lease recovery is
 implemented. Deterministic coverage and archive-correction eligibility evaluation
 is implemented. Transactional parent-job aggregation is implemented. Worker
 claiming, execution, heartbeat/recovery scheduling, failure/completion handling,
-and aggregation are implemented. Freshness-triggered job creation remains
-unimplemented.
+and aggregation are implemented. Cache-backed schedule discovery, atomic
+calendar refresh, and freshness-triggered active-job creation/reuse are
+implemented.
 
 ## Recommended Configuration
 
@@ -315,6 +316,40 @@ Both decisions require timezone-aware inputs and perform no database writes, job
 creation, or upstream calls. Orchestration must supply PostgreSQL time and persist
 or act on the returned decision separately.
 
+## Schedule Discovery and Job Planning
+
+The implemented planner connects the pure decisions to database state:
+
+1. Read coverage freshness using PostgreSQL time.
+2. When coverage is missing or stale, load and fully normalize the FastF1 season
+   index outside database locks.
+3. Acquire a transaction-level advisory lock scoped to the season and recheck
+   freshness.
+4. Atomically upsert the latest championship calendar snapshot and coverage
+   timestamps when refresh is still required.
+5. Evaluate only sessions present in that latest successful snapshot.
+6. Reuse the active pending/running job or create one new pending job.
+7. Insert only missing job-session children that are archive eligible.
+
+FastF1 3.8.3's public schedule frame omits session end timestamps. The schedule
+loader uses the pinned cache-decorated F1 timing season index because it retains
+real `StartDate`, `EndDate`, and `GmtOffset` values. Missing or invalid ends reject
+the snapshot; no estimated duration is stored. Testing events and years before
+2018 are excluded.
+
+The season advisory lock serializes calendar persistence and job planning.
+The existing partial unique active-job index remains a second database-level
+guarantee. Concurrent callers can perform redundant cache-backed loading, but
+after the lock the fresh committed database snapshot wins and both callers return
+the same active job.
+
+Rows absent from a later schedule are not deleted. Revision 3 discovery markers
+identify current snapshot membership so removed rows remain queryable but are not
+automatically queued. Loader, normalization, or source-conflict failure rolls back
+the whole refresh and never extends coverage validity.
+
+The complete contract is in `docs/SCHEDULE_DISCOVERY_DESIGN.md`.
+
 ## Parent-Job Aggregation
 
 The implemented `aggregate_backfill_job` transaction locks every job-session row
@@ -359,7 +394,8 @@ The implemented worker:
    hidden by an active parent.
 
 The worker performs no upstream work when there is no pre-existing eligible
-job-session. Schedule discovery and job creation remain separate future work.
+job-session. Schedule discovery and job creation remain a separate implemented
+planner that a future REST season request will invoke.
 Logs include operation and exception type but deliberately omit raw exception
 text. SIGINT/SIGTERM stops new claims and idle waits; an in-process active attempt
 is allowed to finish while its heartbeat thread continues. Local Compose grants
@@ -385,3 +421,5 @@ after that period, normal lease recovery handles the abandoned claim.
 8. Implemented: single-concurrency worker execution with two-second polling,
    periodic heartbeats/recovery, fenced outcomes, parent reconciliation, and
    graceful shutdown.
+9. Implemented: cache-backed FastF1 schedule discovery, atomic latest-snapshot
+   persistence, and advisory-locked active-job creation/reuse.

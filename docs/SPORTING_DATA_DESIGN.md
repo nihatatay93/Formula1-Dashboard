@@ -3,7 +3,7 @@
 Status: **accepted; schema implemented**
 Date: **2026-07-28**
 
-This document defines the accepted Revision 2 database model. It is based on direct inspection of representative FastF1 3.8.3 data and the official FastF1 data reference. The SQLAlchemy models, Alembic revision, locked FastF1 runtime dependency, database-bound one-session loader orchestration, pure normalization layer, atomic one-session archive persistence, and single-concurrency archive worker are implemented. Schedule discovery and year-level job creation are not implemented yet.
+This document defines the accepted Revision 2 database model. It is based on direct inspection of representative FastF1 3.8.3 data and the official FastF1 data reference. The SQLAlchemy models, Alembic revision, locked FastF1 runtime dependency, database-bound one-session loader orchestration, pure normalization layer, atomic one-session archive persistence, single-concurrency archive worker, schedule discovery, and year-level job planning are implemented.
 
 ## Scope
 

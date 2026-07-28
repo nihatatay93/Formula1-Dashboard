@@ -99,8 +99,9 @@ FastF1 loading is explicitly configured with:
 
 Loading race-control messages allows FastF1 to populate deleted-lap state and
 reason. FastF1 uses process-global cache state, so cache activation and session
-loading are serialized with one process-local lock. Cross-process job concurrency
-remains worker-orchestration work.
+loading are serialized with one process-local lock. The schedule loader uses the
+same serialized cache boundary. Cross-process job concurrency remains
+worker-orchestration work.
 
 The loader returns only the loaded session name, results table, laps table, and
 original request. It does not normalize or persist data itself.
@@ -248,6 +249,10 @@ Implemented:
 - Preservation of a previous completed snapshot when a refresh attempt fails.
 - Rollback preservation and idempotent stable natural-key rows.
 
-Not implemented:
+Implemented separately from this one-session replacement contract:
 
-- Schedule discovery and freshness-triggered job creation.
+- Cache-backed schedule discovery with real session end timestamps.
+- Atomic latest-snapshot calendar persistence.
+- Freshness-triggered active-job creation/reuse and idempotent child queuing.
+
+These behaviors are documented in `docs/SCHEDULE_DISCOVERY_DESIGN.md`.

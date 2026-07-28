@@ -188,6 +188,8 @@ def test_control_plane_constraints_and_indexes(
               AND tablename IN (
                   'backfill_jobs',
                   'backfill_job_sessions',
+                  'events',
+                  'sessions',
                   'session_ingestions'
               )
             """
@@ -196,6 +198,8 @@ def test_control_plane_constraints_and_indexes(
     assert {
         "uq_backfill_jobs_active_season",
         "ix_backfill_job_sessions_status_next_retry_at_queued_at",
+        "ix_events_season_year_last_discovered_at",
+        "ix_sessions_event_id_last_discovered_at",
         "ix_session_ingestions_status_next_retry_at",
     } <= index_names
 

@@ -26,6 +26,7 @@ class Event(TimestampMixin, Base):
         ),
         UniqueConstraint("season_year", "round_number"),
         Index(None, "season_year", "starts_at"),
+        Index(None, "season_year", "last_discovered_at"),
     )
 
     id: Mapped[int] = mapped_column(
@@ -45,4 +46,7 @@ class Event(TimestampMixin, Base):
     event_format: Mapped[str | None] = mapped_column(Text)
     starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_discovered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+    )
     source: Mapped[str] = mapped_column(Text)

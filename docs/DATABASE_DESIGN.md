@@ -1,9 +1,9 @@
 # Alembic and Database Model Design
 
-Status: **accepted; Revisions 1 and 2 implemented**
+Status: **accepted; Revisions 1, 2, and 3 implemented**
 Date: **2026-07-27**
 
-This document defines the accepted database and migration design for the first historical backfill phase. Revisions 1 and 2, the control-plane and sporting-data tables, and the one-session archive ingestion lifecycle are implemented. Telemetry remains planned.
+This document defines the accepted database and migration design for the first historical backfill phase. Revisions 1, 2, and 3, the control-plane and sporting-data tables, schedule discovery membership, and the one-session archive ingestion lifecycle are implemented. Telemetry remains planned.
 
 ## Design Goals
 
@@ -62,15 +62,19 @@ backend/
 │       ├── archive_attempt.py
 │       ├── archive_ingestion.py
 │       ├── archive_persistence.py
+│       ├── fastf1_schedule.py
 │       ├── fastf1_loader.py
-│       └── fastf1_normalization.py
+│       ├── fastf1_normalization.py
+│       └── season_backfill.py
 └── tests/
     ├── test_archive_attempt.py
     ├── test_archive_ingestion.py
     ├── test_archive_persistence.py
     ├── test_database_integration.py
     ├── test_fastf1_loader.py
-    └── test_fastf1_normalization.py
+    ├── test_fastf1_normalization.py
+    ├── test_fastf1_schedule.py
+    └── test_season_backfill.py
 ```
 
 `app/db/models/__init__.py` imports every implemented model so Alembic receives complete `Base.metadata`. Application startup must never call `create_all`; migrations are the only schema-authoring mechanism.
@@ -154,7 +158,19 @@ Creates:
 
 This revision enables one complete FastF1 session backfill without committing to a telemetry storage strategy.
 
-### Revision 3: Telemetry
+### Revision 3: Schedule discovery membership
+
+Adds:
+
+- `events.last_discovered_at`
+- `sessions.last_discovered_at`
+- Lookup indexes for latest-snapshot membership
+
+The revision invalidates existing non-null season coverage so the next discovery
+refresh assigns authoritative membership markers. It preserves all calendar and
+sporting rows.
+
+### Telemetry revision
 
 Deferred until FastF1 storage volume and query patterns are measured. The decision will cover:
 
@@ -196,6 +212,7 @@ Represents one championship event in a season.
 | `event_format` | `TEXT` | Nullable FastF1 event format. |
 | `starts_at` | `TIMESTAMPTZ` | Nullable event start. |
 | `ends_at` | `TIMESTAMPTZ` | Nullable event end. |
+| `last_discovered_at` | `TIMESTAMPTZ` | Nullable membership marker for the latest successful schedule snapshot. |
 | `source` | `TEXT` | Source check constraint. |
 | `created_at` | `TIMESTAMPTZ` | Server default `now()`. |
 | `updated_at` | `TIMESTAMPTZ` | Updated by application writes. |
@@ -204,6 +221,7 @@ Constraints and indexes:
 
 - Unique `(season_year, round_number)`.
 - Index `(season_year, starts_at)`.
+- Index `(season_year, last_discovered_at)`.
 
 The first backfill slice is limited to championship rounds. Supporting testing events with round number `0` would require a later explicit scope change.
 
@@ -219,6 +237,7 @@ Represents one session within an event.
 | `session_name` | `TEXT` | Upstream/display name. |
 | `scheduled_start_at` | `TIMESTAMPTZ` | Nullable planned start. |
 | `scheduled_end_at` | `TIMESTAMPTZ` | Nullable planned end. |
+| `last_discovered_at` | `TIMESTAMPTZ` | Nullable membership marker for the latest successful schedule snapshot. |
 | `source` | `TEXT` | Source check constraint. |
 | `created_at` | `TIMESTAMPTZ` | Server default `now()`. |
 | `updated_at` | `TIMESTAMPTZ` | Updated by application writes. |
@@ -227,6 +246,7 @@ Constraints and indexes:
 
 - Unique `(event_id, session_key)`.
 - Index `(event_id, scheduled_start_at)`.
+- Index `(event_id, last_discovered_at)`.
 
 `session_key` is text rather than a PostgreSQL enum because Formula 1 session formats can evolve. Canonical values will be validated by the application and normalized at the ingestion boundary.
 
@@ -281,7 +301,7 @@ Constraints and indexes:
 - Partial unique index on `season_year` where status is `pending` or `running`.
 - Index `(status, requested_at)`.
 
-The partial unique index is the database-level guarantee that two active jobs cannot exist for the same year. The API should catch the unique violation and return the existing active job.
+The partial unique index is the database-level guarantee that two active jobs cannot exist for the same year. The implemented planner also takes a transaction-level season advisory lock and returns the existing active job.
 
 ### `backfill_job_sessions`
 
@@ -368,6 +388,13 @@ The exact precedence will be implemented once API response tests are written.
 - Session entries use an upsert keyed by `(session_id, entry_key)`.
 - Laps use an upsert keyed by `(session_entry_id, lap_number)`.
 - A partial unique index prevents two active year jobs.
+- Schedule refresh and job planning use one transaction-level advisory lock
+  scoped to the season.
+- A successful refresh marks only current snapshot rows with the same PostgreSQL
+  discovery timestamp; older absent rows are preserved but excluded from
+  automatic planning.
+- A repeated planner call reuses the active job and appends only missing child
+  natural keys.
 - The implemented one-session wrapper locks the target session and persistent
   ingestion row before changing it to `running`.
 - The implemented orchestration service claims eligible
@@ -469,6 +496,8 @@ Historical FastF1 archive imports are normally finalized. Live SignalR rows rema
 
 - Season, event, session, and sporting-data foreign keys default to restricted deletion.
 - Job-session rows cascade only when their parent job is explicitly deleted.
+- Calendar rows absent from a later schedule snapshot are preserved and become
+  inactive for automatic planning through their older discovery marker.
 - Backfill should repair data through idempotent upserts, not broad deletes.
 - Telemetry retention will not be decided before volume measurements.
 - No automatic cleanup job is part of the first migration.
@@ -480,13 +509,12 @@ Historical FastF1 archive imports are normally finalized. Live SignalR rows rema
 3. Derived rather than persisted year status.
 4. Championship rounds only for the first slice, excluding testing events.
 5. Text plus named check constraints instead of PostgreSQL enums.
-6. Phased migrations: control plane, sporting data, then telemetry.
+6. Phased migrations: control plane, sporting data, schedule discovery
+   membership, then a separately designed telemetry phase.
 
 ## Remaining Open Decisions
 
-1. Define current-season coverage freshness.
-2. Define retry count, backoff, heartbeat, and lease defaults.
-3. Decide whether manual job cancellation is required in the first phase.
+1. Decide whether manual job cancellation is required in the first phase.
 
 ## Acceptance Criteria for the First Migration
 
@@ -502,3 +530,16 @@ All criteria below were verified on 2026-07-27 against an isolated PostgreSQL 17
 - A worker-claim query can use the intended pending/retry index.
 - Alembic reports the database at `head`.
 - Integration tests run inside Docker without depending on a host virtual environment.
+
+## Revision 3 Verification
+
+Verified on 2026-07-28 against PostgreSQL 17:
+
+- Upgrade from Revision 2 to Revision 3 succeeds.
+- Downgrade returns to Revision 2 and re-upgrade succeeds.
+- Alembic reports `20260728_0003 (head)`.
+- Alembic autogeneration reports zero model/schema drift.
+- Discovery markers and indexes match SQLAlchemy metadata.
+- Concurrent season planners reuse one active job.
+- Removed schedule rows remain stored but are not queued from the latest
+  snapshot.

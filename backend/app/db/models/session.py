@@ -25,6 +25,7 @@ class RaceSession(TimestampMixin, Base):
         ),
         UniqueConstraint("event_id", "session_key"),
         Index(None, "event_id", "scheduled_start_at"),
+        Index(None, "event_id", "last_discovered_at"),
     )
 
     id: Mapped[int] = mapped_column(
@@ -42,6 +43,9 @@ class RaceSession(TimestampMixin, Base):
         DateTime(timezone=True),
     )
     scheduled_end_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+    )
+    last_discovered_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
     )
     source: Mapped[str] = mapped_column(Text)

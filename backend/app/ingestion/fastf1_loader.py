@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -78,8 +80,7 @@ class FastF1SessionLoader:
         self.cache_path = candidate.resolve(strict=False)
 
     def load(self, request: FastF1SessionRequest) -> LoadedFastF1Session:
-        with _LOAD_LOCK:
-            self._enable_cache()
+        with serialized_fastf1_access(self):
             try:
                 session = fastf1.get_session(
                     request.season_year,
@@ -153,6 +154,17 @@ class FastF1SessionLoader:
             ) from error
 
         _active_cache_path = self.cache_path
+
+
+@contextmanager
+def serialized_fastf1_access(
+    cache_client: FastF1SessionLoader,
+) -> Iterator[None]:
+    """Serialize use of FastF1's process-global persistent cache."""
+
+    with _LOAD_LOCK:
+        cache_client._enable_cache()
+        yield
 
 
 def create_fastf1_session_loader(

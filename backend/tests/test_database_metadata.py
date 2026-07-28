@@ -5,7 +5,7 @@ from app.db.base import Base
 from app.db.engine import sqlalchemy_database_url
 
 
-def test_metadata_contains_revision_one_and_two_tables() -> None:
+def test_metadata_contains_all_migrated_tables() -> None:
     assert set(Base.metadata.tables) == {
         "backfill_job_sessions",
         "backfill_jobs",
@@ -77,6 +77,20 @@ def test_unresolved_session_entry_driver_is_nullable() -> None:
     driver_id = Base.metadata.tables["session_entries"].c.driver_id
 
     assert driver_id.nullable is True
+
+
+def test_calendar_discovery_markers_and_indexes_are_declared() -> None:
+    events = Base.metadata.tables["events"]
+    sessions = Base.metadata.tables["sessions"]
+
+    assert events.c.last_discovered_at.nullable is True
+    assert sessions.c.last_discovered_at.nullable is True
+    assert "ix_events_season_year_last_discovered_at" in {
+        index.name for index in events.indexes
+    }
+    assert "ix_sessions_event_id_last_discovered_at" in {
+        index.name for index in sessions.indexes
+    }
 
 
 def test_database_url_uses_explicit_psycopg_driver() -> None:
