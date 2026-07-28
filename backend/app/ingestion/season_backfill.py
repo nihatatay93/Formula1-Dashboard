@@ -19,6 +19,7 @@ from app.db.models import (
 from app.ingestion.fastf1_loader import MINIMUM_ARCHIVE_YEAR
 from app.ingestion.fastf1_normalization import ARCHIVE_SOURCE
 from app.ingestion.fastf1_schedule import (
+    DeferredFutureEvent,
     FastF1ScheduleLoaderProtocol,
     NormalizedSeasonSchedule,
 )
@@ -59,6 +60,7 @@ class SeasonBackfillPlan:
     job_created: bool
     eligible_session_ids: tuple[int, ...]
     newly_queued_session_ids: tuple[int, ...]
+    deferred_future_events: tuple[DeferredFutureEvent, ...] = ()
 
 
 def ensure_season_backfill(
@@ -124,6 +126,11 @@ def ensure_season_backfill(
                 coverage_refreshed=coverage_refreshed,
                 database_now=database_now,
                 settings=runtime_settings,
+                deferred_future_events=(
+                    loaded_schedule.deferred_future_events
+                    if loaded_schedule is not None
+                    else ()
+                ),
             )
 
     raise SeasonBackfillError(
@@ -260,6 +267,7 @@ def _create_or_reuse_job(
     coverage_refreshed: bool,
     database_now: datetime,
     settings: BackfillRuntimeSettings,
+    deferred_future_events: tuple[DeferredFutureEvent, ...],
 ) -> SeasonBackfillPlan:
     current_sessions = database.execute(
         select(RaceSession, SessionIngestion)
@@ -374,6 +382,7 @@ def _create_or_reuse_job(
             for race_session, _ingestion in eligible_rows
         ),
         newly_queued_session_ids=tuple(newly_queued),
+        deferred_future_events=deferred_future_events,
     )
 
 

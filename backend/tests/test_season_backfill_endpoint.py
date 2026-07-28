@@ -11,6 +11,7 @@ from app.api.dependencies import (
 )
 from app.ingestion.fastf1_loader import FastF1LoaderConfigurationError
 from app.ingestion.fastf1_schedule import (
+    DeferredFutureEvent,
     FastF1ScheduleLoadError,
     FastF1ScheduleNormalizationError,
 )
@@ -46,6 +47,7 @@ def _plan(
     coverage_reason: CoverageRefreshReason = CoverageRefreshReason.MISSING,
     coverage_refreshed: bool = True,
     newly_queued_session_ids: tuple[int, ...] = (101, 102),
+    deferred_future_events: tuple[DeferredFutureEvent, ...] = (),
 ) -> SeasonBackfillPlan:
     return SeasonBackfillPlan(
         season_year=2024,
@@ -58,6 +60,7 @@ def _plan(
         job_created=job_created,
         eligible_session_ids=(101, 102),
         newly_queued_session_ids=newly_queued_session_ids,
+        deferred_future_events=deferred_future_events,
     )
 
 
@@ -115,8 +118,46 @@ def test_backfill_endpoint_returns_accepted_job_contract_and_headers(
         },
         "eligible_session_count": 2,
         "newly_queued_session_count": 2,
+        "deferred_future_events": [],
     }
     assert calls == [(2024, sentinel_factory, sentinel_loader)]
+
+
+def test_backfill_endpoint_reports_deferred_future_events(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    _override_command_dependencies()
+    monkeypatch.setattr(
+        "app.api.seasons.ensure_season_backfill",
+        lambda **_kwargs: _plan(
+            deferred_future_events=(
+                DeferredFutureEvent(
+                    round_number=12,
+                    event_name="Dutch Grand Prix",
+                    scheduled_start_at=datetime(
+                        2026,
+                        8,
+                        21,
+                        10,
+                        30,
+                        tzinfo=UTC,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    response = client.post("/api/v1/seasons/2024/backfill")
+
+    assert response.status_code == 202
+    assert response.json()["deferred_future_events"] == [
+        {
+            "round_number": 12,
+            "event_name": "Dutch Grand Prix",
+            "scheduled_start_at": "2026-08-21T10:30:00Z",
+        }
+    ]
 
 
 @pytest.mark.parametrize(

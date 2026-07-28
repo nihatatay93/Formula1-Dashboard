@@ -12,6 +12,7 @@ from pandas import DataFrame
 ARCHIVE_SOURCE = "fastf1_archive"
 FINALIZED_STATE = "finalized"
 RACE_LIKE_SESSION_NAMES = frozenset({"race", "sprint"})
+MISSING_IDENTIFIER_SENTINELS = frozenset({"nan"})
 
 
 class FastF1NormalizationError(ValueError):
@@ -567,7 +568,10 @@ def _optional_identifier(value: Any) -> str | None:
     normalized = _optional_text(value)
     if normalized is None:
         return None
-    return normalized.casefold()
+    canonical = normalized.casefold()
+    if canonical in MISSING_IDENTIFIER_SENTINELS:
+        return None
+    return canonical
 
 
 def _optional_racing_number(value: Any, field: str) -> str | None:

@@ -1,5 +1,6 @@
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 from types import SimpleNamespace
@@ -433,6 +434,148 @@ def test_loader_hydrates_event_missing_from_private_season_index(
         "Race",
     ]
     assert len(metadata_paths) == 5
+
+
+def test_loader_defers_unpublished_future_events_in_current_season(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        fastf1_loader.fastf1.Cache,
+        "enable_cache",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1._api,
+        "season_schedule",
+        lambda _path: [meeting(1)],
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1,
+        "get_event_schedule",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            [
+                {
+                    "RoundNumber": 1,
+                    "EventName": "Bahrain Grand Prix",
+                },
+                {
+                    "RoundNumber": 12,
+                    "EventName": "Dutch Grand Prix",
+                    "Session1": "Practice 1",
+                    "Session1DateUtc": pd.Timestamp(
+                        "2026-08-21 10:30:00"
+                    ),
+                    "Session2": "Sprint Qualifying",
+                    "Session2DateUtc": pd.Timestamp(
+                        "2026-08-21 14:30:00"
+                    ),
+                    "Session3": "Sprint",
+                    "Session3DateUtc": pd.Timestamp(
+                        "2026-08-22 10:00:00"
+                    ),
+                    "Session4": "Qualifying",
+                    "Session4DateUtc": pd.Timestamp(
+                        "2026-08-22 14:00:00"
+                    ),
+                    "Session5": "Race",
+                    "Session5DateUtc": pd.Timestamp(
+                        "2026-08-23 13:00:00"
+                    ),
+                },
+            ]
+        ),
+    )
+
+    def unexpected_session_load(*_args, **_kwargs):
+        raise AssertionError("future event metadata must be deferred")
+
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1,
+        "get_session",
+        unexpected_session_load,
+    )
+
+    loaded = FastF1ScheduleLoader(
+        tmp_path / "cache",
+        now_provider=lambda: datetime(2026, 7, 28, 12, tzinfo=UTC),
+    ).load(2026)
+
+    assert [event.event_name for event in loaded.events] == [
+        "Bahrain Grand Prix"
+    ]
+    assert loaded.deferred_future_events == (
+        fastf1_schedule.DeferredFutureEvent(
+            round_number=12,
+            event_name="Dutch Grand Prix",
+            scheduled_start_at=datetime(
+                2026,
+                8,
+                21,
+                10,
+                30,
+                tzinfo=UTC,
+            ),
+        ),
+    )
+
+
+def test_loader_keeps_current_season_started_missing_event_strict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        fastf1_loader.fastf1.Cache,
+        "enable_cache",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1._api,
+        "season_schedule",
+        lambda _path: [meeting(1)],
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1,
+        "get_event_schedule",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            [
+                {
+                    "RoundNumber": 1,
+                    "EventName": "Bahrain Grand Prix",
+                },
+                {
+                    "RoundNumber": 2,
+                    "EventName": "Started Grand Prix",
+                    "Session1": "Practice 1",
+                    "Session1DateUtc": pd.Timestamp(
+                        "2026-07-27 10:00:00"
+                    ),
+                },
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1,
+        "get_session",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ConnectionError("controlled unavailable metadata")
+        ),
+    )
+
+    with pytest.raises(
+        FastF1ScheduleLoadError,
+        match="Started Grand Prix",
+    ):
+        FastF1ScheduleLoader(
+            tmp_path / "cache",
+            now_provider=lambda: datetime(
+                2026,
+                7,
+                28,
+                12,
+                tzinfo=UTC,
+            ),
+        ).load(2026)
 
 
 def test_curated_round_authority_rejects_ambiguous_events() -> None:

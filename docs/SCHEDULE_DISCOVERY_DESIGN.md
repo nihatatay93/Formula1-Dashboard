@@ -29,8 +29,14 @@ This is an explicitly pinned upstream boundary:
 - Curated and private events are matched strictly by normalized event name.
 - Private session boundaries remain authoritative for matched events.
 - If a curated event is absent from the private season index, each of its
-  sessions is resolved through FastF1 and its exact cached F1 timing
+  sessions is normally resolved through FastF1 and its exact cached F1 timing
   `session_info` metadata supplies `StartDate`, `EndDate`, and `GmtOffset`.
+- For the current UTC season only, a curated event absent from the private index
+  is deferred when its earliest curated `SessionNDateUtc` start is still in the
+  future. The loader neither requests unavailable per-session metadata nor
+  invents end timestamps for that event.
+- A missing event in a past season, or a current-season missing event whose
+  first session has started, remains strict and requires exact hydration.
 - Missing exact metadata, duplicate curated names/rounds, or an unmatched
   private event fails before database writes.
 
@@ -64,6 +70,11 @@ does not require a PostgreSQL enum migration. The 2021–2022 historical
 Event start and end values are the minimum session start and maximum session end
 in the normalized event.
 
+The normalized season also carries an ordered, immutable list of deferred
+current-season future events with round number, event name, and curated UTC
+start. Deferred events are command metadata, not ingestible session records;
+they are reconsidered on the next current-season coverage refresh.
+
 ## Atomic Calendar Persistence
 
 One successful schedule refresh:
@@ -75,8 +86,8 @@ One successful schedule refresh:
 4. Rejects an event or session natural key already owned by a non-archive source.
 5. Marks every row present in the snapshot with one PostgreSQL
    `last_discovered_at` timestamp.
-6. Updates `coverage_checked_at` and `coverage_valid_until` only after the full
-   snapshot is valid and persisted.
+6. Updates `coverage_checked_at` and `coverage_valid_until` only after the
+   available exact-boundary snapshot is valid and persisted.
 7. Commits calendar and coverage changes once.
 
 Rows absent from a later snapshot are preserved because they can already be
@@ -106,6 +117,8 @@ The planner:
 - Does not create an empty job around an unowned pending/running archive
   ingestion.
 - Returns no new job when no session is eligible.
+- Returns any deferred future-event metadata from a performed current-season
+  refresh without making those events eligible or storing estimated sessions.
 
 When sessions are eligible, the same advisory-locked transaction:
 
@@ -122,6 +135,8 @@ defense in addition to the advisory lock.
 ## Failure Behavior
 
 - Loader or normalization failure performs no calendar, coverage, or job write.
+- Expected missing exact metadata for an event that has not started in the
+  current season is a deferral, not a loader failure.
 - Event/session source conflict rolls back the full refresh.
 - A failed refresh never extends `coverage_valid_until`.
 - Existing completed sporting data remains untouched and queryable.

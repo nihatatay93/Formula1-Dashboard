@@ -612,11 +612,16 @@ function App() {
 
     try {
       const result = await ensureSeasonBackfill(selectedYear, controller.signal);
+      const deferredEvents = result.deferred_future_events;
+      const deferredNotice =
+        deferredEvents.length > 0
+          ? ` ${deferredEvents.length} future event${deferredEvents.length === 1 ? "" : "s"}, starting with ${deferredEvents[0].event_name}, will be added when exact session timing is published.`
+          : "";
       const messages = {
-        coverage_refreshed: "Calendar coverage refreshed. No session work is due yet.",
-        job_created: `${result.newly_queued_session_count} session${result.newly_queued_session_count === 1 ? "" : "s"} queued for ingestion.`,
-        job_reused: "The existing season job is already handling eligible sessions.",
-        no_action: "This season is current. No backfill work is needed.",
+        coverage_refreshed: `Available calendar coverage refreshed. No session work is due yet.${deferredNotice}`,
+        job_created: `${result.newly_queued_session_count} session${result.newly_queued_session_count === 1 ? "" : "s"} queued for ingestion.${deferredNotice}`,
+        job_reused: `The existing season job is already handling eligible sessions.${deferredNotice}`,
+        no_action: `This season is current. No backfill work is needed.${deferredNotice}`,
       };
       setNotice(messages[result.action]);
 
@@ -664,25 +669,33 @@ function App() {
       <header className="masthead">
         <a className="brand" href="/" aria-label="Formula1 Dashboard home">
           <span className="brand__mark" aria-hidden="true">
-            F1
+            F<span>1</span>
           </span>
           <span>
-            Formula1
-            <small>Archive control</small>
+            Formula One
+            <small>Data archive</small>
           </span>
         </a>
         <div className={`api-status api-status--${apiState}`} aria-live="polite">
           <span aria-hidden="true" />
+          <span className="api-status__label">System</span>
           API {apiState}
         </div>
       </header>
 
       <main>
         <section className="season-hero" aria-labelledby="dashboard-title">
+          <span className="season-hero__ghost" aria-hidden="true">
+            {selectedYear}
+          </span>
           <div className="season-hero__intro">
-            <p className="eyebrow">Historical timing · 2018—{currentUtcYear}</p>
+            <p className="eyebrow">
+              <span>Archive / Championship</span>
+              2018—{currentUtcYear}
+            </p>
             <h1 id="dashboard-title">
-              Season <span>{selectedYear}</span>
+              The <span>{selectedYear}</span>
+              <small>season</small>
             </h1>
             <p>
               Discover the calendar, monitor archive ingestion, and see which
@@ -714,7 +727,7 @@ function App() {
               type="button"
             >
               {commandPending ? "Checking calendar…" : "Check & sync season"}
-              <span aria-hidden="true">→</span>
+              <span aria-hidden="true">↗</span>
             </button>
             <button
               className="text-action"

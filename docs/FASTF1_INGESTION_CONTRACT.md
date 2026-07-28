@@ -48,6 +48,10 @@ Entry identity is scoped to one session:
 
 Driver IDs are trimmed and case-normalized. Racing numbers are validated as positive
 integers and stored in canonical decimal form. For example, `01` becomes `1`.
+FastF1 3.8.3 can expose the literal string `nan` when an archive result has no
+verified Jolpica identity. The normalizer treats that exact case-insensitive
+sentinel as missing and uses the racing-number fallback; it never creates a
+global `nan` driver.
 
 The racing-number fallback never creates or merges a global driver. Its
 `session_entries.driver_id` remains null until a verified external identity becomes
@@ -102,6 +106,15 @@ reason. FastF1 uses process-global cache state, so cache activation and session
 loading are serialized with one process-local lock. The schedule loader uses the
 same serialized cache boundary. Cross-process job concurrency remains
 worker-orchestration work.
+
+The pinned FastF1 3.8.3 tyre-correction helper can raise `IndexError` when
+race timing contains bunched first-timestamp stint messages whose stint number
+exceeds the available pit-split brackets. The loader installs an instance-local
+compatibility wrapper. It first executes FastF1 unchanged; only after that exact
+`IndexError`, and only when the malformed bracket condition is present, it moves
+the out-of-range bunched messages to FastF1's existing one-day fallback boundary
+and retries the helper. Other `IndexError` failures still propagate. This keeps
+the full lap table instead of silently finalizing a result-only snapshot.
 
 The loader returns only the loaded session name, results table, laps table, and
 original request. It does not normalize or persist data itself.
@@ -217,12 +230,14 @@ Implemented:
 
 - Pure FastF1 results-and-laps normalization.
 - Deterministic entry-key construction.
+- Literal FastF1 `nan` driver-identity sentinel handling.
 - Null, scalar, integer, duration, decimal, boolean, and speed validation.
 - Race/sprint result-time normalization.
 - Lap-to-entry association and natural-key duplicate detection.
 - Deterministic 2018+ year/round/session archive requests.
 - Persistent FastF1 cache directory creation and activation.
 - Process-local serialization of FastF1 cache activation and session loading.
+- Instance-local malformed tyre-stint compatibility for pinned FastF1 3.8.3.
 - Explicit laps/messages loading with telemetry and weather disabled.
 - Database-derived season, round, and session-name loader requests.
 - Loaded-request and loaded-session-name verification before persistence.

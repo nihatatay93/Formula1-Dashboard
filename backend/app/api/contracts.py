@@ -132,6 +132,12 @@ class BackfillCoverage(ApiModel):
     valid_until: UtcDatetime | None
 
 
+class DeferredFutureEvent(ApiModel):
+    round_number: int = Field(ge=1)
+    event_name: str = Field(min_length=1)
+    scheduled_start_at: UtcDatetime
+
+
 class ActiveJobSummary(ApiModel):
     id: uuid.UUID
     status: IngestionStatus
@@ -203,6 +209,7 @@ class EnsureBackfillResponse(ApiModel):
     job: ActiveJobSummary | None
     eligible_session_count: int = Field(ge=0)
     newly_queued_session_count: int = Field(ge=0)
+    deferred_future_events: tuple[DeferredFutureEvent, ...] = ()
 
     @model_validator(mode="after")
     def validate_action_job_consistency(self) -> Self:

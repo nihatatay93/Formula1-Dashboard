@@ -54,6 +54,8 @@ References:
 ### Driver identity
 
 - `SessionResults.DriverId` is the Ergast/Jolpica driver identifier.
+- FastF1 3.8.3 can expose the literal string `nan` for missing historical
+  identities; this is a missing-value sentinel, not a verified driver ID.
 - The inspected values remained stable across seasons and team changes. Examples include `hamilton`, `alonso`, `leclerc`, and `max_verstappen`.
 - Racing number, abbreviation, display name, and team are attributes of a session entry, not safe global driver identifiers.
 - Modern live timing also exposes a `Reference` field, but equivalence between every live reference and Jolpica driver identifier has not been verified.
@@ -284,6 +286,8 @@ Their database-bound one-session composition is implemented in
 1. Unresolved driver identity:
    - Allow nullable `session_entries.driver_id`.
    - Use a deterministic session-local `entry_key`.
+   - Treat FastF1's literal case-insensitive `nan` identity sentinel as missing
+     and fall back to the canonical session-local racing number.
    - Never globally merge drivers by name, abbreviation, or racing number.
 2. Result timing:
    - Store normalized `elapsed_time_us`, `gap_to_leader_us`, and `gap_to_leader_laps`.

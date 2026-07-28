@@ -21,6 +21,7 @@ from app.ingestion.backfill_orchestration import (
     claim_next_archive_job_session,
 )
 from app.ingestion.fastf1_schedule import (
+    DeferredFutureEvent,
     NormalizedScheduledEvent,
     NormalizedScheduledSession,
     NormalizedSeasonSchedule,
@@ -364,8 +365,23 @@ def test_stale_refresh_appends_new_session_to_running_job(
 def test_future_sessions_refresh_coverage_without_creating_job(
     season_target: SeasonTarget,
 ) -> None:
+    available_schedule = schedule(
+        season_target.season_year,
+        ended=False,
+    )
+    deferred_event = DeferredFutureEvent(
+        round_number=2,
+        event_name="Future Grand Prix",
+        scheduled_start_at=datetime(2099, 4, 1, 10, tzinfo=UTC),
+    )
     loader = StubScheduleLoader(
-        [schedule(season_target.season_year, ended=False)]
+        [
+            NormalizedSeasonSchedule(
+                season_year=available_schedule.season_year,
+                events=available_schedule.events,
+                deferred_future_events=(deferred_event,),
+            )
+        ]
     )
 
     plan = ensure_season_backfill(
@@ -378,6 +394,7 @@ def test_future_sessions_refresh_coverage_without_creating_job(
     assert plan.eligible_session_ids == ()
     assert plan.job_id is None
     assert plan.job_created is False
+    assert plan.deferred_future_events == (deferred_event,)
 
 
 def test_unowned_pending_ingestion_does_not_create_empty_job(

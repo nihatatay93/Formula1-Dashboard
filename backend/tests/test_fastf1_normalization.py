@@ -230,6 +230,38 @@ def test_canonicalizes_driver_ids_and_racing_numbers() -> None:
     assert normalized.entries[0].racing_number == "1"
 
 
+def test_treats_fastf1_string_nan_driver_ids_as_missing() -> None:
+    first = result_row(
+        driver_number="34",
+        driver_id="nan",
+        abbreviation="LAT",
+        full_name="Nicholas Latifi",
+    )
+    second = result_row(
+        driver_number="36",
+        driver_id=" NAN ",
+        abbreviation="GIO",
+        full_name="Antonio Giovinazzi",
+        position=2,
+    )
+
+    normalized = normalize_fastf1_session(
+        pd.DataFrame([first, second]),
+        pd.DataFrame(),
+        session_name="Practice 1",
+    )
+
+    assert normalized.drivers == ()
+    assert [entry.entry_key for entry in normalized.entries] == [
+        "car-number:34",
+        "car-number:36",
+    ]
+    assert all(
+        entry.jolpica_driver_id is None
+        for entry in normalized.entries
+    )
+
+
 @pytest.mark.parametrize(
     ("rows", "message"),
     [

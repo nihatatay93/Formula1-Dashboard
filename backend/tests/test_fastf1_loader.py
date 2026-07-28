@@ -38,6 +38,42 @@ class FakeRequestBudget:
         self.reservations += 1
 
 
+class MalformedTyreInfoSession(FakeFastF1Session):
+    def __init__(self) -> None:
+        super().__init__()
+        self.repaired_tyre_info: pd.DataFrame | None = None
+
+    def _Session__fix_tyre_info(
+        self,
+        data: pd.DataFrame,
+        stint_split_times: list[pd.Timedelta],
+    ) -> pd.DataFrame:
+        first_time = data["Time"].iloc[0]
+        bracket_count = len(stint_split_times) + 2
+        first_stints = data.loc[
+            data["Time"] == first_time,
+            "Stint",
+        ].unique()
+        if any(int(stint) >= bracket_count for stint in first_stints):
+            raise IndexError("stint bracket is missing")
+        self.repaired_tyre_info = data
+        return data
+
+    def load(self, **options: bool) -> None:
+        first_time = pd.to_timedelta(1, unit="ms")
+        data = pd.DataFrame(
+            {
+                "Time": [first_time, first_time],
+                "Stint": [0, 3],
+            }
+        )
+        self._Session__fix_tyre_info(
+            data,
+            [pd.to_timedelta(20, unit="min")],
+        )
+        super().load(**options)
+
+
 @pytest.fixture(autouse=True)
 def reset_active_cache_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fastf1_loader, "_active_cache_path", None)
@@ -118,6 +154,36 @@ def test_reuses_cache_activation_for_repeated_loads(
     loader.load(FastF1SessionRequest(2024, 1, "Qualifying"))
 
     assert cache_calls == [str(tmp_path / "cache")]
+
+
+def test_repairs_bunched_stints_outside_fastf1_timing_brackets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = MalformedTyreInfoSession()
+    monkeypatch.setattr(
+        fastf1_loader.fastf1.Cache,
+        "enable_cache",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        fastf1_loader.fastf1,
+        "get_session",
+        lambda *_: session,
+    )
+
+    FastF1SessionLoader(tmp_path / "cache").load(
+        FastF1SessionRequest(2018, 14, "Race")
+    )
+
+    assert session.repaired_tyre_info is not None
+    repaired = session.repaired_tyre_info
+    assert repaired.loc[repaired["Stint"] == 0, "Time"].item() == (
+        pd.to_timedelta(1, unit="ms")
+    )
+    assert repaired.loc[repaired["Stint"] == 3, "Time"].item() == (
+        pd.to_timedelta(86_400_001, unit="ms")
+    )
 
 
 def test_switching_cache_paths_reactivates_fastf1_cache(

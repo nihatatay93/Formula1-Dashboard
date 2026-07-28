@@ -241,4 +241,12 @@ def _backfill_response(plan: SeasonBackfillPlan) -> EnsureBackfillResponse:
         job=job,
         eligible_session_count=len(plan.eligible_session_ids),
         newly_queued_session_count=len(plan.newly_queued_session_ids),
+        deferred_future_events=tuple(
+            {
+                "round_number": event.round_number,
+                "event_name": event.event_name,
+                "scheduled_start_at": event.scheduled_start_at,
+            }
+            for event in plan.deferred_future_events
+        ),
     )

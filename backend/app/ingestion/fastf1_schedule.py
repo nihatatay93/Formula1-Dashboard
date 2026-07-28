@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from numbers import Integral
@@ -62,9 +62,17 @@ class NormalizedScheduledEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class DeferredFutureEvent:
+    round_number: int
+    event_name: str
+    scheduled_start_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class NormalizedSeasonSchedule:
     season_year: int
     events: tuple[NormalizedScheduledEvent, ...]
+    deferred_future_events: tuple[DeferredFutureEvent, ...] = ()
 
 
 class FastF1ScheduleLoaderProtocol(Protocol):
@@ -91,12 +99,14 @@ class FastF1ScheduleLoader:
         cache_path: str | Path,
         *,
         request_budget: FastF1RequestBudgetProtocol | None = None,
+        now_provider: Callable[[], datetime] | None = None,
     ) -> None:
         self._cache_client = FastF1SessionLoader(
             cache_path,
             request_budget=request_budget,
         )
         self.cache_path = self._cache_client.cache_path
+        self._now_provider = now_provider or (lambda: datetime.now(UTC))
 
     def load(self, season_year: int) -> NormalizedSeasonSchedule:
         _validate_season_year(season_year)
@@ -129,8 +139,21 @@ class FastF1ScheduleLoader:
                 public_schedule,
                 meetings,
             )
+            observed_at = _aware_utc_datetime(
+                self._now_provider(),
+                "schedule observation timestamp",
+            )
             reconciled_meetings = list(meetings)
+            deferred_future_events: list[DeferredFutureEvent] = []
             for missing_event in missing_events:
+                deferred_event = _deferred_current_season_event(
+                    season_year=season_year,
+                    event=missing_event,
+                    observed_at=observed_at,
+                )
+                if deferred_event is not None:
+                    deferred_future_events.append(deferred_event)
+                    continue
                 try:
                     reconciled_meetings.append(
                         _load_missing_curated_event(
@@ -152,12 +175,22 @@ class FastF1ScheduleLoader:
                         f"for {season_year} {event_name}"
                     ) from error
 
-            return normalize_fastf1_schedule(
+            normalized = normalize_fastf1_schedule(
                 season_year=season_year,
                 meetings=reconciled_meetings,
                 round_numbers_by_event_name=(
                     round_numbers_by_event_name
                 )
+            )
+            return NormalizedSeasonSchedule(
+                season_year=normalized.season_year,
+                events=normalized.events,
+                deferred_future_events=tuple(
+                    sorted(
+                        deferred_future_events,
+                        key=lambda event: event.round_number,
+                    )
+                ),
             )
 
 
@@ -515,6 +548,81 @@ def _load_missing_curated_event(
         "Location": _optional_text(event.get("Location")),
         "Sessions": sessions,
     }
+
+
+def _deferred_current_season_event(
+    *,
+    season_year: int,
+    event: pd.Series,
+    observed_at: datetime,
+) -> DeferredFutureEvent | None:
+    if season_year != observed_at.year:
+        return None
+
+    round_number = _positive_integer(
+        event.get("RoundNumber"),
+        "curated event RoundNumber",
+    )
+    event_name = _required_text(
+        event.get("EventName"),
+        "curated event EventName",
+    )
+    session_starts = tuple(
+        _curated_utc_session_start(
+            event,
+            index=index,
+            event_name=event_name,
+        )
+        for index in range(1, 6)
+        if _optional_text(event.get(f"Session{index}")) is not None
+    )
+    if not session_starts:
+        raise FastF1ScheduleNormalizationError(
+            f"curated event {event_name!r} has no usable session starts"
+        )
+
+    scheduled_start_at = min(session_starts)
+    if scheduled_start_at <= observed_at:
+        return None
+    return DeferredFutureEvent(
+        round_number=round_number,
+        event_name=event_name,
+        scheduled_start_at=scheduled_start_at,
+    )
+
+
+def _curated_utc_session_start(
+    event: pd.Series,
+    *,
+    index: int,
+    event_name: str,
+) -> datetime:
+    value = event.get(f"Session{index}DateUtc")
+    if isinstance(value, pd.Timestamp):
+        if pd.isna(value):
+            value = None
+        else:
+            value = value.to_pydatetime()
+    if not isinstance(value, datetime):
+        raise FastF1ScheduleNormalizationError(
+            f"curated event {event_name!r} session {index} "
+            "has no usable UTC start"
+        )
+    if value.tzinfo is None or value.utcoffset() is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _aware_utc_datetime(value: object, field: str) -> datetime:
+    if (
+        not isinstance(value, datetime)
+        or value.tzinfo is None
+        or value.utcoffset() is None
+    ):
+        raise FastF1ScheduleNormalizationError(
+            f"{field} must be timezone-aware"
+        )
+    return value.astimezone(UTC)
 
 
 def _validate_season_year(value: object) -> None:

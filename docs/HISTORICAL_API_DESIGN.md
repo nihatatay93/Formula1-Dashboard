@@ -51,6 +51,8 @@ The command is idempotent by season:
 - Existing active work is returned rather than duplicated.
 - Only missing eligible child rows are appended.
 - No job is created when no session is currently archive eligible.
+- Available exact current-season sessions are planned even when later future
+  events have not yet appeared in FastF1's private timing index.
 
 The HTTP route and its connection to the season planner are implemented.
 
@@ -82,7 +84,14 @@ Accepted response:
     "status": "pending"
   },
   "eligible_session_count": 72,
-  "newly_queued_session_count": 72
+  "newly_queued_session_count": 72,
+  "deferred_future_events": [
+    {
+      "round_number": 12,
+      "event_name": "Dutch Grand Prix",
+      "scheduled_start_at": "2026-08-21T10:30:00Z"
+    }
+  ]
 }
 ```
 
@@ -92,6 +101,13 @@ Accepted response:
 - `job_reused`
 - `coverage_refreshed`
 - `no_action`
+
+`deferred_future_events` is ordered by round and contains current-season
+curated events whose first session is still in the future but whose exact
+FastF1 timing boundaries have not yet been published. These events are not
+treated as errors, are not queued, and are reconsidered after the six-hour
+current-season coverage TTL. Past-season omissions and current-season events
+that have already started still require exact timing metadata.
 
 The schedule check is intentionally synchronous for this first slice; the
 expensive per-session FastF1 work remains in the worker. Schedule latency will be

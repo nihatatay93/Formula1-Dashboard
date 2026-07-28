@@ -10,6 +10,7 @@ from threading import Lock
 from typing import Any, Protocol
 
 import fastf1
+import pandas as pd
 from fastf1 import req as fastf1_req
 from pandas import DataFrame
 
@@ -128,6 +129,7 @@ class FastF1SessionLoader:
                     request.round_number,
                     request.session_identifier.strip(),
                 )
+                _install_tyre_info_compatibility(session)
                 session.load(
                     laps=True,
                     telemetry=False,
@@ -201,6 +203,75 @@ class FastF1SessionLoader:
             ) from error
 
         _active_cache_path = self.cache_path
+
+
+def _install_tyre_info_compatibility(session: object) -> None:
+    """Contain a pinned FastF1 3.8.3 malformed-stint parser defect."""
+
+    attribute = "_Session__fix_tyre_info"
+    original = getattr(session, attribute, None)
+    if not callable(original):
+        return
+
+    def compatible_tyre_info(
+        data: DataFrame,
+        stint_split_times: list[Any],
+    ) -> DataFrame:
+        pristine = data.copy()
+        try:
+            return original(data, stint_split_times)
+        except IndexError:
+            repaired = _repair_bunched_stint_timestamps(
+                pristine,
+                stint_split_times,
+            )
+            if repaired is pristine:
+                raise
+            return original(repaired, stint_split_times)
+
+    setattr(session, attribute, compatible_tyre_info)
+
+
+def _repair_bunched_stint_timestamps(
+    data: DataFrame,
+    stint_split_times: list[Any],
+) -> DataFrame:
+    required_columns = {"Time", "Stint"}
+    if (
+        data.empty
+        or not stint_split_times
+        or not required_columns.issubset(data.columns)
+    ):
+        return data
+
+    first_time = data["Time"].iloc[0]
+    first_time_mask = data["Time"] == first_time
+    first_stints = data.loc[first_time_mask, "Stint"].dropna().unique()
+    bracket_count = len(stint_split_times) + 2
+    invalid_stints: list[Any] = []
+
+    for stint in first_stints:
+        if isinstance(stint, bool):
+            return data
+        try:
+            normalized_stint = int(stint)
+        except (TypeError, ValueError, OverflowError):
+            return data
+        if normalized_stint != stint or normalized_stint < 0:
+            return data
+        if normalized_stint >= bracket_count:
+            invalid_stints.append(stint)
+
+    if not invalid_stints:
+        return data
+
+    repaired = data.copy()
+    invalid_mask = first_time_mask & repaired["Stint"].isin(invalid_stints)
+    repaired.loc[invalid_mask, "Time"] = pd.to_timedelta(
+        86_400_001,
+        unit="ms",
+    )
+    return repaired
 
 
 @contextmanager

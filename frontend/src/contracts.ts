@@ -110,6 +110,11 @@ export interface EnsureBackfillResponse {
   job: ActiveJobSummary | null;
   eligible_session_count: number;
   newly_queued_session_count: number;
+  deferred_future_events: {
+    round_number: number;
+    event_name: string;
+    scheduled_start_at: string;
+  }[];
 }
 
 export interface JobProgressCounts {
