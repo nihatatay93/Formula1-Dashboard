@@ -328,6 +328,24 @@ Key decisions:
 
 The persisted `session_ingestions.status` is authoritative for session ingestion progress.
 
+### Backfill job status
+
+The implemented aggregation transaction derives one parent job from its locked
+`backfill_job_sessions` rows:
+
+1. No child rows or only unstarted pending rows: `pending`.
+2. Any pending or running child after work has started: `running`.
+3. Every child completed: `completed`.
+4. No pending/running child and at least one failed child: `failed`.
+
+Job-session rows are locked in deterministic session order before the parent job,
+matching the child-before-parent lock order used by worker state transitions.
+Terminal aggregation clears the parent heartbeat and records PostgreSQL time in
+`completed_at`. A terminal parent is immutable, so repeated aggregation is
+idempotent. Failed aggregation uses one fixed parent diagnostic and never copies
+raw or child-specific failure content. The returned aggregation summary contains
+pending, running, completed, failed, and total counts.
+
 ### Year status
 
 Year status is derived from coverage, the active job, and session states:
@@ -355,6 +373,8 @@ The exact precedence will be implemented once API response tests are written.
 - The implemented orchestration service claims eligible
   `backfill_job_sessions` rows with `FOR UPDATE SKIP LOCKED` and synchronizes
   job-session state with persistent session-ingestion state.
+- Parent-job aggregation locks every job-session before the parent, preventing a
+  terminal decision from racing an uncommitted child transition.
 - A completed session is committed independently, so later sessions failing does not hide completed data.
 - Re-running a completed session updates/upserts its owned rows instead of blindly inserting duplicates.
 - Destructive replacement of a session dataset, if required, must happen inside one transaction after the replacement data has been validated.

@@ -23,6 +23,7 @@ two database migrations:
 - Ownership-fenced heartbeat updates and atomic claimed archive completion
 - Bounded stale-lease recovery with retry-budget and stale-worker fencing
 - Deterministic season-coverage and archive-correction eligibility decisions
+- Transactional parent-job aggregation from locked session outcomes
 - Docker Compose health checks
 
 End-to-end year-level FastF1 backfill orchestration and worker execution,

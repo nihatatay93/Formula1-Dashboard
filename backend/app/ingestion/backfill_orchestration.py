@@ -48,6 +48,10 @@ class BackfillClaimOwnershipError(BackfillOrchestrationError):
     """Raised when a failure transition no longer owns its claimed rows."""
 
 
+class BackfillJobNotFoundError(BackfillOrchestrationError):
+    """Raised when a parent job cannot be aggregated."""
+
+
 @dataclass(frozen=True, slots=True)
 class ClaimedArchiveJobSession:
     job_id: uuid.UUID
@@ -85,10 +89,88 @@ class RecoveredArchiveLease:
     failure: SanitizedArchiveFailure
 
 
+@dataclass(frozen=True, slots=True)
+class BackfillJobAggregation:
+    job_id: uuid.UUID
+    status: str
+    total_sessions: int
+    pending_sessions: int
+    running_sessions: int
+    completed_sessions: int
+    failed_sessions: int
+    aggregated_at: datetime
+    completed_at: datetime | None
+
+
 WORKER_LEASE_EXPIRED_FAILURE = SanitizedArchiveFailure(
     code="worker_lease_expired",
     message="The worker lease expired before session ingestion completed.",
 )
+
+SESSION_INGESTION_FAILED = SanitizedArchiveFailure(
+    code="session_ingestion_failed",
+    message="One or more session ingestions failed.",
+)
+
+
+def aggregate_backfill_job(
+    database: Session,
+    *,
+    job_id: uuid.UUID,
+) -> BackfillJobAggregation:
+    """Aggregate one parent job from its locked job-session states."""
+
+    _require_new_transaction(database)
+    if not isinstance(job_id, uuid.UUID):
+        raise BackfillOrchestrationError("job_id must be a UUID")
+
+    with database.begin():
+        job_sessions = database.scalars(
+            select(BackfillJobSession)
+            .where(BackfillJobSession.job_id == job_id)
+            .order_by(BackfillJobSession.session_id)
+            .with_for_update()
+        ).all()
+        job = _get_job_for_update(database, job_id)
+        if job is None:
+            raise BackfillJobNotFoundError(
+                f"backfill job {job_id} does not exist"
+            )
+
+        counts = {
+            status: sum(
+                job_session.status == status
+                for job_session in job_sessions
+            )
+            for status in ("pending", "running", "completed", "failed")
+        }
+        aggregated_at = _database_now(database)
+
+        if job.status not in {"completed", "failed"}:
+            status = _derive_active_job_status(
+                job=job,
+                job_sessions=job_sessions,
+                counts=counts,
+            )
+            _apply_job_aggregation(
+                job=job,
+                job_sessions=job_sessions,
+                counts=counts,
+                status=status,
+                aggregated_at=aggregated_at,
+            )
+
+        return BackfillJobAggregation(
+            job_id=job.id,
+            status=job.status,
+            total_sessions=len(job_sessions),
+            pending_sessions=counts["pending"],
+            running_sessions=counts["running"],
+            completed_sessions=counts["completed"],
+            failed_sessions=counts["failed"],
+            aggregated_at=aggregated_at,
+            completed_at=job.completed_at,
+        )
 
 
 def claim_next_archive_job_session(
@@ -437,6 +519,65 @@ def transition_archive_job_failure(
             next_retry_at=next_retry_at,
             failure=failure,
         )
+
+
+def _derive_active_job_status(
+    *,
+    job: BackfillJob,
+    job_sessions: list[BackfillJobSession],
+    counts: dict[str, int],
+) -> str:
+    if not job_sessions:
+        return job.status
+    if counts["pending"] or counts["running"]:
+        has_started = (
+            job.status == "running"
+            or job.started_at is not None
+            or counts["running"] > 0
+            or counts["completed"] > 0
+            or counts["failed"] > 0
+            or any(item.attempt_count > 0 for item in job_sessions)
+        )
+        return "running" if has_started else "pending"
+    if counts["failed"]:
+        return "failed"
+    return "completed"
+
+
+def _apply_job_aggregation(
+    *,
+    job: BackfillJob,
+    job_sessions: list[BackfillJobSession],
+    counts: dict[str, int],
+    status: str,
+    aggregated_at: datetime,
+) -> None:
+    job.status = status
+    if status != "pending":
+        child_starts = tuple(
+            item.started_at
+            for item in job_sessions
+            if item.started_at is not None
+        )
+        job.started_at = (
+            job.started_at
+            or (min(child_starts) if child_starts else None)
+            or aggregated_at
+        )
+
+    if status in {"completed", "failed"}:
+        job.heartbeat_at = None
+        job.completed_at = job.completed_at or aggregated_at
+
+    if counts["failed"]:
+        job.last_error_code = SESSION_INGESTION_FAILED.code
+        job.last_error_message = SESSION_INGESTION_FAILED.message
+    elif (
+        status == "completed"
+        or job.last_error_code == SESSION_INGESTION_FAILED.code
+    ):
+        job.last_error_code = None
+        job.last_error_message = None
 
 
 def _require_new_transaction(database: Session) -> None:

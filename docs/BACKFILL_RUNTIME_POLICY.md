@@ -1,6 +1,6 @@
 # Backfill Runtime Policy
 
-Status: **accepted; settings through freshness eligibility implemented**
+Status: **accepted; settings through parent-job aggregation implemented**
 Date: **2026-07-28**
 
 ## Purpose
@@ -16,14 +16,15 @@ It covers:
 - Crash recovery and stale-worker fencing.
 - Current-season schedule and archive freshness.
 
-It does not define job aggregation, cancellation, REST APIs, or UI behavior.
+It does not define cancellation, REST APIs, or UI behavior.
 Typed settings, exception classification, deterministic backoff calculation,
 transactional job-session claiming, and synchronized retry/terminal failure
 transitions are implemented. Ownership-fenced heartbeat writes and claim-aware
 atomic completion are also implemented. Bounded stale-lease recovery is
 implemented. Deterministic coverage and archive-correction eligibility evaluation
-is implemented. Worker heartbeat/recovery scheduling, job aggregation, and
-freshness-triggered job creation remain unimplemented.
+is implemented. Transactional parent-job aggregation is implemented. Worker
+heartbeat/recovery scheduling and freshness-triggered job creation remain
+unimplemented.
 
 ## Recommended Configuration
 
@@ -308,6 +309,30 @@ Both decisions require timezone-aware inputs and perform no database writes, job
 creation, or upstream calls. Orchestration must supply PostgreSQL time and persist
 or act on the returned decision separately.
 
+## Parent-Job Aggregation
+
+The implemented `aggregate_backfill_job` transaction locks every job-session row
+in deterministic session order before locking its parent job. This matches the
+child-before-parent lock order used by claim, failure, heartbeat, recovery, and
+completion operations.
+
+Parent status is monotonic:
+
+- An empty or wholly unstarted job remains `pending`.
+- Once work has started, the job remains `running` while any child is `pending`
+  or `running`, including retry backoff periods.
+- The job becomes `completed` only when every child is completed.
+- The job becomes `failed` only when no child remains pending/running and at least
+  one child failed. Completed children remain usable even when the job fails.
+- A terminal parent is immutable; repeated aggregation preserves its terminal
+  status and completion timestamp.
+
+Terminal aggregation clears the parent heartbeat and assigns one PostgreSQL
+completion timestamp. Failed child diagnostics are never copied to the parent;
+the parent receives the fixed `session_ingestion_failed` code and message.
+Aggregation returns all four child counts for future progress reporting. An empty
+job never completes vacuously.
+
 ## Implementation Sequence
 
 1. Implemented: typed runtime settings and validation for the accepted values.
@@ -321,6 +346,8 @@ or act on the returned decision separately.
    attempt exhaustion, completed-session preservation, and stale-worker fencing.
 6. Implemented: current-season coverage and correction-checkpoint eligibility
    functions with UTC and exact-boundary validation.
-7. Add parent-job aggregation for session outcomes.
+7. Implemented: transactional parent-job aggregation with monotonic status,
+   deterministic locking, fixed diagnostics, terminal idempotency, and progress
+   counts.
 8. Connect the placeholder worker only after the above behavior is covered by
    PostgreSQL integration tests.

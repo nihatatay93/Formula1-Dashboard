@@ -16,7 +16,7 @@ The system is intended to:
 
 ## Current Architecture
 
-The local-development scaffold, first two database migrations, locked FastF1 runtime, and a managed database-bound one-session FastF1 archive vertical slice are implemented. The managed slice adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. Validated runtime settings, retryable/terminal exception classification, deterministic equal-jitter backoff calculations, transactional job-session claiming, synchronized retry/terminal failure transitions, ownership-fenced heartbeat writes, claim-aware atomic completion, bounded stale-lease recovery, and deterministic season/session freshness eligibility are implemented. Claims use PostgreSQL row locking and return job-attempt and monotonic session-attempt ownership tokens; heartbeat, failure, and completion writes validate both tokens. Recovery fences the lost claim by leaving running state before a retry can be claimed. Freshness functions evaluate UTC coverage expiry, archive grace, and correction checkpoints without database writes or job creation. Worker heartbeat/recovery scheduling, parent-job aggregation, and freshness-triggered orchestration are not yet implemented. The database contains the backfill control plane and normalized sporting-data tables. Worker job execution, telemetry, and live timing ingestion are not yet implemented.
+The local-development scaffold, first two database migrations, locked FastF1 runtime, and a managed database-bound one-session FastF1 archive vertical slice are implemented. The managed slice adds observable pending/running/completed/failed session-ingestion state and fixed sanitized failure diagnostics around serialized cache-backed loading, pure sporting-data normalization, and atomic archive persistence. Validated runtime settings, retryable/terminal exception classification, deterministic equal-jitter backoff calculations, transactional job-session claiming, synchronized retry/terminal failure transitions, ownership-fenced heartbeat writes, claim-aware atomic completion, bounded stale-lease recovery, deterministic season/session freshness eligibility, and transactional parent-job aggregation are implemented. Claims use PostgreSQL row locking and return job-attempt and monotonic session-attempt ownership tokens; heartbeat, failure, and completion writes validate both tokens. Recovery fences the lost claim by leaving running state before a retry can be claimed. Freshness functions evaluate UTC coverage expiry, archive grace, and correction checkpoints without database writes or job creation. Aggregation locks all child rows before the parent, preserves monotonic job state, and returns progress counts. Worker heartbeat/recovery scheduling, aggregation invocation, and freshness-triggered orchestration are not yet implemented. The database contains the backfill control plane and normalized sporting-data tables. Worker job execution, telemetry, and live timing ingestion are not yet implemented.
 
 Implemented services in `compose.yaml`:
 
@@ -35,6 +35,7 @@ Implemented supporting infrastructure:
 - Claimed archive attempts can refresh all three heartbeat fields with one PostgreSQL timestamp and complete both session states atomically with sporting-data replacement.
 - Expired synchronized leases can be recovered in bounded `SKIP LOCKED` batches without deleting or replacing a previous successful archive snapshot.
 - Pure policy decisions identify missing, fresh, or stale season coverage and initial, checkpoint, pending, or stable archive eligibility from PostgreSQL timestamps.
+- Parent jobs can be transactionally aggregated from locked session outcomes into monotonic pending, running, completed, or failed state with progress counts.
 - Host-side Python editing uses a native macOS Python 3.13 environment synchronized from `backend/uv.lock`; Docker-created virtual environments are not reused by the host editor.
 - The backend uses Python 3.13, `uv`, FastAPI, FastF1 3.8.3, pandas, SQLAlchemy 2, Alembic, psycopg, Uvicorn, pytest, and Ruff.
 - The frontend uses Node.js 24, npm, React, TypeScript, and Vite.
@@ -115,12 +116,12 @@ Formula1-Dashboard/
 
 - `backend/app/`: FastAPI and worker process source.
 - `backend/app/db/`: SQLAlchemy metadata, connection configuration, session factory, and Revision 1 and 2 models.
-- `backend/app/ingestion/`: Managed attempt state, transactional backfill claiming/failure transitions, database-bound one-session orchestration, cache-backed loading, pure upstream-to-domain normalization, atomic archive persistence, and runtime/freshness policy primitives.
+- `backend/app/ingestion/`: Managed attempt state, transactional backfill claiming/failure/aggregation transitions, database-bound one-session orchestration, cache-backed loading, pure upstream-to-domain normalization, atomic archive persistence, and runtime/freshness policy primitives.
 - `backend/alembic/`: Alembic environment and reviewed migration revisions.
 - `backend/tests/`: Backend tests.
 - `frontend/src/`: React dashboard source.
 - `docs/`: Architecture, decisions, and persistent project context.
-- `docs/BACKFILL_RUNTIME_POLICY.md`: Accepted retry, backoff, heartbeat, lease recovery, fencing, and current-season freshness policy; behavior through pure freshness eligibility is implemented.
+- `docs/BACKFILL_RUNTIME_POLICY.md`: Accepted retry, backoff, heartbeat, lease recovery, fencing, current-season freshness, and parent aggregation policy; behavior through parent aggregation is implemented.
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic conventions, migration phases, tables, constraints, indexes, and recovery behavior.
 - `docs/FASTF1_INGESTION_CONTRACT.md`: Accepted one-session validation, identity, atomic replacement, failure, and idempotency contract.
 - `docs/SPORTING_DATA_DESIGN.md`: Evidence-based implemented Revision 2 driver, entry, result, and lap schema.
@@ -423,6 +424,13 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: implemented
 
+### Parent-job aggregation
+
+- Decision: Lock every job-session in deterministic session order before its parent job. Keep unstarted work pending, keep started jobs running while any child remains pending/running, complete only when every child completed, and fail only when all children are terminal and at least one failed. Preserve terminal status/timestamp on repeated aggregation and use one fixed parent failure diagnostic instead of copying child errors.
+- Rationale: Prevent terminal parent decisions from racing child transitions, preserve a monotonic UI-facing lifecycle through retry backoff, and expose safe progress counts without leaking operational failure details.
+- Date: 2026-07-28
+- Status: implemented
+
 ## Database Model
 
 Alembic revision `20260727_0001` implements the backfill control plane:
@@ -431,7 +439,7 @@ Alembic revision `20260727_0001` implements the backfill control plane:
 - `events`: Championship events keyed internally by `BIGINT IDENTITY`, linked to `seasons`, and unique by `(season_year, round_number)`.
 - `sessions`: Event sessions keyed internally by `BIGINT IDENTITY`, linked to `events`, and unique by `(event_id, session_key)`.
 - `session_ingestions`: One persistent ingestion-state row per session, including status, source, provisional/finalized state, attempts, lifecycle timestamps, retry eligibility, heartbeat, and sanitized error fields. Direct managed archive attempts, orchestrated claims/failures, ownership-fenced heartbeat updates, claim-aware completion, and stale-lease recovery are implemented.
-- `backfill_jobs`: UUID year-level jobs linked to a season. A partial unique index on `season_year` for `pending` and `running` rows prevents two active jobs for one year.
+- `backfill_jobs`: UUID year-level jobs linked to a season. A partial unique index on `season_year` for `pending` and `running` rows prevents two active jobs for one year. Transactional aggregation from locked job-session rows is implemented.
 - `backfill_job_sessions`: Per-job, per-session progress with composite primary key `(job_id, session_id)`, attempt and lifecycle fields, and worker-claim/progress indexes.
 
 Implemented constraints and indexes:
@@ -518,7 +526,7 @@ Accepted behavior:
 13. FastF1 cache must be used, and aggressive parallel requests must be avoided.
 14. Telemetry must be queried separately by session, driver, and lap.
 
-The accepted one-session replacement and attempt contract is documented in `docs/FASTF1_INGESTION_CONTRACT.md`. A managed archive attempt commits running state and increments its attempt count before calling the vertical slice. The slice derives one request from database session identity, loads through the persistent serialized cache, verifies loaded identity, normalizes results and laps, and atomically replaces the target archive snapshot. Success marks ingestion completed/finalized with the snapshot. Failure is re-raised after a separate owning-attempt transaction stores only a fixed sanitized code and message; a previous completed snapshot and its timestamps remain available. The runtime policy in `docs/BACKFILL_RUNTIME_POLICY.md` is accepted. Its validated settings, original-exception retry classification, retry-budget validation, deterministic equal-jitter schedule calculations, and pure freshness eligibility decisions are implemented. The orchestration layer atomically claims eligible job-session and persistent-session state, starts the parent job, increments the two distinct attempt counters, records an initial database-clock heartbeat, synchronizes retryable or terminal failures, and exposes an ownership-fenced heartbeat transaction. The one-session vertical slice accepts an optional claim. Claim-aware persistence validates both ownership tokens before sporting writes and completes the job-session and persistent session in the same transaction as the archive snapshot. Bounded stale-lease recovery moves abandoned synchronized state to pending with normal backoff or to failed after attempt four, while preserving any prior completed snapshot and fencing the original worker. Freshness decisions use PostgreSQL timestamps to classify season coverage and session archive/correction eligibility without writing state or creating jobs. The direct non-job path remains supported. Worker heartbeat/recovery scheduling, parent-job aggregation, freshness-triggered job creation, and worker processing are not implemented.
+The accepted one-session replacement and attempt contract is documented in `docs/FASTF1_INGESTION_CONTRACT.md`. A managed archive attempt commits running state and increments its attempt count before calling the vertical slice. The slice derives one request from database session identity, loads through the persistent serialized cache, verifies loaded identity, normalizes results and laps, and atomically replaces the target archive snapshot. Success marks ingestion completed/finalized with the snapshot. Failure is re-raised after a separate owning-attempt transaction stores only a fixed sanitized code and message; a previous completed snapshot and its timestamps remain available. The runtime policy in `docs/BACKFILL_RUNTIME_POLICY.md` is accepted. Its validated settings, original-exception retry classification, retry-budget validation, deterministic equal-jitter schedule calculations, and pure freshness eligibility decisions are implemented. The orchestration layer atomically claims eligible job-session and persistent-session state, starts the parent job, increments the two distinct attempt counters, records an initial database-clock heartbeat, synchronizes retryable or terminal failures, and exposes an ownership-fenced heartbeat transaction. The one-session vertical slice accepts an optional claim. Claim-aware persistence validates both ownership tokens before sporting writes and completes the job-session and persistent session in the same transaction as the archive snapshot. Bounded stale-lease recovery moves abandoned synchronized state to pending with normal backoff or to failed after attempt four, while preserving any prior completed snapshot and fencing the original worker. Parent aggregation locks child rows before the job, applies monotonic status precedence, preserves terminal timestamps, records fixed aggregate diagnostics, and returns all progress counts. Freshness decisions use PostgreSQL timestamps to classify season coverage and session archive/correction eligibility without writing state or creating jobs. The direct non-job path remains supported. Worker heartbeat/recovery scheduling, aggregation invocation, freshness-triggered job creation, and worker processing are not implemented.
 
 ## Live Timing Design
 
@@ -598,23 +606,24 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Added 10 PostgreSQL lease-recovery and resumed-stale-worker tests and verified the complete 141-test suite against an isolated PostgreSQL 17 database.
 - Implemented pure UTC-aware season-coverage and archive-ingestion eligibility decisions for coverage TTLs, the post-session grace period, correction checkpoints, late scans, and stable archives.
 - Added 24 focused freshness-policy tests and verified the complete 165-test suite against an isolated PostgreSQL 17 database.
+- Implemented transactional parent-job aggregation with deterministic child-before-parent locking, monotonic status precedence, progress counts, fixed failure diagnostics, and terminal idempotency.
+- Added 13 PostgreSQL aggregation tests, including row-lock serialization, and verified the complete 178-test suite against an isolated PostgreSQL 17 database.
 
 No end-to-end year-level FastF1 backfill orchestration, worker job execution, telemetry, or live timing feature has been completed.
 
 ## Work in Progress
 
-- No development change remains in progress after freshness eligibility.
+- No development change remains in progress after parent-job aggregation.
 
 ## Next Steps
 
-1. Add parent-job aggregation for pending, running, completed, and failed session outcomes.
-2. Connect the placeholder worker and schedule heartbeat/recovery calls every 30 seconds after the remaining orchestration behavior has PostgreSQL integration coverage.
-3. Connect freshness decisions to schedule discovery and idempotent job creation.
-4. Decide whether manual backfill cancellation belongs in the first phase.
-5. Add season coverage and job-progress REST APIs.
-6. Add the basic season selection and progress UI.
-7. Measure telemetry volume before deciding on TimescaleDB.
-8. Design SignalR live timing and reconciliation separately.
+1. Connect the placeholder worker to claim, execute, heartbeat, recover, fail/complete, and aggregate one FastF1 session at a time.
+2. Connect freshness decisions to schedule discovery and idempotent job creation.
+3. Decide whether manual backfill cancellation belongs in the first phase.
+4. Add season coverage and job-progress REST APIs.
+5. Add the basic season selection and progress UI.
+6. Measure telemetry volume before deciding on TimescaleDB.
+7. Design SignalR live timing and reconciliation separately.
 
 ## Run and Test Commands
 
@@ -649,7 +658,7 @@ uv sync --frozen
 .venv/bin/pytest tests/test_archive_attempt.py
 ```
 
-Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The complete suite passed with 165 tests against an isolated PostgreSQL 17 database after freshness-policy coverage was added.
+Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The complete suite passed with 178 tests against an isolated PostgreSQL 17 database after parent-job aggregation coverage was added.
 
 ## Known Issues and Technical Debt
 
@@ -664,6 +673,7 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - Claim-aware completion is connected through the one-session vertical slice; heartbeat and failure transactions are available around it, but no worker invokes this execution flow yet.
 - Recovery deliberately skips inconsistent rows whose persistent session is missing, owned by another source, completed, non-running, or has a fresh heartbeat. Such rows can remain running at job-session level until a future reconciliation policy is implemented.
 - Freshness eligibility is pure and verified but is not yet connected to schedule discovery, database updates, or idempotent job creation.
+- Parent-job aggregation is callable and verified but is not yet invoked automatically after worker completion, failure, or recovery transitions.
 - Season/backfill API paths and response schemas have not been finalized.
 - FastF1 ingestion time and storage volume have not been measured.
 - Live SignalR protocol and reconciliation rules have not been designed.
@@ -684,7 +694,7 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `backend/app/db/base.py`: Shared SQLAlchemy metadata and timestamp mixin.
 - `backend/app/db/models/`: Revision 1 control-plane and Revision 2 sporting-data SQLAlchemy models.
 - `backend/app/ingestion/archive_attempt.py`: Pending/running/failed archive attempt transitions, attempt counting, overlap protection, and fixed sanitized failure mappings.
-- `backend/app/ingestion/backfill_orchestration.py`: Transactional job-session claiming, synchronized persistent state, fenced heartbeat updates, retry/terminal failure transitions, stale-lease recovery, and ownership-token validation.
+- `backend/app/ingestion/backfill_orchestration.py`: Transactional job-session claiming, synchronized persistent state, fenced heartbeat updates, retry/terminal failure transitions, stale-lease recovery, parent-job aggregation, and ownership-token validation.
 - `backend/app/ingestion/archive_ingestion.py`: Database-target lookup, FastF1 request derivation, loaded-identity validation, normalization, and persistence composition.
 - `backend/app/ingestion/fastf1_loader.py`: Deterministic, cache-backed, process-serialized one-session FastF1 loading.
 - `backend/app/ingestion/fastf1_normalization.py`: Pure FastF1 results-and-laps normalization and validation.
@@ -692,7 +702,7 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `backend/app/ingestion/archive_persistence.py`: Atomic normalized archive upserts, stale-row replacement, source/identity guards, optional claim fencing, and synchronized completion.
 - `backend/app/ingestion/runtime_policy.py`: Validated runtime settings, retry classification, SQLSTATE handling, and deterministic equal-jitter retry schedules.
 - `backend/tests/test_archive_attempt.py`: Stable failure-code and fixed secret-free message mapping coverage.
-- `backend/tests/test_backfill_orchestration.py`: PostgreSQL claim locking, heartbeat synchronization, retry, lease recovery, source protection, rollback, and ownership-token coverage.
+- `backend/tests/test_backfill_orchestration.py`: PostgreSQL claim locking, heartbeat synchronization, retry, lease recovery, parent aggregation, row-lock serialization, source protection, rollback, and ownership-token coverage.
 - `backend/tests/test_archive_persistence.py`: PostgreSQL transactional persistence, idempotency, stale replacement, source protection, and rollback coverage.
 - `backend/tests/test_archive_ingestion.py`: PostgreSQL one-session vertical-slice identity, idempotency, and pre-persistence failure coverage.
 - `backend/tests/test_database_integration.py`: PostgreSQL constraint and index integration coverage.
@@ -709,6 +719,7 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 
 ## Change Log
 
+- 2026-07-28 — Implemented and verified transactional parent-job aggregation with monotonic state and progress counts.
 - 2026-07-28 — Implemented and verified pure current-season coverage and archive correction-checkpoint eligibility decisions.
 - 2026-07-28 — Implemented and verified bounded stale-lease recovery with normal retry policy and resumed-worker fencing.
 - 2026-07-28 — Implemented and verified ownership-fenced heartbeat writes and claim-aware atomic archive completion.

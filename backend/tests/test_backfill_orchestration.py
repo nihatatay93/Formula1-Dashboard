@@ -1,8 +1,11 @@
 import os
 import uuid
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from threading import Event
 
 import pytest
 from sqlalchemy import Engine, create_engine, select, text
@@ -12,11 +15,15 @@ from app.db.engine import sqlalchemy_database_url
 from app.db.models import BackfillJob, BackfillJobSession, SessionIngestion
 from app.ingestion.archive_persistence import ArchiveSourceConflictError
 from app.ingestion.backfill_orchestration import (
+    SESSION_INGESTION_FAILED,
     WORKER_LEASE_EXPIRED_FAILURE,
     BackfillClaimOwnershipError,
+    BackfillJobAggregation,
+    BackfillJobNotFoundError,
     BackfillOrchestrationError,
     BackfillOrchestrationTransactionError,
     BackfillPersistentStateConflictError,
+    aggregate_backfill_job,
     claim_next_archive_job_session,
     heartbeat_archive_job_session,
     recover_stale_archive_job_sessions,
@@ -274,6 +281,51 @@ def expire_lease(
             {
                 "session_id": session_id,
                 "minutes": minutes,
+            },
+        )
+
+
+def set_job_session_status(
+    target: OrchestrationTarget,
+    session_id: int,
+    *,
+    status: str,
+    attempt_count: int = 1,
+    last_error_code: str | None = None,
+    last_error_message: str | None = None,
+) -> None:
+    with target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE backfill_job_sessions
+                SET status = :status,
+                    attempt_count = :attempt_count,
+                    started_at = CASE
+                        WHEN :attempt_count > 0 THEN clock_timestamp()
+                        ELSE NULL
+                    END,
+                    heartbeat_at = CASE
+                        WHEN :status = 'running' THEN clock_timestamp()
+                        ELSE NULL
+                    END,
+                    completed_at = CASE
+                        WHEN :status = 'completed' THEN clock_timestamp()
+                        ELSE NULL
+                    END,
+                    last_error_code = :last_error_code,
+                    last_error_message = :last_error_message
+                WHERE job_id = :job_id
+                  AND session_id = :session_id
+                """
+            ),
+            {
+                "job_id": target.job_id,
+                "session_id": session_id,
+                "status": status,
+                "attempt_count": attempt_count,
+                "last_error_code": last_error_code,
+                "last_error_message": last_error_message,
             },
         )
 
@@ -1173,3 +1225,348 @@ def test_orchestration_operations_require_transaction_ownership(
                 match="own",
             ):
                 claim_next_archive_job_session(database)
+
+
+def test_aggregation_keeps_an_empty_job_pending(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    with orchestration_target.session_factory() as database:
+        aggregation = aggregate_backfill_job(
+            database,
+            job_id=orchestration_target.job_id,
+        )
+
+    assert aggregation.status == "pending"
+    assert aggregation.total_sessions == 0
+    assert aggregation.pending_sessions == 0
+    assert aggregation.running_sessions == 0
+    assert aggregation.completed_sessions == 0
+    assert aggregation.failed_sessions == 0
+    assert aggregation.completed_at is None
+
+
+def test_aggregation_keeps_unstarted_pending_sessions_pending(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    for session_id in orchestration_target.session_ids[:2]:
+        queue_session(orchestration_target, session_id)
+
+    with orchestration_target.session_factory() as database:
+        aggregation = aggregate_backfill_job(
+            database,
+            job_id=orchestration_target.job_id,
+        )
+
+    assert aggregation.status == "pending"
+    assert aggregation.total_sessions == 2
+    assert aggregation.pending_sessions == 2
+    assert aggregation.running_sessions == 0
+    assert aggregation.completed_sessions == 0
+    assert aggregation.failed_sessions == 0
+
+
+def test_aggregation_keeps_retryable_pending_work_running_after_start(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    session_id = orchestration_target.session_ids[0]
+    queue_session(
+        orchestration_target,
+        session_id,
+        attempt_count=1,
+        next_retry_at=datetime.now(UTC) + timedelta(minutes=1),
+    )
+
+    with orchestration_target.session_factory() as database:
+        aggregation = aggregate_backfill_job(
+            database,
+            job_id=orchestration_target.job_id,
+        )
+
+    assert aggregation.status == "running"
+    assert aggregation.pending_sessions == 1
+    with orchestration_target.session_factory() as database:
+        job = database.get(BackfillJob, orchestration_target.job_id)
+        assert job is not None
+        assert job.started_at is not None
+        assert job.completed_at is None
+
+
+def test_aggregation_reports_running_while_a_session_is_active(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    for session_id in orchestration_target.session_ids[:2]:
+        queue_session(orchestration_target, session_id)
+    with orchestration_target.session_factory() as database:
+        claim = claim_next_archive_job_session(database)
+    assert claim is not None
+
+    with orchestration_target.session_factory() as database:
+        job_before = database.get(BackfillJob, orchestration_target.job_id)
+        assert job_before is not None
+        heartbeat_before = job_before.heartbeat_at
+
+    with orchestration_target.session_factory() as database:
+        aggregation = aggregate_backfill_job(
+            database,
+            job_id=orchestration_target.job_id,
+        )
+
+    assert aggregation.status == "running"
+    assert aggregation.pending_sessions == 1
+    assert aggregation.running_sessions == 1
+    with orchestration_target.session_factory() as database:
+        job = database.get(BackfillJob, orchestration_target.job_id)
+        assert job is not None
+        assert job.heartbeat_at == heartbeat_before
+        assert job.completed_at is None
+
+
+def test_aggregation_remains_running_after_partial_completion(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    first_session_id, second_session_id = orchestration_target.session_ids[:2]
+    queue_session(orchestration_target, first_session_id)
+    queue_session(orchestration_target, second_session_id)
+    set_job_session_status(
+        orchestration_target,
+        first_session_id,
+        status="completed",
+    )
+
+    with orchestration_target.session_factory() as database:
+        aggregation = aggregate_backfill_job(
+            database,
+            job_id=orchestration_target.job_id,
+        )
+
+    assert aggregation.status == "running"
+    assert aggregation.pending_sessions == 1
+    assert aggregation.completed_sessions == 1
+    assert aggregation.failed_sessions == 0
+    assert aggregation.completed_at is None
+
+
+def test_aggregation_surfaces_a_fixed_failure_while_other_work_remains(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    failed_session_id, pending_session_id = orchestration_target.session_ids[:2]
+    queue_session(orchestration_target, failed_session_id)
+    queue_session(orchestration_target, pending_session_id)
+    set_job_session_status(
+        orchestration_target,
+        failed_session_id,
+        status="failed",
+        last_error_code="controlled_child_code",
+        last_error_message="RAW CHILD FAILURE MUST NOT BE COPIED",
+    )
+
+    with orchestration_target.session_factory() as database:
+        aggregation = aggregate_backfill_job(
+            database,
+            job_id=orchestration_target.job_id,
+        )
+
+    assert aggregation.status == "running"
+    assert aggregation.pending_sessions == 1
+    assert aggregation.failed_sessions == 1
+    with orchestration_target.session_factory() as database:
+        job = database.get(BackfillJob, orchestration_target.job_id)
+        assert job is not None
+        assert job.last_error_code == SESSION_INGESTION_FAILED.code
+        assert job.last_error_message == SESSION_INGESTION_FAILED.message
+        assert "RAW" not in job.last_error_message
+
+
+def test_aggregation_completes_only_when_every_session_completed(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    for session_id in orchestration_target.session_ids:
+        queue_session(orchestration_target, session_id)
+        set_job_session_status(
+            orchestration_target,
+            session_id,
+            status="completed",
+        )
+    with orchestration_target.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE backfill_jobs
+                SET status = 'running',
+                    heartbeat_at = clock_timestamp(),
+                    last_error_code = 'session_ingestion_failed',
+                    last_error_message = 'controlled prior aggregate'
+                WHERE id = :job_id
+                """
+            ),
+            {"job_id": orchestration_target.job_id},
+        )
+
+    with orchestration_target.session_factory() as database:
+        aggregation = aggregate_backfill_job(
+            database,
+            job_id=orchestration_target.job_id,
+        )
+
+    assert aggregation.status == "completed"
+    assert aggregation.completed_sessions == 3
+    assert aggregation.failed_sessions == 0
+    assert aggregation.completed_at == aggregation.aggregated_at
+    with orchestration_target.session_factory() as database:
+        job = database.get(BackfillJob, orchestration_target.job_id)
+        assert job is not None
+        assert job.started_at is not None
+        assert job.heartbeat_at is None
+        assert job.completed_at == aggregation.completed_at
+        assert job.last_error_code is None
+        assert job.last_error_message is None
+
+
+def test_aggregation_fails_a_terminal_mixed_outcome_without_copying_child_error(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    completed_session_id, failed_session_id = orchestration_target.session_ids[:2]
+    queue_session(orchestration_target, completed_session_id)
+    queue_session(orchestration_target, failed_session_id)
+    set_job_session_status(
+        orchestration_target,
+        completed_session_id,
+        status="completed",
+    )
+    set_job_session_status(
+        orchestration_target,
+        failed_session_id,
+        status="failed",
+        last_error_code="controlled_child_code",
+        last_error_message="RAW CHILD FAILURE MUST NOT BE COPIED",
+    )
+
+    with orchestration_target.session_factory() as database:
+        aggregation = aggregate_backfill_job(
+            database,
+            job_id=orchestration_target.job_id,
+        )
+
+    assert aggregation.status == "failed"
+    assert aggregation.completed_sessions == 1
+    assert aggregation.failed_sessions == 1
+    assert aggregation.completed_at == aggregation.aggregated_at
+    with orchestration_target.session_factory() as database:
+        job = database.get(BackfillJob, orchestration_target.job_id)
+        assert job is not None
+        assert job.heartbeat_at is None
+        assert job.last_error_code == "session_ingestion_failed"
+        assert job.last_error_message == (
+            "One or more session ingestions failed."
+        )
+
+
+@pytest.mark.parametrize("terminal_status", ["completed", "failed"])
+def test_aggregation_is_idempotent_for_terminal_jobs(
+    orchestration_target: OrchestrationTarget,
+    terminal_status: str,
+) -> None:
+    session_id = orchestration_target.session_ids[0]
+    queue_session(orchestration_target, session_id)
+    set_job_session_status(
+        orchestration_target,
+        session_id,
+        status=terminal_status,
+        last_error_code=(
+            "controlled_child_code"
+            if terminal_status == "failed"
+            else None
+        ),
+        last_error_message=(
+            "controlled child failure"
+            if terminal_status == "failed"
+            else None
+        ),
+    )
+
+    with orchestration_target.session_factory() as database:
+        first = aggregate_backfill_job(
+            database,
+            job_id=orchestration_target.job_id,
+        )
+    with orchestration_target.session_factory() as database:
+        second = aggregate_backfill_job(
+            database,
+            job_id=orchestration_target.job_id,
+        )
+
+    assert first.status == terminal_status
+    assert second.status == terminal_status
+    assert second.completed_at == first.completed_at
+
+
+def test_aggregation_waits_for_locked_session_state_and_sees_its_commit(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    session_id = orchestration_target.session_ids[0]
+    queue_session(orchestration_target, session_id)
+    aggregate_entered = Event()
+
+    def aggregate_in_thread() -> BackfillJobAggregation:
+        aggregate_entered.set()
+        with orchestration_target.session_factory() as database:
+            return aggregate_backfill_job(
+                database,
+                job_id=orchestration_target.job_id,
+            )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with orchestration_target.session_factory() as locker:
+            with locker.begin():
+                locked = locker.scalar(
+                    select(BackfillJobSession)
+                    .where(
+                        BackfillJobSession.job_id
+                        == orchestration_target.job_id,
+                        BackfillJobSession.session_id == session_id,
+                    )
+                    .with_for_update()
+                )
+                assert locked is not None
+                future = executor.submit(aggregate_in_thread)
+                assert aggregate_entered.wait(timeout=1)
+                with pytest.raises(FutureTimeoutError):
+                    future.result(timeout=0.1)
+                locked.status = "completed"
+                locked.attempt_count = 1
+                locked.started_at = datetime.now(UTC)
+                locked.completed_at = datetime.now(UTC)
+
+        aggregation = future.result(timeout=2)
+
+    assert aggregation.status == "completed"
+    assert aggregation.completed_sessions == 1
+
+
+def test_aggregation_rejects_missing_and_invalid_job_ids(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    with orchestration_target.session_factory() as database:
+        with pytest.raises(BackfillJobNotFoundError, match="does not exist"):
+            aggregate_backfill_job(database, job_id=uuid.uuid4())
+    with orchestration_target.session_factory() as database:
+        with pytest.raises(BackfillOrchestrationError, match="UUID"):
+            aggregate_backfill_job(
+                database,
+                job_id="not-a-uuid",  # type: ignore[arg-type]
+            )
+
+
+def test_aggregation_requires_transaction_ownership(
+    orchestration_target: OrchestrationTarget,
+) -> None:
+    with orchestration_target.session_factory() as database:
+        with database.begin():
+            with pytest.raises(
+                BackfillOrchestrationTransactionError,
+                match="own",
+            ):
+                aggregate_backfill_job(
+                    database,
+                    job_id=orchestration_target.job_id,
+                )
