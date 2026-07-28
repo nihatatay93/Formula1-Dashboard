@@ -315,6 +315,28 @@ export const secondLapPage: LapSummaryResponse = {
   ],
 };
 
+export const piastriLapPage: LapSummaryResponse = {
+  ...firstLapPage,
+  session_entry_id: resultEntries[1].session_entry_id,
+  page: {
+    limit: 50,
+    has_more: false,
+    next_after_lap: null,
+  },
+  items: [
+    {
+      ...firstLapPage.items[0],
+      id: "451",
+      lap_time_us: 91_700_000,
+    },
+    {
+      ...firstLapPage.items[1],
+      id: "452",
+      lap_time_us: 91_300_000,
+    },
+  ],
+};
+
 export const requestBudget: FastF1RequestBudget = {
   source: "fastf1",
   window_seconds: 3_600,

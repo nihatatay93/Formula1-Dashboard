@@ -15,8 +15,21 @@ import type {
   SessionEntryResult,
   SessionResults,
 } from "./contracts";
+import {
+  calculateLapSelectionStats,
+  compareLapSelections,
+  isLapSelectable,
+} from "./lapAnalysis";
 
 const LAP_PAGE_SIZE = 50;
+const MAX_ANALYSIS_PARTICIPANTS = 2;
+
+interface AnalysisSelection {
+  entry: SessionEntryResult;
+  laps: LapSummary[];
+  sessionId: string;
+  snapshotCompletedAt: string;
+}
 
 const snapshotFormatter = new Intl.DateTimeFormat("en", {
   day: "2-digit",
@@ -66,6 +79,11 @@ function formatDelta(value: number | null, fastest: number | null): string {
     return "Best";
   }
   return `${delta > 0 ? "+" : ""}${delta.toFixed(3)}`;
+}
+
+function formatShortDelta(value: number): string {
+  const seconds = Math.abs(value) / 1_000_000;
+  return `${seconds.toFixed(3)}s`;
 }
 
 function compoundTone(compound: string | null): string {
@@ -239,8 +257,14 @@ function ResultsTable({
 
 function LapTable({
   laps,
+  onToggleLap,
+  selectedLapNumbers,
+  selectionDisabled,
 }: {
   laps: LapSummary[];
+  onToggleLap: (lap: LapSummary) => void;
+  selectedLapNumbers: ReadonlySet<number>;
+  selectionDisabled: boolean;
 }) {
   const fastest = useMemo(() => {
     const timed = laps
@@ -255,6 +279,7 @@ function LapTable({
       <table className="lap-table">
         <thead>
           <tr>
+            <th scope="col">Select</th>
             <th scope="col">Lap</th>
             <th scope="col">Time</th>
             <th scope="col">Delta</th>
@@ -270,9 +295,32 @@ function LapTable({
         <tbody>
           {laps.map((lap) => (
             <tr
-              className={lap.deleted === true ? "lap-table__deleted" : undefined}
+              className={[
+                lap.deleted === true ? "lap-table__deleted" : "",
+                selectedLapNumbers.has(lap.lap_number)
+                  ? "lap-table__selected"
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
               key={lap.id}
             >
+              <td>
+                <label className="lap-selector">
+                  <input
+                    aria-label={`Select lap ${lap.lap_number} for pace analysis`}
+                    checked={selectedLapNumbers.has(lap.lap_number)}
+                    disabled={
+                      !isLapSelectable(lap) ||
+                      (selectionDisabled &&
+                        !selectedLapNumbers.has(lap.lap_number))
+                    }
+                    onChange={() => onToggleLap(lap)}
+                    type="checkbox"
+                  />
+                  <span aria-hidden="true" />
+                </label>
+              </td>
               <td>
                 <strong>{lap.lap_number}</strong>
               </td>
@@ -307,6 +355,141 @@ function LapTable({
   );
 }
 
+function PaceAnalysisPanel({
+  onClearSelection,
+  selections,
+}: {
+  onClearSelection: (sessionEntryId: string) => void;
+  selections: AnalysisSelection[];
+}) {
+  const analyzed = selections.flatMap((selection) => {
+    const stats = calculateLapSelectionStats(selection.laps);
+    return stats ? [{ selection, stats }] : [];
+  });
+  const comparison =
+    analyzed.length === 2
+      ? compareLapSelections(analyzed[0].stats, analyzed[1].stats)
+      : null;
+
+  return (
+    <section
+      aria-labelledby="pace-analysis-title"
+      className="pace-analysis"
+    >
+      <div className="pace-analysis__heading">
+        <div>
+          <p className="section-kicker">Manual long-run study</p>
+          <h3 id="pace-analysis-title">Selected-lap pace analysis</h3>
+        </div>
+        <span>
+          {analyzed.length}/{MAX_ANALYSIS_PARTICIPANTS} comparison slots
+        </span>
+      </div>
+      <p className="pace-analysis__disclaimer">
+        Select the laps you consider representative. The dashboard calculates
+        only those choices and does not infer fuel load, engine mode, or a race
+        simulation.
+      </p>
+
+      <div className="pace-analysis__grid">
+        {[0, 1].map((slot) => {
+          const analysis = analyzed[slot];
+          if (!analysis) {
+            return (
+              <div className="pace-analysis__empty" key={slot}>
+                <span>Slot {slot + 1}</span>
+                <strong>Select timed laps from a participant</strong>
+              </div>
+            );
+          }
+          const { selection, stats } = analysis;
+          const qualityWarnings =
+            stats.quality.deleted +
+            stats.quality.inaccurate +
+            stats.quality.pit_transition;
+          return (
+            <article className="pace-analysis__card" key={selection.entry.session_entry_id}>
+              <header>
+                <div>
+                  <span>
+                    {selection.entry.team_name ?? "Independent"} ·{" "}
+                    {selection.entry.abbreviation ?? "Driver"}
+                  </span>
+                  <strong>{selection.entry.display_name}</strong>
+                </div>
+                <button
+                  aria-label={`Clear ${selection.entry.display_name} pace selection`}
+                  onClick={() =>
+                    onClearSelection(selection.entry.session_entry_id)
+                  }
+                  type="button"
+                >
+                  Clear
+                </button>
+              </header>
+              <div className="pace-analysis__metrics">
+                <div>
+                  <span>Average</span>
+                  <strong>{formatLapTime(stats.average_lap_time_us)}</strong>
+                </div>
+                <div>
+                  <span>Fastest</span>
+                  <strong>{formatLapTime(stats.fastest_lap_time_us)}</strong>
+                </div>
+                <div>
+                  <span>Spread</span>
+                  <strong>{formatShortDelta(stats.spread_us)}</strong>
+                </div>
+              </div>
+              <p>
+                {stats.lap_count} selected · laps{" "}
+                {stats.lap_numbers.join(", ")}
+              </p>
+              <div className="pace-analysis__quality">
+                {qualityWarnings === 0 ? (
+                  <span className="pace-analysis__quality--clean">
+                    No quality warnings
+                  </span>
+                ) : (
+                  <>
+                    {stats.quality.deleted > 0 ? (
+                      <span>{stats.quality.deleted} deleted</span>
+                    ) : null}
+                    {stats.quality.inaccurate > 0 ? (
+                      <span>{stats.quality.inaccurate} inaccurate</span>
+                    ) : null}
+                    {stats.quality.pit_transition > 0 ? (
+                      <span>{stats.quality.pit_transition} pit transition</span>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+
+      {comparison ? (
+        <p className="pace-analysis__comparison" role="status">
+          {comparison.faster === "equal" ? (
+            "Selected averages are equal."
+          ) : (
+            <>
+              <strong>
+                {comparison.faster === "first"
+                  ? analyzed[0].selection.entry.display_name
+                  : analyzed[1].selection.entry.display_name}
+              </strong>{" "}
+              is {formatShortDelta(comparison.average_delta_us)} faster on the
+              selected average.
+            </>
+          )}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 export default function SessionExplorer({
   event,
   onClose,
@@ -327,7 +510,16 @@ export default function SessionExplorer({
   const [lapLoading, setLapLoading] = useState(false);
   const [lapError, setLapError] = useState<string | null>(null);
   const [lapNotice, setLapNotice] = useState<string | null>(null);
+  const [analysisNotice, setAnalysisNotice] = useState<string | null>(null);
+  const [analysisSelections, setAnalysisSelections] = useState<
+    AnalysisSelection[]
+  >([]);
   const lapSnapshotRef = useRef<string | null>(null);
+  const analysisSelectionsRef = useRef<AnalysisSelection[]>([]);
+
+  useEffect(() => {
+    analysisSelectionsRef.current = analysisSelections;
+  }, [analysisSelections]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -337,6 +529,8 @@ export default function SessionExplorer({
     setLaps(null);
     setLapCursor(null);
     lapSnapshotRef.current = null;
+    setAnalysisNotice(null);
+    setAnalysisSelections([]);
     setError(null);
     setLoading(true);
 
@@ -390,6 +584,17 @@ export default function SessionExplorer({
       controller.signal,
     )
       .then((nextPage) => {
+        const incompatibleSelection = analysisSelectionsRef.current.some(
+          (selection) =>
+            selection.sessionId !== session.id ||
+            selection.snapshotCompletedAt !== nextPage.snapshot.completed_at,
+        );
+        if (incompatibleSelection) {
+          setAnalysisSelections([]);
+          setAnalysisNotice(
+            "The archive snapshot changed, so the manual pace selection was cleared.",
+          );
+        }
         if (
           requestedCursor !== null &&
           lapSnapshotRef.current !== nextPage.snapshot.completed_at
@@ -442,6 +647,85 @@ export default function SessionExplorer({
     setLapError(null);
     setLapNotice(null);
   }
+
+  function handleLapSelection(lap: LapSummary) {
+    if (!selectedEntry || !isLapSelectable(lap) || !lapSnapshotRef.current) {
+      return;
+    }
+    setAnalysisSelections((current) => {
+      const existingIndex = current.findIndex(
+        (selection) =>
+          selection.entry.session_entry_id === selectedEntry.session_entry_id,
+      );
+      if (existingIndex === -1 && current.length >= MAX_ANALYSIS_PARTICIPANTS) {
+        setAnalysisNotice(
+          "Two participants are already in the comparison. Clear one selection before adding another.",
+        );
+        return current;
+      }
+
+      const existing =
+        existingIndex === -1
+          ? {
+              entry: selectedEntry,
+              laps: [],
+              sessionId: session.id,
+              snapshotCompletedAt: lapSnapshotRef.current as string,
+            }
+          : current[existingIndex];
+      const isSelected = existing.laps.some(
+        (selectedLap) => selectedLap.lap_number === lap.lap_number,
+      );
+      const nextLaps = isSelected
+        ? existing.laps.filter(
+            (selectedLap) => selectedLap.lap_number !== lap.lap_number,
+          )
+        : [...existing.laps, lap].sort(
+            (left, right) => left.lap_number - right.lap_number,
+          );
+      setAnalysisNotice(null);
+      if (nextLaps.length === 0) {
+        return existingIndex === -1
+          ? current
+          : current.filter((_, index) => index !== existingIndex);
+      }
+      const nextSelection = { ...existing, laps: nextLaps };
+      if (existingIndex === -1) {
+        return [...current, nextSelection];
+      }
+      return current.map((selection, index) =>
+        index === existingIndex ? nextSelection : selection,
+      );
+    });
+  }
+
+  function handleClearSelection(sessionEntryId: string) {
+    setAnalysisSelections((current) =>
+      current.filter(
+        (selection) =>
+          selection.entry.session_entry_id !== sessionEntryId,
+      ),
+    );
+    setAnalysisNotice(null);
+  }
+
+  const selectedLapNumbers = useMemo(
+    () =>
+      new Set(
+        analysisSelections.find(
+          (selection) =>
+            selection.entry.session_entry_id ===
+            selectedEntry?.session_entry_id,
+        )?.laps.map((lap) => lap.lap_number) ?? [],
+      ),
+    [analysisSelections, selectedEntry?.session_entry_id],
+  );
+  const selectionParticipantLimitReached =
+    analysisSelections.length >= MAX_ANALYSIS_PARTICIPANTS &&
+    !analysisSelections.some(
+      (selection) =>
+        selection.entry.session_entry_id === selectedEntry?.session_entry_id,
+    );
 
   return (
     <section
@@ -531,6 +815,20 @@ export default function SessionExplorer({
             </div>
           )}
 
+          {detail.snapshot.data_available ? (
+            <>
+              {analysisNotice ? (
+                <p className="inline-alert inline-alert--success" role="status">
+                  {analysisNotice}
+                </p>
+              ) : null}
+              <PaceAnalysisPanel
+                onClearSelection={handleClearSelection}
+                selections={analysisSelections}
+              />
+            </>
+          ) : null}
+
           {selectedEntry ? (
             <section
               aria-labelledby="lap-workspace-title"
@@ -569,7 +867,12 @@ export default function SessionExplorer({
                 <>
                   <LapPaceChart laps={laps.items} />
                   {laps.items.length > 0 ? (
-                    <LapTable laps={laps.items} />
+                    <LapTable
+                      laps={laps.items}
+                      onToggleLap={handleLapSelection}
+                      selectedLapNumbers={selectedLapNumbers}
+                      selectionDisabled={selectionParticipantLimitReached}
+                    />
                   ) : (
                     <div className="session-explorer__empty">
                       <strong>No lap summaries were stored for this entry.</strong>

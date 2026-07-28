@@ -4,6 +4,7 @@ import {
   completedSeason,
   firstLapPage,
   missingSeason,
+  piastriLapPage,
   queuedBackfill,
   requestBudget,
   runningBackfill,
@@ -80,6 +81,12 @@ async function installApiRoutes(page: Page) {
           : firstLapPage,
       );
     }
+    if (
+      path ===
+      `/api/v1/sessions/${sessionDetail.id}/entries/${sessionResults.items[1].session_entry_id}/laps`
+    ) {
+      return json(route, piastriLapPage);
+    }
 
     return json(
       route,
@@ -114,9 +121,30 @@ test("opens a completed session and traverses bounded lap pages", async ({
   await norrisRow.getByRole("button", { name: "View laps" }).click();
 
   await expect(page.getByText("2 laps loaded")).toBeVisible();
+  await page
+    .getByRole("checkbox", { name: "Select lap 1 for pace analysis" })
+    .check();
+  await page
+    .getByRole("checkbox", { name: "Select lap 2 for pace analysis" })
+    .check();
+  await expect(page.getByText("1:30.750")).toBeVisible();
   await page.getByRole("button", { name: "Load next 50 laps" }).click();
   await expect(page.getByText("4 laps loaded")).toBeVisible();
   await expect(page.getByText("End of stored lap summaries")).toBeVisible();
+
+  const piastriRow = page.getByRole("row", { name: /Oscar Piastri/ });
+  await piastriRow.getByRole("button", { name: "View laps" }).click();
+  await page
+    .getByRole("checkbox", { name: "Select lap 1 for pace analysis" })
+    .check();
+  await page
+    .getByRole("checkbox", { name: "Select lap 2 for pace analysis" })
+    .check();
+  await expect(
+    page.getByText(
+      "Lando Norris is 0.750s faster on the selected average.",
+    ),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: /Close view/ }).click();
   await expect(page.getByText("Session workspace")).toBeHidden();

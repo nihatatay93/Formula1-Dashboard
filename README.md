@@ -4,8 +4,8 @@ Formula1 Dashboard is a local-first Formula 1 data platform. It will combine
 historical FastF1 data and future SignalR live timing behind a single API for
 the web dashboard and a future iOS application.
 
-The repository currently contains the local development scaffold, three
-database migrations, and the first historical backfill API slice:
+The repository currently contains the local development scaffold, five
+database migrations, the historical backfill API, and session exploration:
 
 - FastAPI backend with liveness and PostgreSQL readiness endpoints
 - Single-concurrency archive worker using the same backend image
@@ -31,10 +31,12 @@ database migrations, and the first historical backfill API slice:
 - Idempotent season backfill command with synchronous cached schedule discovery
 - Read-only season overview and backfill-job progress APIs
 - Stable versioned response, validation, and sanitized error contracts
+- Read-only historical session detail, result, and paginated lap-summary APIs
+- Snapshot-safe session dashboard with explicit two-participant lap analysis
+- Vitest component coverage and Playwright desktop/mobile browser workflows
 - Docker Compose health checks
 
-Historical session-result and lap-summary APIs, telemetry, and live timing
-ingestion are not implemented yet.
+Historical telemetry and live timing ingestion are not implemented yet.
 
 ## Requirements
 
@@ -83,6 +85,9 @@ The services are exposed locally at:
 - Ensure season backfill: `POST http://localhost:8000/api/v1/seasons/{season_year}/backfill`
 - Backfill progress: `GET http://localhost:8000/api/v1/backfill-jobs/{job_id}`
 - Local FastF1 request usage: `GET http://localhost:8000/api/v1/upstreams/fastf1/usage`
+- Session detail: `GET http://localhost:8000/api/v1/sessions/{session_id}`
+- Session results: `GET http://localhost:8000/api/v1/sessions/{session_id}/results`
+- Entry laps: `GET http://localhost:8000/api/v1/sessions/{session_id}/entries/{session_entry_id}/laps`
 - PostgreSQL: `localhost:5432`
 
 The POST command may synchronously refresh the selected season schedule through
@@ -99,6 +104,18 @@ waits. A separately polled budget panel displays observed archive/schedule
 cache-miss requests in the rolling hour against the 400-warning and
 450-application-pause thresholds. This is explicitly a local estimate, not an
 authoritative upstream quota. The dashboard never requests full telemetry.
+Completed sessions can be opened in an in-page workspace with classification,
+driver-specific paginated lap summaries, and a manual two-participant pace
+comparison. Only explicitly selected timed laps contribute to an average;
+quality warnings remain visible, and a changed archive snapshot clears
+incompatible selections rather than mixing data.
+
+Run frontend unit/component tests and browser interactions:
+
+```bash
+npm test --prefix frontend
+npm run test:e2e --prefix frontend
+```
 
 Stop the stack:
 

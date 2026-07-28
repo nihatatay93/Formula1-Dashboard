@@ -9,6 +9,7 @@ import {
   completedSession,
   completedSnapshot,
   firstLapPage,
+  piastriLapPage,
   secondLapPage,
   sessionDetail,
   sessionResults,
@@ -130,6 +131,14 @@ describe("SessionExplorer", () => {
     const norrisRow = await screen.findByRole("row", { name: /Lando Norris/ });
     await user.click(within(norrisRow).getByRole("button", { name: "View laps" }));
     await screen.findByText("2 laps loaded");
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "Select lap 1 for pace analysis",
+      }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Clear Lando Norris pace selection" }),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Load next 50 laps" }));
 
     expect(
@@ -151,6 +160,83 @@ describe("SessionExplorer", () => {
         name: "2",
       }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Clear Lando Norris pace selection",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The archive snapshot changed, so the manual pace selection was cleared.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("compares the averages of two explicit participant lap selections", async () => {
+    const user = userEvent.setup();
+    getSessionDetail.mockResolvedValue(sessionDetail);
+    getSessionResults.mockResolvedValue(sessionResults);
+    getSessionLaps.mockImplementation(
+      async (_sessionId, sessionEntryId) =>
+        sessionEntryId === sessionResults.items[1].session_entry_id
+          ? piastriLapPage
+          : {
+              ...firstLapPage,
+              page: {
+                limit: 50,
+                has_more: false,
+                next_after_lap: null,
+              },
+            },
+    );
+
+    renderExplorer();
+
+    const norrisRow = await screen.findByRole("row", { name: /Lando Norris/ });
+    await user.click(within(norrisRow).getByRole("button", { name: "View laps" }));
+    await screen.findByText("2 laps loaded");
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "Select lap 1 for pace analysis",
+      }),
+    );
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "Select lap 2 for pace analysis",
+      }),
+    );
+
+    expect(screen.getByText("1:30.750")).toBeInTheDocument();
+    expect(screen.getByText("2 selected · laps 1, 2")).toBeInTheDocument();
+
+    const piastriRow = screen.getByRole("row", { name: /Oscar Piastri/ });
+    await user.click(within(piastriRow).getByRole("button", { name: "View laps" }));
+    await screen.findByText("1:31.700");
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "Select lap 1 for pace analysis",
+      }),
+    );
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "Select lap 2 for pace analysis",
+      }),
+    );
+
+    expect(screen.getByText("1:31.500")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Lando Norris is 0.750s faster on the selected average.",
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Clear Oscar Piastri pace selection",
+      }),
+    );
+    expect(
+      screen.queryByText("Lando Norris is 0.750s faster"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("1/2 comparison slots")).toBeInTheDocument();
   });
 
   it("surfaces a safe backend error and closes on request", async () => {
