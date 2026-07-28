@@ -13,10 +13,11 @@ two database migrations:
 - PostgreSQL with SQLAlchemy 2 models and Alembic migrations
 - Backfill control-plane tables for seasons, sessions, ingestion state, and jobs
 - Sporting-data tables for drivers, session entries, results, and lap summaries
+- Locked FastF1 runtime and pure results-and-laps normalization
 - Docker Compose health checks
 
-FastF1 backfill execution, telemetry, and live timing ingestion are not
-implemented yet.
+FastF1 session loading and database persistence, telemetry, and live timing
+ingestion are not implemented yet.
 
 ## Requirements
 

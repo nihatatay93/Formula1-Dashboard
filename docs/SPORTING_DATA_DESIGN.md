@@ -3,7 +3,7 @@
 Status: **accepted; schema implemented**
 Date: **2026-07-28**
 
-This document defines the accepted Revision 2 database model. It is based on direct inspection of representative FastF1 3.8.3 data and the official FastF1 data reference. The SQLAlchemy models and Alembic revision are implemented. The FastF1 runtime dependency and ingestion behavior are not implemented yet.
+This document defines the accepted Revision 2 database model. It is based on direct inspection of representative FastF1 3.8.3 data and the official FastF1 data reference. The SQLAlchemy models, Alembic revision, locked FastF1 runtime dependency, and pure normalization layer are implemented. FastF1 session loading and database persistence are not implemented yet.
 
 ## Scope
 
@@ -260,6 +260,9 @@ The unique constraint already provides the primary driver/lap lookup index; a du
 - Mark FastF1 archive rows as `fastf1_archive` and normally `finalized`.
 - Write one session’s entries, results, and laps in one transaction.
 
+The pure transformation and validation rules are implemented in
+`backend/app/ingestion/fastf1_normalization.py`.
+
 ## Idempotency
 
 - Upsert a driver only by a verified external identity.
@@ -267,7 +270,8 @@ The unique constraint already provides the primary driver/lap lookup index; a du
 - Upsert a result by `session_entry_id`.
 - Upsert a lap by `(session_entry_id, lap_number)`.
 - Reprocessing must update owned rows rather than blindly append duplicates.
-- Removal of stale rows from a previously completed ingest requires a separately reviewed replacement policy; broad deletion is not implied by this design.
+- Remove stale archive-owned rows only under the accepted atomic replacement
+  contract in `docs/FASTF1_INGESTION_CONTRACT.md`.
 
 ## Accepted Design Decisions
 

@@ -16,7 +16,7 @@ The system is intended to:
 
 ## Current Architecture
 
-The local-development scaffold and the first two database migrations are implemented. The database contains the backfill control plane and normalized sporting-data tables. FastF1 ingestion, backfill job execution, telemetry, and live timing ingestion are not yet implemented.
+The local-development scaffold, first two database migrations, locked FastF1 runtime, and pure sporting-data normalization layer are implemented. The database contains the backfill control plane and normalized sporting-data tables. FastF1 session loading and persistence, backfill job execution, telemetry, and live timing ingestion are not yet implemented.
 
 Implemented services in `compose.yaml`:
 
@@ -29,7 +29,7 @@ Implemented services in `compose.yaml`:
 Implemented supporting infrastructure:
 
 - A persistent `fastf1_cache` Docker volume is declared for the worker.
-- The backend uses Python 3.13, `uv`, FastAPI, SQLAlchemy 2, Alembic, psycopg, Uvicorn, pytest, and Ruff.
+- The backend uses Python 3.13, `uv`, FastAPI, FastF1 3.8.3, pandas, SQLAlchemy 2, Alembic, psycopg, Uvicorn, pytest, and Ruff.
 - The frontend uses Node.js 24, npm, React, TypeScript, and Vite.
 - PostgreSQL trust authentication is restricted to loopback-bound local development and must not be reused for production.
 - SQLAlchemy uses synchronous sessions with the explicit `postgresql+psycopg` dialect.
@@ -64,11 +64,13 @@ Formula1-Dashboard/
 │   │   │   ├── engine.py
 │   │   │   ├── naming.py
 │   │   │   └── session.py
+│   │   ├── ingestion/
 │   │   ├── main.py
 │   │   └── worker.py
 │   ├── tests/
 │   │   ├── test_database_integration.py
 │   │   ├── test_database_metadata.py
+│   │   ├── test_fastf1_normalization.py
 │   │   ├── test_health.py
 │   │   └── test_sporting_data_integration.py
 │   ├── alembic.ini
@@ -77,6 +79,7 @@ Formula1-Dashboard/
 │   └── uv.lock
 ├── docs/
 │   ├── DATABASE_DESIGN.md
+│   ├── FASTF1_INGESTION_CONTRACT.md
 │   ├── PROJECT_CONTEXT.md
 │   └── SPORTING_DATA_DESIGN.md
 └── frontend/
@@ -89,11 +92,13 @@ Formula1-Dashboard/
 
 - `backend/app/`: FastAPI and worker process source.
 - `backend/app/db/`: SQLAlchemy metadata, connection configuration, session factory, and Revision 1 and 2 models.
+- `backend/app/ingestion/`: Pure upstream-to-domain normalization code; database persistence is not implemented.
 - `backend/alembic/`: Alembic environment and reviewed migration revisions.
 - `backend/tests/`: Backend tests.
 - `frontend/src/`: React dashboard source.
 - `docs/`: Architecture, decisions, and persistent project context.
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic conventions, migration phases, tables, constraints, indexes, and recovery behavior.
+- `docs/FASTF1_INGESTION_CONTRACT.md`: Accepted one-session validation, identity, atomic replacement, failure, and idempotency contract.
 - `docs/SPORTING_DATA_DESIGN.md`: Evidence-based implemented Revision 2 driver, entry, result, and lap schema.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
 - `AGENTS.md`: Mandatory repository workflow and context rules.
@@ -254,6 +259,41 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: accepted
 
+### FastF1 runtime version
+
+- Decision: Pin FastF1 to version 3.8.3 and keep pandas as an explicit compatible direct dependency managed by `uv.lock`.
+- Rationale: The sporting-data schema and normalization rules were inspected against FastF1 3.8.3, so an exact FastF1 version prevents an unnoticed upstream data-contract change.
+- Date: 2026-07-28
+- Status: implemented
+
+### One-session archive replacement
+
+- Decision: Treat a fully normalized FastF1 session as the authoritative archive snapshot for one database session and replace its archive-owned sporting rows atomically.
+- Rationale: Upserts alone cannot remove rows that disappear from a corrected upstream snapshot. Atomic replacement removes stale archive rows without exposing an empty or partially replaced session.
+- Date: 2026-07-28
+- Status: accepted
+
+### Replacement safety boundary
+
+- Decision: Fully load and validate FastF1 data before opening the replacement transaction; roll back all sporting writes on failure, never delete global drivers, and refuse to replace sessions containing non-archive sporting rows.
+- Rationale: Preserve the previous complete snapshot on failure and prevent the historical ingestion phase from damaging future provisional live data.
+- Date: 2026-07-28
+- Status: accepted
+
+### Archive entry-key algorithm
+
+- Decision: Use `driver:jolpica:<normalized-driver-id>` when a verified driver ID exists, otherwise use session-local `car-number:<normalized-racing-number>`, and fail when neither exists.
+- Rationale: Produce deterministic idempotency keys without globally identifying a driver by number, name, or abbreviation.
+- Date: 2026-07-28
+- Status: implemented
+
+### Pure normalization boundary
+
+- Decision: Transform FastF1 results and laps into immutable normalized records before persistence.
+- Rationale: Make upstream type handling and validation deterministic and testable without database or network side effects.
+- Date: 2026-07-28
+- Status: implemented
+
 ## Database Model
 
 Alembic revision `20260727_0001` implements the backfill control plane:
@@ -350,7 +390,7 @@ Accepted behavior:
 13. FastF1 cache must be used, and aggressive parallel requests must be avoided.
 14. Telemetry must be queried separately by session, driver, and lap.
 
-The schema fields required for retries, leases, heartbeats, and crash recovery exist, but their timing policies and worker behavior remain undecided and unimplemented. FastF1 is not yet installed, and the worker does not process jobs.
+The accepted one-session replacement contract is documented in `docs/FASTF1_INGESTION_CONTRACT.md`. FastF1 3.8.3 and pandas are locked runtime dependencies, and results-and-laps normalization is implemented. Session loading, cache activation, database persistence, stale-row deletion, ingestion state transitions, and worker processing are not implemented.
 
 ## Live Timing Design
 
@@ -394,18 +434,22 @@ SignalR protocol details, connection lifecycle, message schemas, and reconciliat
 - Added metadata and PostgreSQL integration coverage for sporting-data constraints, nullable identities, session-scoped number reuse, and idempotent natural-key upserts.
 - Verified Revision 2 fresh upgrade, downgrade to Revision 1, re-upgrade, second no-op upgrade, Alembic head, and zero model/schema drift.
 - Verified the full five-service Compose stack remains healthy with Revision 2 applied.
+- Accepted and documented the one-session FastF1 archive replacement contract, including stale-row removal, rollback behavior, live-data protection, and deterministic fallback entry keys.
+- Added FastF1 3.8.3 and pandas as locked backend runtime dependencies.
+- Implemented pure results-and-laps normalization with immutable output records and validation for nulls, identifiers, integers, durations, decimals, booleans, speeds, result timing, lap association, and natural-key duplicates.
+- Added focused normalization unit tests and verified the complete 23-test suite against an isolated PostgreSQL 17 Compose database.
 
 No FastF1 backfill execution, telemetry, or live timing feature has been completed.
 
 ## Work in Progress
 
-- No implementation is currently in progress after Revision 2.
+- No implementation is currently in progress after the normalization layer.
 
 ## Next Steps
 
-1. Define the one-session FastF1 ingestion and replacement contract, including deterministic fallback `entry_key` behavior.
-2. Add FastF1 as a locked runtime dependency and implement normalization unit tests.
-3. Implement one idempotent session backfill vertical slice with cache enabled, messages enabled, and telemetry and weather disabled.
+1. Implement transactional persistence for one normalized archive snapshot, including upserts, stale-row deletion, rollback, and the non-archive-data guard.
+2. Implement the cache-backed FastF1 session loader with messages enabled and telemetry and weather disabled.
+3. Connect loading, normalization, and persistence into one idempotent single-session vertical slice.
 4. Define retry count, backoff, heartbeat, lease, and current-season freshness policies before worker orchestration.
 5. Decide whether manual backfill cancellation belongs in the first phase.
 6. Add season coverage and job-progress REST APIs.
@@ -435,14 +479,14 @@ docker run --rm -e UV_PROJECT_ENVIRONMENT=/tmp/formula1-dashboard-venv -v "$PWD/
 docker run --rm -e UV_PROJECT_ENVIRONMENT=/tmp/formula1-dashboard-venv -v "$PWD/backend:/workspace" -w /workspace ghcr.io/astral-sh/uv:0.11.29-python3.13-trixie-slim uv run --frozen pytest
 ```
 
-Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The full suite passed with 12 tests against the isolated Compose database.
+Database integration tests additionally require `TEST_DATABASE_URL` and a migrated PostgreSQL database. The complete suite passed with 23 tests against an isolated PostgreSQL 17 Compose database after the normalization layer was added.
 
 ## Known Issues and Technical Debt
 
 - The worker is only a readiness scaffold and cannot claim or process jobs.
-- FastF1 is not installed.
-- Sporting-data normalization and persistence application code is not implemented.
-- The deterministic fallback `entry_key` algorithm and stale-row replacement policy require an ingestion contract before the first FastF1 vertical slice.
+- FastF1 session loading and cache activation are not implemented.
+- Sporting-data database persistence, stale-row deletion, and ingestion state transitions are not implemented.
+- The replacement contract is accepted, but exclusive writer enforcement and the non-archive-data guard still require persistence integration tests.
 - TimescaleDB usage has not been decided.
 - Job recovery, retry, lease, heartbeat, and locking fields exist, but policies and processing behavior have not been finalized.
 - Season/backfill API paths and response schemas have not been finalized.
@@ -456,14 +500,17 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 - `AGENTS.md`: Mandatory context, safety, language, and user-change preservation rules.
 - `docs/PROJECT_CONTEXT.md`: Authoritative record of current behavior, accepted decisions, and next steps.
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic layout, relational model, migration phases, idempotency, locking, and recovery design.
+- `docs/FASTF1_INGESTION_CONTRACT.md`: Accepted one-session archive snapshot identity, validation, atomic replacement, and failure behavior.
 - `docs/SPORTING_DATA_DESIGN.md`: Implemented Revision 2 schema, FastF1 inspection evidence, normalization rules, and decisions.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
 - `backend/alembic/versions/20260727_0001_backfill_control_plane.py`: Reviewed Revision 1 schema and downgrade.
 - `backend/alembic/versions/20260728_0002_sporting_data.py`: Reviewed Revision 2 sporting-data schema and downgrade.
 - `backend/app/db/base.py`: Shared SQLAlchemy metadata and timestamp mixin.
 - `backend/app/db/models/`: Revision 1 control-plane and Revision 2 sporting-data SQLAlchemy models.
+- `backend/app/ingestion/fastf1_normalization.py`: Pure FastF1 results-and-laps normalization and validation.
 - `backend/tests/test_database_integration.py`: PostgreSQL constraint and index integration coverage.
 - `backend/tests/test_sporting_data_integration.py`: Revision 2 identity, constraint, number-reuse, nullable-field, and idempotency integration coverage.
+- `backend/tests/test_fastf1_normalization.py`: FastF1 normalization happy-path and rejection coverage.
 - `backend/app/main.py`: FastAPI scaffold and health endpoints.
 - `backend/app/worker.py`: Placeholder worker lifecycle.
 - `backend/tests/test_health.py`: Backend health endpoint unit tests.
@@ -472,6 +519,7 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a migrat
 
 ## Change Log
 
+- 2026-07-28 — Accepted the one-session archive replacement contract, locked FastF1 3.8.3, and implemented and verified the pure normalization layer.
 - 2026-07-28 — Implemented and verified Alembic Revision 2 with drivers, session entries, normalized results, and lap summaries.
 - 2026-07-28 — Accepted all recommended Revision 2 decisions and finalized the sporting-data design for implementation.
 - 2026-07-28 — Inspected FastF1 3.8.3 sporting data, accepted the 2018 ingestion boundary and session-scoped racing-number identity, and proposed Revision 2.
