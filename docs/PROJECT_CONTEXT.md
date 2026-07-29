@@ -34,7 +34,13 @@ between Overview, Season Sessions, and Session Workspace views. Season
 selection and synchronization controls remain available without searching
 through unrelated content, and selecting a session opens its workspace
 directly.
-Live timing remains unimplemented.
+The ephemeral live-timing storage foundation is implemented as a self-contained
+synchronous `app/live` module: validated settings, untrusted-frame
+normalization with a topic allowlist and redaction, an append-only JSONL
+session log with slugified paths and a size cap, an in-memory latest-state view
+carrying per-topic deduplication, and a retention sweep. It is not yet wired to
+any process. The SignalR collector, the `/api/v1/live` namespace with WebSocket
+fan-out, and the dashboard live view remain unimplemented.
 
 ### Architecture baseline through Milestone 3
 
@@ -151,6 +157,12 @@ Formula1-Dashboard/
 │   │   │   ├── request_budget_errors.py
 │   │   │   ├── runtime_policy.py
 │   │   │   └── season_backfill.py
+│   │   ├── live/
+│   │   │   ├── current_view.py
+│   │   │   ├── frames.py
+│   │   │   ├── policy.py
+│   │   │   ├── retention.py
+│   │   │   └── session_log.py
 │   │   ├── main.py
 │   │   └── worker.py
 │   ├── tests/
@@ -170,6 +182,11 @@ Formula1-Dashboard/
 │   │   ├── test_freshness_policy.py
 │   │   ├── test_health.py
 │   │   ├── test_historical_session_contracts.py
+│   │   ├── test_live_current_view.py
+│   │   ├── test_live_frames.py
+│   │   ├── test_live_policy.py
+│   │   ├── test_live_retention.py
+│   │   ├── test_live_session_log.py
 │   │   ├── test_runtime_policy.py
 │   │   ├── test_request_budget.py
 │   │   ├── test_season_endpoint.py
@@ -381,6 +398,38 @@ Formula1-Dashboard/
   Capping table height and shrinking chrome brings lap selection and its
   calculated output onto adjacent screens, and tabular figures let timing
   values be compared down a column.
+- Date: 2026-07-29
+- Status: implemented
+
+### Ephemeral live-timing store
+
+- Decision: Implement the live-timing storage foundation as a synchronous,
+  self-contained `app/live` module holding validated settings, untrusted-frame
+  normalization, an append-only JSONL session log, an in-memory latest-state
+  view, and a retention sweep. The module imports nothing from `app.db` or
+  `app.ingestion` and writes no sporting data.
+- Rationale: Keeping the core synchronous and pure makes it testable under the
+  existing pytest setup with no new dependency, and confines asynchronous code
+  to the later transport edges. Frame-level deduplication lives in the current
+  view, so replays after a reconnect are discarded by comparing a per-topic
+  sequence rather than by persisting resume state.
+- Date: 2026-07-29
+- Status: implemented
+
+### Live session log safety boundaries
+
+- Decision: Treat both upstream frames and log file names as untrusted. Accept
+  only an allowlist of documented feed topics; reject non-mapping payloads,
+  non-string keys, non-finite floats, binary values, and payloads nested beyond
+  16 levels; redact values whose key matches a sensitive fragment; slugify
+  feed-supplied event and session names to `[a-z0-9-]` and require the resolved
+  log path to stay inside the log directory; and enforce a per-log size cap that
+  marks a session log-degraded instead of continuing to write.
+- Rationale: Log file names are composed from feed-supplied event names, which
+  makes slugification a path-traversal control rather than cosmetic. Payload
+  validation keeps unserializable or hostile content out of the log, and the
+  size cap exists because filling the disk is a worse failure than losing a
+  disposable log.
 - Date: 2026-07-29
 - Status: implemented
 
@@ -1574,10 +1623,16 @@ race-run classification remain intentionally unimplemented.
    `docs/LIVE_TIMING_DESIGN.md`. The storage and handoff questions are settled:
    live frames never enter the sporting-data tables, so no migration is
    required and no finalization or reconciliation step exists.
-2. Implement the on-demand live collector, per-session JSONL logging with size
-   caps, the in-memory current view, the retention sweep, the `/api/v1/live`
-   endpoint namespace with WebSocket fan-out, and a separate dashboard live
-   view.
+2. Wire the implemented `app/live` store into a running process: the on-demand
+   SignalR collector behind a protocol with controlled doubles, a scheduled
+   retention sweep, the directory-level size cap, a dedicated log volume in
+   `compose.yaml`, the `/api/v1/live` endpoint namespace with WebSocket
+   fan-out, and a separate dashboard live view. Settings, frame normalization,
+   the JSONL session log, the in-memory current view, and the sweep function
+   are already implemented and tested. This step introduces the project's first
+   asynchronous code, so it also decides whether the collector runs inside the
+   `api` process or as its own Compose service, and whether a test dependency
+   such as `pytest-asyncio` is added.
 3. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
 4. Before production, add authentication/authorization, secret management,
@@ -1631,6 +1686,11 @@ Database integration tests additionally require `TEST_DATABASE_URL` and a
 migrated PostgreSQL database. The complete suite passed with 420 tests against
 an isolated PostgreSQL 17 database after the runtime schema-compatibility
 repair. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
+
+The live-timing store added 78 tests, for 498 collected. Without
+`TEST_DATABASE_URL` the suite reports 389 passed and 109 skipped; the skips are
+the database integration tests, which the live module does not use because it
+touches no database.
 
 ## Known Issues and Technical Debt
 
