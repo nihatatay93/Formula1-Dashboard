@@ -34,7 +34,7 @@ class IdleFeed:
 
     async def stream(self) -> AsyncIterator[RawFrame]:
         await asyncio.Event().wait()
-        yield RawFrame("TimingData", {}, 1)  # pragma: no cover
+        yield RawFrame("TimingData", {})  # pragma: no cover
 
     async def close(self) -> None:
         self.closed = True
@@ -42,7 +42,7 @@ class IdleFeed:
 
 class SingleFrameFeed:
     async def stream(self) -> AsyncIterator[RawFrame]:
-        yield RawFrame("TimingData", {"Position": 1}, 1)
+        yield RawFrame("TimingData", {"Lines": {"1": {}}}, initial=True)
         await asyncio.Event().wait()
 
     async def close(self) -> None:
@@ -139,7 +139,7 @@ async def test_collected_frames_are_visible_through_the_service(
     await asyncio.sleep(0.05)
 
     assert collector.stats.accepted == 1
-    assert collector.view.last_sequence("TimingData") == 1
+    assert "TimingData" in collector.view.topics
     await live.stop_session()
 
 

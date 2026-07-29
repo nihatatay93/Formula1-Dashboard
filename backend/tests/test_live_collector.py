@@ -90,8 +90,8 @@ def build(
 async def test_accepted_frames_reach_the_view_and_the_log(tmp_path: Path) -> None:
     feed = ScriptedFeed(
         [
-            RawFrame("TimingData", {"Position": 1}, 1),
-            RawFrame("TrackStatus", {"Status": "1"}, 1),
+            RawFrame("TimingData", {"Lines": {"1": {}}}, initial=True),
+            RawFrame("TrackStatus", {"Status": "1"}, initial=True),
         ]
     )
     collector, _ = build(tmp_path, [feed])
@@ -99,7 +99,7 @@ async def test_accepted_frames_reach_the_view_and_the_log(tmp_path: Path) -> Non
     await collector.run()
 
     assert collector.stats.accepted == 2
-    assert collector.view.last_sequence("TimingData") == 1
+    assert set(collector.view.topics) == {"TimingData", "TrackStatus"}
     assert [frame.topic for frame in iter_frames(collector.log_path)] == [
         "TimingData",
         "TrackStatus",
@@ -112,7 +112,7 @@ async def test_accepted_frames_reach_the_view_and_the_log(tmp_path: Path) -> Non
 async def test_unknown_topic_is_counted_and_never_logged(tmp_path: Path) -> None:
     collector, _ = build(
         tmp_path,
-        [ScriptedFeed([RawFrame("CarData.z", {"x": 1}, 1)])],
+        [ScriptedFeed([RawFrame("Nope.Unknown", {"x": 1})])],
     )
 
     await collector.run()
@@ -129,9 +129,9 @@ async def test_malformed_payload_is_counted_by_reason(tmp_path: Path) -> None:
         [
             ScriptedFeed(
                 [
-                    RawFrame("TimingData", "not-a-mapping", 1),
-                    RawFrame("TimingData", {"gap": float("nan")}, 2),
-                    RawFrame("TimingData", {"ok": True}, -5),
+                    RawFrame("TimingData", "not-a-mapping"),
+                    RawFrame("TimingData", {"gap": float("nan")}),
+                    RawFrame("CarData.z", "base64-deflate-payload"),
                 ]
             )
         ],
@@ -141,12 +141,12 @@ async def test_malformed_payload_is_counted_by_reason(tmp_path: Path) -> None:
 
     assert collector.stats.rejected == {
         "malformed_payload": 2,
-        "invalid_sequence": 1,
+        "ignored_topic": 1,
     }
 
 
 @pytest.mark.asyncio
-async def test_replayed_sequence_is_counted_as_duplicate_not_appended(
+async def test_repeated_delta_is_counted_as_duplicate_not_appended(
     tmp_path: Path,
 ) -> None:
     collector, _ = build(
@@ -154,9 +154,9 @@ async def test_replayed_sequence_is_counted_as_duplicate_not_appended(
         [
             ScriptedFeed(
                 [
-                    RawFrame("TimingData", {"Position": 1}, 5),
-                    RawFrame("TimingData", {"Position": 9}, 5),
-                    RawFrame("TimingData", {"Position": 9}, 3),
+                    RawFrame("TimingData", {"Lines": {"1": {"Position": "5"}}}),
+                    RawFrame("TimingData", {"Lines": {"1": {"Position": "5"}}}),
+                    RawFrame("TimingData", {"Lines": {"1": {"Position": "5"}}}),
                 ]
             )
         ],
@@ -175,10 +175,10 @@ async def test_upstream_error_reconnects_with_backoff(tmp_path: Path) -> None:
         tmp_path,
         [
             ScriptedFeed(
-                [RawFrame("TimingData", {"Position": 1}, 1)],
+                [RawFrame("TimingData", {"Lines": {"1": {}}}, initial=True)],
                 error=ConnectionResetError("feed dropped"),
             ),
-            ScriptedFeed([RawFrame("TimingData", {"Position": 2}, 2)]),
+            ScriptedFeed([RawFrame("TimingData", {"Lines": {"2": {}}})]),
         ],
         stop_after_sleeps=2,
     )
@@ -195,23 +195,29 @@ async def test_upstream_error_reconnects_with_backoff(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_reconnect_replay_is_harmless_and_deduplicated(tmp_path: Path) -> None:
     replayed = [
-        RawFrame("TimingData", {"Position": 1}, 1),
-        RawFrame("TimingData", {"Position": 2}, 2),
+        RawFrame("TimingData", {"Lines": {"1": {"Position": "1"}}}, initial=True),
+        RawFrame("TimingData", {"Lines": {"1": {"Position": "2"}}}),
     ]
     collector, _ = build(
         tmp_path,
         [
             ScriptedFeed(replayed, error=ConnectionResetError("dropped")),
-            ScriptedFeed([*replayed, RawFrame("TimingData", {"Position": 3}, 3)]),
+            ScriptedFeed([*replayed, RawFrame("TimingData", {"Lines": {"1": {"Position": "3"}}})]),
         ],
         stop_after_sleeps=2,
     )
 
     await collector.run()
 
-    assert collector.stats.accepted == 3
-    assert collector.stats.duplicates == 2
-    assert [frame.sequence for frame in iter_frames(collector.log_path)] == [1, 2, 3]
+    # A reconnect resends a snapshot that rewinds state, then the same deltas
+    # roll it forward again. Each step is a real change rather than a duplicate,
+    # so the property that matters is convergence on the correct final state.
+    assert collector.stats.reconnects == 1
+    assert collector.view.topics["TimingData"].payload["Lines"]["1"] == {
+        "Position": "3"
+    }
+    assert collector.stats.duplicates == 0
+    assert len(list(iter_frames(collector.log_path))) == 5
 
 
 @pytest.mark.asyncio
@@ -223,8 +229,8 @@ async def test_log_cap_drops_frames_without_stopping_the_stream(
         [
             ScriptedFeed(
                 [
-                    RawFrame("TimingData", {"Position": 1}, 1),
-                    RawFrame("TimingData", {"Position": 2}, 2),
+                    RawFrame("TimingData", {"Lines": {"1": {"Position": "1"}}}),
+                    RawFrame("TimingData", {"Lines": {"1": {"Position": "2"}}}),
                 ]
             )
         ],
@@ -245,22 +251,22 @@ async def test_restart_rebuilds_the_view_from_an_existing_log(
 ) -> None:
     first, _ = build(
         tmp_path,
-        [ScriptedFeed([RawFrame("TimingData", {"Position": 4}, 4)])],
+        [ScriptedFeed([RawFrame("TimingData", {"Lines": {"1": {"Position": "4"}}}, initial=True)])],
     )
     await first.run()
 
     # A fresh collector over the same log starts from the persisted sequence.
     resumed, _ = build(
         tmp_path,
-        [ScriptedFeed([RawFrame("TimingData", {"Position": 9}, 4)])],
+        [ScriptedFeed([RawFrame("TimingData", {"Lines": {"1": {"Position": "4"}}})])],
     )
-    assert resumed.view.last_sequence("TimingData") == 4
+    assert resumed.view.topics["TimingData"].payload["Lines"]["1"]["Position"] == "4"
 
     await resumed.run()
 
     assert resumed.stats.duplicates == 1
     assert resumed.stats.accepted == 0
-    assert resumed.view.topics["TimingData"].payload == {"Position": 4}
+    assert resumed.view.topics["TimingData"].payload["Lines"]["1"] == {"Position": "4"}
 
 
 @pytest.mark.asyncio
@@ -270,9 +276,9 @@ async def test_subscribers_receive_accepted_frames_only(tmp_path: Path) -> None:
         [
             ScriptedFeed(
                 [
-                    RawFrame("TimingData", {"Position": 1}, 1),
-                    RawFrame("CarData.z", {"x": 1}, 2),
-                    RawFrame("TimingData", {"Position": 1}, 1),
+                    RawFrame("TimingData", {"Lines": {"1": {"Position": "1"}}}),
+                    RawFrame("CarData.z", "compressed"),
+                    RawFrame("TimingData", {"Lines": {"1": {"Position": "1"}}}),
                 ]
             )
         ],
@@ -291,21 +297,27 @@ async def test_subscribers_receive_accepted_frames_only(tmp_path: Path) -> None:
 async def test_slow_subscriber_drops_oldest_instead_of_blocking(
     tmp_path: Path,
 ) -> None:
-    frames = [RawFrame("TimingData", {"Position": n}, n) for n in range(1, 8)]
+    frames = [
+        RawFrame("TimingData", {"Lines": {"1": {"Position": str(n)}}})
+        for n in range(1, 8)
+    ]
     collector, _ = build(tmp_path, [ScriptedFeed(frames)])
     queue = collector.subscribe(max_queue=3)
 
     await collector.run()
 
     assert queue.qsize() == 3
-    assert [queue.get_nowait()["sequence"] for _ in range(3)] == [5, 6, 7]
+    positions = [
+        queue.get_nowait()["payload"]["Lines"]["1"]["Position"] for _ in range(3)
+    ]
+    assert positions == ["5", "6", "7"]
 
 
 @pytest.mark.asyncio
 async def test_unsubscribe_stops_delivery(tmp_path: Path) -> None:
     collector, _ = build(
         tmp_path,
-        [ScriptedFeed([RawFrame("TimingData", {"Position": 1}, 1)])],
+        [ScriptedFeed([RawFrame("TimingData", {"Lines": {"1": {}}}, initial=True)])],
     )
     queue = collector.subscribe()
     collector.unsubscribe(queue)
@@ -323,7 +335,7 @@ async def test_a_failing_close_does_not_break_the_collector(tmp_path: Path) -> N
 
     collector, _ = build(
         tmp_path,
-        [HostileFeed([RawFrame("TimingData", {"Position": 1}, 1)])],
+        [HostileFeed([RawFrame("TimingData", {"Lines": {"1": {}}}, initial=True)])],
     )
 
     await collector.run()
@@ -336,7 +348,7 @@ async def test_a_failing_close_does_not_break_the_collector(tmp_path: Path) -> N
 async def test_status_reports_state_topics_and_counters(tmp_path: Path) -> None:
     collector, _ = build(
         tmp_path,
-        [ScriptedFeed([RawFrame("TimingData", {"Position": 1}, 1)])],
+        [ScriptedFeed([RawFrame("TimingData", {"Lines": {"1": {}}}, initial=True)])],
     )
 
     await collector.run()

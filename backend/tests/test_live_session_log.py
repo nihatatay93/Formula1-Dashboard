@@ -12,15 +12,18 @@ from app.live.session_log import (
     slugify,
 )
 
-RECEIVED_AT = datetime(2026, 8, 21, 13, 4, 11, tzinfo=UTC)
+RECEIVED_AT = datetime(2026, 7, 25, 14, 25, 51, tzinfo=UTC)
 
 
-def frame(sequence: int, topic: str = "TimingData") -> LiveFrame:
+def _position(frame_: LiveFrame) -> object:
+    return frame_.payload["Lines"]["1"]["Position"]
+
+
+def frame(marker: int, topic: str = "TimingData") -> LiveFrame:
     return normalize_frame(
         topic,
-        {"Lines": {"1": {"Position": sequence}}},
+        {"Lines": {"1": {"Position": str(marker)}}},
         received_at=RECEIVED_AT,
-        sequence=sequence,
     )
 
 
@@ -128,7 +131,7 @@ def test_iter_frames_replays_written_frames_in_order(tmp_path: Path) -> None:
         for sequence in (1, 2, 3):
             log.append(frame(sequence))
 
-    assert [item.sequence for item in iter_frames(path)] == [1, 2, 3]
+    assert [_position(item) for item in iter_frames(path)] == ["1", "2", "3"]
 
 
 def test_iter_frames_drops_a_truncated_final_line(tmp_path: Path) -> None:
@@ -137,9 +140,9 @@ def test_iter_frames_drops_a_truncated_final_line(tmp_path: Path) -> None:
         log.append(frame(1))
         log.append(frame(2))
     with path.open("a", encoding="utf-8") as handle:
-        handle.write('{"received_at":"2026-08-21T13:04:11Z","topic":"Timing')
+        handle.write('{"received_at":"2026-07-25T14:25:51Z","topic":"Timing')
 
-    assert [item.sequence for item in iter_frames(path)] == [1, 2]
+    assert [_position(item) for item in iter_frames(path)] == ["1", "2"]
 
 
 def test_iter_frames_skips_blank_and_corrupt_interior_lines(tmp_path: Path) -> None:
@@ -148,7 +151,7 @@ def test_iter_frames_skips_blank_and_corrupt_interior_lines(tmp_path: Path) -> N
     later = frame(2).to_log_line()
     path.write_text(f"{good}\n\nnot-json\n{later}\n", encoding="utf-8")
 
-    assert [item.sequence for item in iter_frames(path)] == [1, 2]
+    assert [_position(item) for item in iter_frames(path)] == ["1", "2"]
 
 
 def test_iter_frames_on_a_missing_file_yields_nothing(tmp_path: Path) -> None:

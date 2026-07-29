@@ -103,7 +103,9 @@ function TopicCard({
     <article className="live-topic">
       <header>
         <strong>{name}</strong>
-        <span>#{state.sequence}</span>
+        <span title="Merged deltas since the last full-state frame">
+          +{state.updates}
+        </span>
       </header>
       <p className="live-topic__time">{formatClock(state.received_at)}</p>
       {entries.length === 0 ? (
@@ -218,14 +220,20 @@ export default function LiveTiming() {
               applied_frames: 0,
               topics: {},
             };
+          const previous = base.topics[message.topic];
+          // The payload is already merged server-side, so this replaces the
+          // topic rather than reapplying a delta on the client.
           return {
             latest_received_at: message.received_at,
             applied_frames: base.applied_frames + 1,
             topics: {
               ...base.topics,
               [message.topic]: {
-                sequence: message.sequence,
                 received_at: message.received_at,
+                feed_timestamp: null,
+                snapshots:
+                  (previous?.snapshots ?? 0) + (message.initial ? 1 : 0),
+                updates: message.initial ? 0 : (previous?.updates ?? 0) + 1,
                 payload: message.payload,
               },
             },

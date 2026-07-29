@@ -22,7 +22,7 @@ SESSION_BODY = {
 
 class SingleFrameFeed:
     async def stream(self) -> AsyncIterator[RawFrame]:
-        yield RawFrame("TimingData", {"Position": 1}, 1)
+        yield RawFrame("TimingData", {"Lines": {"1": {"Position": "1"}}}, initial=True)
         await asyncio.Event().wait()
 
     async def close(self) -> None:
@@ -149,7 +149,7 @@ def test_stream_sends_a_snapshot_then_live_updates(client: TestClient) -> None:
 
         assert snapshot["type"] == "snapshot"
         assert snapshot["record_state"] == "unconfirmed_live"
-        assert snapshot["state"]["topics"]["TimingData"]["sequence"] == 1
+        assert snapshot["state"]["topics"]["TimingData"]["snapshots"] == 1
 
     client.delete("/api/v1/live/session")
 

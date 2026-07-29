@@ -36,9 +36,9 @@ through unrelated content, and selecting a session opens its workspace
 directly.
 The ephemeral live-timing path is implemented inside the `api` process as a
 self-contained `app/live` module that touches no PostgreSQL state: validated
-settings, untrusted-frame normalization with a topic allowlist and redaction, an
-append-only JSONL session log with slugified paths and a size cap, an in-memory
-latest-state view carrying per-topic deduplication, a retention sweep started
+settings, untrusted-frame normalization against the confirmed wire format with a topic allowlist and
+redaction, an append-only JSONL session log with slugified paths and a size cap, an in-memory
+view that deep-merges deltas into accumulated per-topic state, a retention sweep started
 from the FastAPI lifespan, an on-demand collector with unbounded equal-jitter
 reconnect and bounded subscriber fan-out, and a `/api/v1/live` namespace with
 session status, start, stop, and a WebSocket stream. Historical endpoints are
@@ -205,6 +205,7 @@ Formula1-Dashboard/
 │   │   ├── test_live_retention.py
 │   │   ├── test_live_service.py
 │   │   ├── test_live_session_log.py
+│   │   ├── test_live_signalr_contract.py
 │   │   ├── test_runtime_policy.py
 │   │   ├── test_request_budget.py
 │   │   ├── test_season_endpoint.py
@@ -266,10 +267,14 @@ Formula1-Dashboard/
 - `docs/AUTOMATIC_CURRENT_SEASON_PLANNING.md`: Implemented Revision 7
   deferred-event persistence, automatic planning cadence, safety behavior,
   dashboard visibility, and verification.
-- `docs/LIVE_TIMING_DESIGN.md`: Proposed separate ephemeral live path — SignalR
+- `docs/LIVE_TIMING_DESIGN.md`: Separate ephemeral live path — SignalR
   boundary, on-demand connection lifecycle, disposable JSONL session logs,
-  retention sweep, and handoff to the existing archive backfill. Not
-  implemented; requires no migration.
+  retention sweep, and handoff to the existing archive backfill. Implemented
+  except for the SignalR feed provider; requires no migration.
+- `backend/tests/fixtures/live_signalr_qualifying.jsonl`: Trimmed extract of a
+  recorded Hungarian Grand Prix 2026 qualifying session. Every `initial`
+  full-state frame plus representative deltas, including the deeply nested and
+  index-keyed-array cases. Contains no credentials.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
 - `AGENTS.md`: Mandatory repository workflow and context rules.
 
@@ -499,6 +504,45 @@ Formula1-Dashboard/
   view, so replays after a reconnect are discarded by comparing a per-topic
   sequence rather than by persisting resume state.
 - Date: 2026-07-29
+- Status: implemented
+
+### Confirmed SignalR wire format
+
+- Decision: Model frames on the confirmed wire shape
+  `{topic, payload, timestamp, initial}` rather than an invented sequence
+  number. A connect delivers one `initial` full-state frame per topic and every
+  later frame is a deep partial delta. Deltas are deep-merged into accumulated
+  topic state, and an index-keyed mapping applied to a list target patches that
+  array in place. `initial` replaces topic state; a frame that changes nothing is
+  counted as unchanged rather than treated as new data.
+- Rationale: Verified against a recorded Hungarian Grand Prix 2026 qualifying
+  session. The feed has no sequence field, so the earlier sequence-based
+  deduplication was built on something that does not exist. More seriously,
+  replacing topic state with a delta would have destroyed it: a real frame is as
+  small as
+  `{"Lines": {"14": {"Sectors": {"1": {"Segments": {"0": {"Status": 2051}}}}}}}`,
+  and substituting that for `TimingData` would discard the other 21 drivers.
+  `Sectors`, `BestLapTimes` and `Stats` arrive as JSON arrays in the initial
+  frame and as index-keyed objects in deltas, so a naive dict merge would change
+  their type. Because merging is idempotent, replays need no sequence tracking.
+- Date: 2026-07-30
+- Status: implemented
+
+### Live topic scope
+
+- Decision: Consume fourteen timing topics and deliberately drop five, rejecting
+  the dropped ones as `ignored_topic` rather than `unknown_topic`. `CarData.z`
+  and `Position.z` are excluded, along with `AudioStreams`, `ContentStreams` and
+  `TeamRadio`.
+- Rationale: `CarData.z` and `Position.z` are base64 raw-deflate car telemetry
+  and track coordinates and were roughly 39% of frames in the recorded session.
+  They are outside the timing scope of the live view, and decoding them on every
+  frame would enlarge the in-memory view for data the dashboard does not present.
+  Their payloads are strings rather than mappings, so an allowlist that admitted
+  them would also have to widen the payload contract. Separating ignored from
+  unknown keeps a genuinely new topic visible in the counters instead of hiding
+  it among deliberate drops.
+- Date: 2026-07-30
 - Status: implemented
 
 ### Live session log safety boundaries
@@ -1705,12 +1749,12 @@ race-run classification remain intentionally unimplemented.
 
 1. Implement a SignalR feed provider satisfying the `LiveFeed` protocol in
    `app/live/collector.py`, and configure it through `app/live/state.py`. Until
-   then `POST /api/v1/live/session` returns `503 live_feed_unconfigured`. This
-   needs an asynchronous WebSocket client dependency and the live
-   negotiate/connect handshake, neither of which can be verified against the
-   feed outside a session weekend, so it should land with contract tests over
-   recorded frames rather than a live connection. Confirm the topic allowlist in
-   `app/live/frames.py` against the real feed at the same time.
+   then `POST /api/v1/live/session` returns `503 live_feed_unconfigured`. The
+   frame contract is now confirmed against a recorded session and covered by
+   `tests/test_live_signalr_contract.py`, so what remains is the transport: an
+   asynchronous WebSocket client dependency and the negotiate/connect handshake.
+   Those cannot be verified outside a session weekend, so the provider should
+   ship with a replay feed over recorded frames plus a thin live client.
 2. Replace the live view's generic topic cards with purpose-built renderings
    once the feed's payload schemas are confirmed against a real session, for
    example a position/gap leaderboard from `TimingData` and a stint view from
@@ -1769,8 +1813,8 @@ migrated PostgreSQL database. The complete suite passed with 420 tests against
 an isolated PostgreSQL 17 database after the runtime schema-compatibility
 repair. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
 
-The live-timing path added 122 tests, for 542 collected. Without
-`TEST_DATABASE_URL` the suite reports 433 passed and 109 skipped; the skips are
+The live-timing path added 150 tests, for 570 collected. Without
+`TEST_DATABASE_URL` the suite reports 461 passed and 109 skipped; the skips are
 the database integration tests, which the live module does not use because it
 touches no database. Asynchronous tests require the `pytest-asyncio` dev
 dependency with `asyncio_mode = "strict"`.

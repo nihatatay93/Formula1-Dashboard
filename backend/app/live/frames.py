@@ -1,12 +1,18 @@
 """Normalization of untrusted SignalR live-timing frames.
 
-Upstream frames are untrusted input. Unknown topics, unserializable payloads,
-and absurdly nested payloads are rejected with a reason so the collector can
-count and drop them instead of writing them to a session log.
+The wire format is confirmed against a recorded Hungarian Grand Prix 2026
+qualifying session: each frame is ``{topic, payload, timestamp, initial}``.
+There is no sequence number. A connect delivers one ``initial`` frame per topic
+carrying full state, and every later frame is a deep partial delta.
+
+Upstream frames are untrusted input. Unknown topics, unserializable payloads and
+absurdly nested payloads are rejected with a reason so the collector can count
+and drop them. Topics that are deliberately out of scope are rejected as
+``IGNORED_TOPIC`` rather than ``UNKNOWN_TOPIC``, so a genuinely new topic stays
+visible in the counters.
 
 Connection credentials cannot reach a frame, because they live in the client
-configuration rather than the feed. The redaction pass here is defence in depth
-against accidentally embedding one, not the primary control.
+configuration rather than the feed. The redaction pass here is defence in depth.
 """
 
 from __future__ import annotations
@@ -18,21 +24,40 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
-MAX_PAYLOAD_DEPTH = 16
+MAX_PAYLOAD_DEPTH = 24
 REDACTED = "[redacted]"
 
-#: Documented feed topics required for session state, entry identity, lap
-#: timing, and track status. Everything else is dropped.
-LIVE_TOPICS: frozenset[str] = frozenset(
+#: Topics whose state the live view is built from.
+CONSUMED_TOPICS: frozenset[str] = frozenset(
     {
+        "DriverList",
+        "ExtrapolatedClock",
+        "Heartbeat",
+        "LapCount",
+        "RaceControlMessages",
+        "SessionData",
         "SessionInfo",
         "SessionStatus",
-        "LapCount",
-        "DriverList",
-        "TimingData",
         "TimingAppData",
+        "TimingData",
+        "TimingStats",
+        "TopThree",
         "TrackStatus",
-        "RaceControlMessages",
+        "WeatherData",
+    }
+)
+
+#: Known topics that are deliberately dropped. CarData.z and Position.z are
+#: base64 raw-deflate car telemetry and track coordinates: roughly 39% of frames
+#: in a recorded session, and outside the timing scope of the live view. The
+#: remainder are media streams.
+IGNORED_TOPICS: frozenset[str] = frozenset(
+    {
+        "AudioStreams",
+        "CarData.z",
+        "ContentStreams",
+        "Position.z",
+        "TeamRadio",
     }
 )
 
@@ -53,7 +78,7 @@ SENSITIVE_KEY_FRAGMENTS: frozenset[str] = frozenset(
 
 class FrameRejection(StrEnum):
     UNKNOWN_TOPIC = "unknown_topic"
-    INVALID_SEQUENCE = "invalid_sequence"
+    IGNORED_TOPIC = "ignored_topic"
     INVALID_TIMESTAMP = "invalid_timestamp"
     MALFORMED_PAYLOAD = "malformed_payload"
     PAYLOAD_TOO_DEEP = "payload_too_deep"
@@ -71,7 +96,11 @@ class LiveFrameRejectedError(ValueError):
 class LiveFrame:
     received_at: datetime
     topic: str
-    sequence: int
+    #: True for a connect snapshot, which replaces topic state instead of
+    #: merging into it.
+    initial: bool
+    #: The feed's own timestamp. Absent on initial frames, which carry "".
+    feed_timestamp: datetime | None
     payload: Mapping[str, object]
 
     def to_log_line(self) -> str:
@@ -79,7 +108,12 @@ class LiveFrame:
             {
                 "received_at": _format_timestamp(self.received_at),
                 "topic": self.topic,
-                "seq": self.sequence,
+                "initial": self.initial,
+                "feed_timestamp": (
+                    None
+                    if self.feed_timestamp is None
+                    else _format_timestamp(self.feed_timestamp)
+                ),
                 "payload": self.payload,
             },
             separators=(",", ":"),
@@ -95,21 +129,19 @@ class LiveFrame:
             raise LiveFrameRejectedError(FrameRejection.MALFORMED_PAYLOAD) from None
         if not isinstance(decoded, Mapping):
             raise LiveFrameRejectedError(FrameRejection.MALFORMED_PAYLOAD)
-        raw_timestamp = decoded.get("received_at")
-        if not isinstance(raw_timestamp, str):
+        raw_received = decoded.get("received_at")
+        if not isinstance(raw_received, str):
             raise LiveFrameRejectedError(FrameRejection.INVALID_TIMESTAMP)
-        try:
-            received_at = datetime.fromisoformat(raw_timestamp)
-        except ValueError:
-            raise LiveFrameRejectedError(FrameRejection.INVALID_TIMESTAMP) from None
+        received_at = _parse_timestamp(raw_received)
+        if received_at is None:
+            raise LiveFrameRejectedError(FrameRejection.INVALID_TIMESTAMP)
         topic = decoded.get("topic")
-        if not isinstance(topic, str):
-            raise LiveFrameRejectedError(FrameRejection.UNKNOWN_TOPIC)
         return normalize_frame(
-            topic,
+            topic if isinstance(topic, str) else None,
             decoded.get("payload"),
             received_at=received_at,
-            sequence=decoded.get("seq"),
+            initial=decoded.get("initial"),
+            feed_timestamp=decoded.get("feed_timestamp"),
         )
 
 
@@ -118,26 +150,60 @@ def normalize_frame(
     payload: object,
     *,
     received_at: datetime,
-    sequence: object,
+    initial: object = False,
+    feed_timestamp: object = None,
 ) -> LiveFrame:
     """Validate one upstream frame, or raise ``LiveFrameRejectedError``."""
-    if not isinstance(topic, str) or topic not in LIVE_TOPICS:
+    if not isinstance(topic, str) or not topic:
         raise LiveFrameRejectedError(FrameRejection.UNKNOWN_TOPIC)
-    if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
-        raise LiveFrameRejectedError(FrameRejection.INVALID_SEQUENCE)
+    if topic in IGNORED_TOPICS:
+        raise LiveFrameRejectedError(FrameRejection.IGNORED_TOPIC)
+    if topic not in CONSUMED_TOPICS:
+        raise LiveFrameRejectedError(FrameRejection.UNKNOWN_TOPIC)
+    if not isinstance(initial, bool):
+        raise LiveFrameRejectedError(FrameRejection.MALFORMED_PAYLOAD)
     if not isinstance(received_at, datetime):
         raise LiveFrameRejectedError(FrameRejection.INVALID_TIMESTAMP)
     if received_at.tzinfo is None or received_at.utcoffset() is None:
         raise LiveFrameRejectedError(FrameRejection.INVALID_TIMESTAMP)
+    # Only mapping payloads are consumed. The string payloads in the feed belong
+    # to the compressed topics, which are already rejected as ignored above.
     if not isinstance(payload, Mapping):
         raise LiveFrameRejectedError(FrameRejection.MALFORMED_PAYLOAD)
 
     return LiveFrame(
         received_at=received_at,
         topic=topic,
-        sequence=sequence,
+        initial=initial,
+        feed_timestamp=_normalize_feed_timestamp(feed_timestamp),
         payload=_normalize_mapping(payload, depth=0),
     )
+
+
+def _normalize_feed_timestamp(value: object) -> datetime | None:
+    """The feed sends "" on initial frames and an ISO instant afterwards."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise LiveFrameRejectedError(FrameRejection.INVALID_TIMESTAMP)
+        return value
+    if not isinstance(value, str):
+        raise LiveFrameRejectedError(FrameRejection.INVALID_TIMESTAMP)
+    if not value.strip():
+        return None
+    parsed = _parse_timestamp(value)
+    if parsed is None:
+        raise LiveFrameRejectedError(FrameRejection.INVALID_TIMESTAMP)
+    return parsed
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def _normalize_mapping(

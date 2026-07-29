@@ -1,7 +1,7 @@
 # Live Timing as a Separate Ephemeral Path
 
-Status: **proposed**
-Date: **2026-07-29**
+Status: **implemented, except the SignalR feed provider**
+Date: **2026-07-30**
 
 ## Purpose
 
@@ -54,8 +54,16 @@ The collector is isolated behind a protocol, as the FastF1 loader is, so the
 automated suite runs against controlled doubles and never opens a live upstream
 connection.
 
-- Only the documented feed topics required for session state, entry identity,
-  lap timing, and track status are consumed.
+- Fourteen timing topics are consumed: `SessionInfo`, `SessionStatus`,
+  `SessionData`, `DriverList`, `TimingData`, `TimingAppData`, `TimingStats`,
+  `TopThree`, `TrackStatus`, `RaceControlMessages`, `ExtrapolatedClock`,
+  `LapCount`, `WeatherData` and `Heartbeat`.
+- Five known topics are deliberately dropped and reported as `ignored_topic`
+  rather than `unknown_topic`, so a genuinely new topic stays visible in the
+  counters. `CarData.z` and `Position.z` are base64 raw-deflate car telemetry and
+  track coordinates — roughly 39% of frames in the recorded session — and are
+  outside the timing scope of the live view. `AudioStreams`, `ContentStreams`
+  and `TeamRadio` are media.
 - Upstream frames are untrusted input. Unknown topics, unknown fields, and
   unparseable frames are counted and dropped.
 - No credential, token, cookie, or session identifier is written to the JSONL
@@ -74,14 +82,50 @@ A live session is started on demand when a user opens the live view, rather
 than by a always-running collector.
 
 - One collector owns at most one live session at a time.
-- States are `disconnected → connecting → subscribed → streaming → stopped`.
-- Reconnect reuses the existing equal-jitter backoff calculation. Live
-  reconnects never consume any session's archive retry budget.
-- On reconnect the collector requests the feed's current full state and rebuilds
-  its in-memory view rather than assuming continuity. Because the log is
-  append-only and disposable, a replayed frame is harmless: it is appended again
-  and the in-memory view converges on the newer value.
-- No resume token, sequence persistence, or gap ledger is required.
+- States are `disconnected → connecting → streaming → stopped`.
+- Reconnect uses an unbounded equal-jitter delay of its own
+  (`calculate_reconnect_delay`). It deliberately does not reuse
+  `calculate_retry_schedule` from the archive runtime policy: that shares the
+  formula but enforces the archive retry budget and raises once attempts are
+  exhausted, whereas live reconnects are unbounded and must never consume a
+  session's archive retry budget.
+- On reconnect the feed resends full state per topic, which replaces the
+  in-memory topic state rather than merging into it.
+- No resume token, sequence persistence, or gap ledger is required. See
+  *Wire Format and Merge Semantics*.
+
+## Wire Format and Merge Semantics
+
+Confirmed against a recorded Hungarian Grand Prix 2026 qualifying session. Each
+frame is:
+
+```json
+{"topic": "TimingData", "payload": {}, "timestamp": "2026-07-25T14:43:27.7867398Z", "initial": false}
+```
+
+**There is no sequence number.** A connect delivers one `initial` frame per topic
+carrying full state with an empty `timestamp`; every later frame is a deep
+partial delta carrying the feed's own high-precision instant.
+
+Deltas must be merged, not substituted. A real frame is as small as
+
+```json
+{"Lines": {"14": {"Sectors": {"1": {"Segments": {"0": {"Status": 2051}}}}}}}
+```
+
+and replacing `TimingData` state with that would discard the other 21 drivers.
+
+**Arrays are patched as index-keyed objects.** `Sectors`, `BestLapTimes` and
+`Stats` arrive as JSON arrays in the initial frame and as `{"1": {...}}` in
+deltas, so an index-keyed mapping applied to a list target updates that array in
+place rather than retyping it. An out-of-range index is dropped rather than
+extending the array, so untrusted input cannot grow state without bound.
+
+**Deduplication falls out of the merge.** Applying the same delta twice yields
+the same state, so no sequence tracking is required: a re-applied frame reports
+no change and is counted as unchanged. A reconnect whose snapshot rewinds state
+will legitimately re-apply the deltas that follow it, converging on the correct
+state rather than deduplicating.
 
 ## Storage
 
@@ -97,7 +141,7 @@ live-sessions/{utc_date}__{event_slug}__{session_key}.jsonl
 Each accepted frame appends one line:
 
 ```json
-{"received_at":"2026-08-21T13:04:11.482Z","topic":"TimingData","seq":18422,"payload":{}}
+{"received_at":"2026-07-25T14:43:27.786Z","topic":"TimingData","initial":false,"feed_timestamp":"2026-07-25T14:43:27.786739Z","payload":{}}
 ```
 
 - Writes are append-and-flush. No `fsync` per line: losing the last few lines to

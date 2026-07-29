@@ -210,16 +210,18 @@ describe("LiveTiming", () => {
         applied_frames: 4,
         topics: {
           TimingData: {
-            sequence: 18,
             received_at: "2026-08-21T13:04:11Z",
-            payload: { Lines: { "1": { Position: 1 } }, SessionPart: 2 },
+            feed_timestamp: "2026-08-21T13:04:11Z",
+            snapshots: 1,
+            updates: 18,
+            payload: { Lines: { "1": { Position: "1" } }, SessionPart: 2 },
           },
         },
       },
     });
 
     expect(await screen.findByText("TimingData")).toBeVisible();
-    expect(screen.getByText("#18")).toBeInTheDocument();
+    expect(screen.getByText("+18")).toBeInTheDocument();
     expect(screen.getByText("Live")).toBeInTheDocument();
   });
 
@@ -238,14 +240,14 @@ describe("LiveTiming", () => {
     socket().emit({
       type: "update",
       topic: "TrackStatus",
-      sequence: 7,
+      initial: false,
       received_at: "2026-08-21T13:05:00Z",
       payload: { Status: "2", Message: "Yellow" },
     });
 
     const card = (await screen.findByText("TrackStatus")).closest("article");
     expect(card).not.toBeNull();
-    expect(within(card as HTMLElement).getByText("#7")).toBeInTheDocument();
+    expect(within(card as HTMLElement).getByText("+1")).toBeInTheDocument();
     expect(within(card as HTMLElement).getByText("Yellow")).toBeInTheDocument();
   });
 
@@ -259,7 +261,7 @@ describe("LiveTiming", () => {
     socket().emit({
       type: "update",
       topic: "LapCount",
-      sequence: 2,
+      initial: false,
       received_at: "2026-08-21T13:06:00Z",
       payload: { CurrentLap: 12 },
     });

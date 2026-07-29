@@ -22,7 +22,7 @@ from typing import Protocol
 
 from app.live.current_view import LiveCurrentView, rebuild_from_log
 from app.live.frames import (
-    LIVE_TOPICS,
+    CONSUMED_TOPICS,
     FrameRejection,
     LiveFrame,
     LiveFrameRejectedError,
@@ -41,11 +41,17 @@ class CollectorState(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class RawFrame:
-    """One frame as received from the feed, before validation."""
+    """One frame as received from the feed, before validation.
+
+    Mirrors the confirmed wire shape ``{topic, payload, timestamp, initial}``.
+    There is no sequence number: a connect delivers ``initial`` full state per
+    topic and every later frame is a deep partial delta.
+    """
 
     topic: str
     payload: object
-    sequence: int
+    initial: bool = False
+    timestamp: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,7 +174,7 @@ class LiveCollector:
                 "event_name": self._identity.event_name,
                 "session_key": self._identity.session_key,
             },
-            "topics_subscribed": sorted(LIVE_TOPICS),
+            "topics_subscribed": sorted(CONSUMED_TOPICS),
             "log_degraded": self.log_degraded,
             "subscribers": len(self._subscribers),
             "stats": self._stats.as_dict(),
@@ -238,12 +244,15 @@ class LiveCollector:
                 getattr(raw, "topic", None),
                 getattr(raw, "payload", None),
                 received_at=self._clock(),
-                sequence=getattr(raw, "sequence", None),
+                initial=bool(getattr(raw, "initial", False)),
+                feed_timestamp=getattr(raw, "timestamp", None),
             )
         except LiveFrameRejectedError as rejected:
             self._stats.record_rejection(rejected.reason)
             return
 
+        # A merge that changes nothing is a replay, which a reconnect makes
+        # routine. It is counted rather than logged again.
         if not self._view.apply(frame):
             self._stats.duplicates += 1
             return
@@ -256,12 +265,15 @@ class LiveCollector:
         self._publish(frame)
 
     def _publish(self, frame: LiveFrame) -> None:
+        # Subscribers receive the merged topic state rather than the raw delta,
+        # so a client that joined mid-session never has to reconstruct it.
+        state = self._view.topics.get(frame.topic)
         update = {
             "type": "update",
             "topic": frame.topic,
-            "sequence": frame.sequence,
+            "initial": frame.initial,
             "received_at": frame.received_at.isoformat(),
-            "payload": frame.payload,
+            "payload": {} if state is None else state.payload,
         }
         for queue in tuple(self._subscribers):
             _offer(queue, update)

@@ -404,9 +404,16 @@ export interface LiveStatus {
   session: LiveCollectorStatus | null;
 }
 
+/**
+ * The feed has no sequence number. A connect delivers one full-state frame per
+ * topic and every later frame is a deep partial delta, so the backend publishes
+ * accumulated merged state and counts snapshots and merged updates.
+ */
 export interface LiveTopicState {
-  sequence: number;
   received_at: string;
+  feed_timestamp: string | null;
+  snapshots: number;
+  updates: number;
   payload: Record<string, unknown>;
 }
 
@@ -432,8 +439,9 @@ export type LiveStreamMessage =
   | {
       type: "update";
       topic: string;
-      sequence: number;
+      initial: boolean;
       received_at: string;
+      /** Merged topic state, not the raw delta. */
       payload: Record<string, unknown>;
     }
   | { type: "error"; code: string; message: string };
