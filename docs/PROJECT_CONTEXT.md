@@ -357,6 +357,49 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: implemented
 
+### Dashboard visual system
+
+- Decision: Replace the condensed italic display treatment with a single
+  layered-graphite design system: a reduced type scale whose largest heading is
+  2rem, red reserved for attention and cyan for live/active data, monospace
+  tabular figures for every lap, sector, and delta value, sticky table headers
+  with height-capped scroll regions for results and lap summaries, and no
+  global smooth scrolling. Keep all existing class names, the three-view
+  shell, and the fixed mobile section navigation unchanged.
+- Rationale: The previous treatment spent roughly the first 850 vertical
+  pixels of the Session Workspace on a two-line display heading, a repeated
+  banner, and a section header before any result row, and left the selected-lap
+  pace analysis about 1,300 pixels below the results table it depends on.
+  Capping table height and shrinking chrome brings lap selection and its
+  calculated output onto adjacent screens, and tabular figures let timing
+  values be compared down a column.
+- Date: 2026-07-29
+- Status: implemented
+
+### Season picker control
+
+- Decision: Replace the native `<select>` season picker with a listbox
+  following the ARIA combobox pattern: focus stays on the trigger, the active
+  option is tracked with `aria-activedescendant`, and Arrow/Home/End/Enter/
+  Escape plus outside-pointer dismissal are supported. Browser tests select a
+  season through the `combobox` and `option` roles rather than `selectOption`.
+- Rationale: A native select renders an operating-system popup that cannot be
+  themed with the rest of the dashboard, so the one control the reader touches
+  most often was the one control that ignored the design system.
+- Date: 2026-07-29
+- Status: implemented
+
+### Deferred-event notice scope
+
+- Decision: Render the deferred future-event notice only in the Overview and
+  Season Sessions views, not in the Session Workspace.
+- Rationale: The notice describes calendar coverage that is not yet ingestible
+  and has no bearing on an already-completed session's archive snapshot, so
+  repeating it in the workspace consumed prime vertical space without
+  informing the task at hand.
+- Date: 2026-07-29
+- Status: implemented
+
 ### Database foundation
 
 - Decision: Use PostgreSQL as the primary database. Use standard PostgreSQL
@@ -808,14 +851,34 @@ Formula1-Dashboard/
 ### Ephemeral selected-lap pace analysis
 
 - Decision: Calculate manual pace analysis in the web client from explicitly
-  selected, already loaded lap summaries; allow at most two participant/team
-  selections; show average, fastest, spread, and quality facts; bind every
-  selection to the session and completed snapshot timestamp; and clear
-  incompatible selections when the snapshot changes.
+  selected, already loaded lap summaries; open with two comparison slots and
+  allow the reader to add or remove slots between two and four; show average,
+  fastest, spread, and quality facts per participant; bind every selection to
+  the session and completed snapshot timestamp; and clear incompatible
+  selections when the snapshot changes.
 - Rationale: Deliver transparent practice long-run comparison immediately
   without inventing an automatic classifier, adding server aggregates, or
   committing to a saved-analysis schema before web/iOS sharing is required.
-- Date: 2026-07-28
+  Two slots remain the default because most comparisons are head-to-head, and
+  four is the ceiling at which per-participant cards and distinct trend lines
+  stay readable. Removing a slot is refused while it would strand an existing
+  selection.
+- Date: 2026-07-29
+- Status: implemented
+
+### Multi-participant pace ranking and trend visualization
+
+- Decision: Keep the direct "X is N faster on the selected average" sentence
+  for exactly two participants, and switch to a rank-ordered list with gaps to
+  the fastest average for three or more. Equal averages share a rank. Plot the
+  selected laps of every participant as one lap-number/lap-time trend chart
+  coloured by team, drawing the second holder of a repeated team colour with a
+  dashed stroke.
+- Rationale: "X is faster than Y" stops describing the data beyond two
+  participants, and aggregate averages hide degradation, traffic, and
+  out-laps that a per-lap trend makes visible. Team-mates share one colour in
+  the archive, so a stroke pattern is needed to keep their lines distinct.
+- Date: 2026-07-29
 - Status: implemented
 
 ### Season overview read consistency

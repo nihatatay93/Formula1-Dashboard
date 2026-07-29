@@ -138,7 +138,11 @@ test("opens a completed session and traverses bounded lap pages", async ({
   await page
     .getByRole("checkbox", { name: "Select lap 2 for pace analysis" })
     .check();
-  await expect(page.getByText("1:30.750")).toBeVisible();
+  // Scoped to the participant card: the trend chart's axis labels are also
+  // formatted lap times and would otherwise match too.
+  await expect(
+    page.locator(".pace-analysis__card").first().getByText("1:30.750"),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Load next 50 laps" }).click();
   await expect(page.getByText("4 laps loaded")).toBeVisible();
   await expect(page.getByText("End of stored lap summaries")).toBeVisible();
@@ -169,7 +173,11 @@ test("changes season, starts synchronization, and displays job progress", async 
 }) => {
   await page.goto("/");
 
-  await page.getByLabel("Championship season").selectOption("2025");
+  // The season picker is a custom listbox, not a native select.
+  await page
+    .getByRole("combobox", { name: /Championship season/ })
+    .click();
+  await page.getByRole("option", { name: "2025" }).click();
   await expect(
     page.getByRole("heading", { name: "2025 season control" }),
   ).toBeVisible();

@@ -30,6 +30,19 @@ const getSessionDetail = vi.mocked(api.getSessionDetail);
 const getSessionResults = vi.mocked(api.getSessionResults);
 const getSessionLaps = vi.mocked(api.getSessionLaps);
 
+/**
+ * Metric values also appear as chart axis labels, so pace assertions are
+ * scoped to the participant card they belong to.
+ */
+function paceCard(index: number): HTMLElement {
+  const cards = document.querySelectorAll(".pace-analysis__card");
+  const card = cards[index];
+  if (!card) {
+    throw new Error(`no pace analysis card at index ${index}`);
+  }
+  return card as HTMLElement;
+}
+
 function renderExplorer(onClose = vi.fn()) {
   render(
     <SessionExplorer
@@ -206,7 +219,9 @@ describe("SessionExplorer", () => {
       }),
     );
 
-    expect(screen.getByText("1:30.750")).toBeInTheDocument();
+    expect(
+      within(paceCard(0)).getByText("1:30.750"),
+    ).toBeInTheDocument();
     expect(screen.getByText("2 selected · laps 1, 2")).toBeInTheDocument();
 
     const piastriRow = screen.getByRole("row", { name: /Oscar Piastri/ });
@@ -223,7 +238,9 @@ describe("SessionExplorer", () => {
       }),
     );
 
-    expect(screen.getByText("1:31.500")).toBeInTheDocument();
+    expect(
+      within(paceCard(1)).getByText("1:31.500"),
+    ).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(
       "Lando Norris is 0.750s faster on the selected average.",
     );
@@ -237,6 +254,119 @@ describe("SessionExplorer", () => {
       screen.queryByText("Lando Norris is 0.750s faster"),
     ).not.toBeInTheDocument();
     expect(screen.getByText("1/2 comparison slots")).toBeInTheDocument();
+  });
+
+  it("adds comparison slots up to four and refuses to strand a selection", async () => {
+    const user = userEvent.setup();
+    getSessionDetail.mockResolvedValue(sessionDetail);
+    getSessionResults.mockResolvedValue(sessionResults);
+    getSessionLaps.mockImplementation(
+      async (_sessionId, sessionEntryId) =>
+        sessionEntryId === sessionResults.items[1].session_entry_id
+          ? piastriLapPage
+          : {
+              ...firstLapPage,
+              page: { limit: 50, has_more: false, next_after_lap: null },
+            },
+    );
+
+    renderExplorer();
+
+    await screen.findByRole("row", { name: /Lando Norris/ });
+    expect(screen.getByText("0/2 comparison slots")).toBeInTheDocument();
+
+    const addSlot = screen.getByRole("button", {
+      name: "Add a comparison slot",
+    });
+    const removeSlot = screen.getByRole("button", {
+      name: "Remove a comparison slot",
+    });
+
+    // Two is the floor, so removing is unavailable before anything is added.
+    expect(removeSlot).toBeDisabled();
+
+    await user.click(addSlot);
+    await user.click(addSlot);
+    expect(screen.getByText("0/4 comparison slots")).toBeInTheDocument();
+    expect(addSlot).toBeDisabled();
+    expect(document.querySelectorAll(".pace-analysis__empty")).toHaveLength(4);
+
+    await user.click(removeSlot);
+    expect(screen.getByText("0/3 comparison slots")).toBeInTheDocument();
+
+    // Fill all three slots, then removing must not orphan a selection.
+    const norrisRow = screen.getByRole("row", { name: /Lando Norris/ });
+    await user.click(within(norrisRow).getByRole("button", { name: "View laps" }));
+    await screen.findByText("2 laps loaded");
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select lap 1 for pace analysis" }),
+    );
+
+    const piastriRow = screen.getByRole("row", { name: /Oscar Piastri/ });
+    await user.click(within(piastriRow).getByRole("button", { name: "View laps" }));
+    await screen.findByText("1:31.700");
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select lap 1 for pace analysis" }),
+    );
+
+    expect(screen.getByText("2/3 comparison slots")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Remove a comparison slot" }),
+    ).toBeEnabled();
+  });
+
+  it("ranks three participants instead of naming a single faster driver", async () => {
+    const user = userEvent.setup();
+    getSessionDetail.mockResolvedValue(sessionDetail);
+    getSessionResults.mockResolvedValue(sessionResults);
+    getSessionLaps.mockImplementation(
+      async (_sessionId, sessionEntryId) =>
+        sessionEntryId === sessionResults.items[1].session_entry_id
+          ? piastriLapPage
+          : {
+              ...firstLapPage,
+              page: { limit: 50, has_more: false, next_after_lap: null },
+            },
+    );
+
+    renderExplorer();
+
+    const norrisRow = await screen.findByRole("row", { name: /Lando Norris/ });
+    await user.click(within(norrisRow).getByRole("button", { name: "View laps" }));
+    await screen.findByText("2 laps loaded");
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select lap 1 for pace analysis" }),
+    );
+
+    const piastriRow = screen.getByRole("row", { name: /Oscar Piastri/ });
+    await user.click(within(piastriRow).getByRole("button", { name: "View laps" }));
+    await screen.findByText("1:31.700");
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select lap 1 for pace analysis" }),
+    );
+
+    // Two participants keep the direct sentence.
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Lando Norris is 0.600s faster on the selected average.",
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Add a comparison slot" }),
+    );
+    const russellRow = screen.getByRole("row", { name: /George Russell/ });
+    await user.click(within(russellRow).getByRole("button", { name: "View laps" }));
+    await screen.findByText("2 laps loaded");
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select lap 2 for pace analysis" }),
+    );
+
+    const ranking = screen.getByRole("status");
+    expect(ranking.tagName).toBe("OL");
+    expect(within(ranking).getAllByRole("listitem")).toHaveLength(3);
+    expect(within(ranking).getAllByRole("listitem")[0]).toHaveTextContent(
+      "Fastest",
+    );
+    expect(screen.getByText("3/3 comparison slots")).toBeInTheDocument();
   });
 
   it("surfaces a safe backend error and closes on request", async () => {
