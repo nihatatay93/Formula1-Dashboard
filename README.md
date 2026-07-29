@@ -132,6 +132,23 @@ Stop the stack:
 docker compose down
 ```
 
+## Live timing (replay)
+
+Live timing is a separate ephemeral path: frames are streamed and logged outside
+the archive, never stored as sporting data, and deleted after a retention
+window. No live SignalR client exists yet, so the dashboard's Live Timing view
+reports an unconfigured feed by default.
+
+To drive it from a recorded session, put a recording in `recordings/` and start
+the API with it selected:
+
+```bash
+LIVE_TIMING_REPLAY_PATH=/recordings/<file>.jsonl LIVE_TIMING_REPLAY_SPEED=2 docker compose up -d api
+```
+
+Recordings are gitignored. Design and rationale are in
+[`docs/LIVE_TIMING_DESIGN.md`](docs/LIVE_TIMING_DESIGN.md).
+
 ## Database migrations
 
 Apply all migrations:

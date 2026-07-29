@@ -48,10 +48,11 @@ The dashboard adds a fourth view, Live Timing, which reads only `/api/v1/live`,
 renders independently of season coverage, labels everything unconfirmed live
 data, and streams updates over WebSocket.
 
-One piece remains: no SignalR feed provider is implemented, so the collector is
-reached only through its `LiveFeed` protocol and `POST /api/v1/live/session`
-returns `503 live_feed_unconfigured`. The dashboard reports that state instead of
-offering a connection.
+A `ReplayFeed` drives the whole path from a recorded session, selected with
+`LIVE_TIMING_REPLAY_PATH`. With one configured, the dashboard streams real
+recorded frames end to end. No live SignalR client exists yet, so without a
+recording `POST /api/v1/live/session` returns `503 live_feed_unconfigured` and
+the dashboard reports that state instead of offering a connection.
 
 ### Architecture baseline through Milestone 3
 
@@ -174,6 +175,7 @@ Formula1-Dashboard/
 │   │   │   ├── current_view.py
 │   │   │   ├── frames.py
 │   │   │   ├── policy.py
+│   │   │   ├── replay_feed.py
 │   │   │   ├── retention.py
 │   │   │   ├── service.py
 │   │   │   ├── session_log.py
@@ -202,6 +204,7 @@ Formula1-Dashboard/
 │   │   ├── test_live_endpoints.py
 │   │   ├── test_live_frames.py
 │   │   ├── test_live_policy.py
+│   │   ├── test_live_replay_feed.py
 │   │   ├── test_live_retention.py
 │   │   ├── test_live_service.py
 │   │   ├── test_live_session_log.py
@@ -504,6 +507,27 @@ Formula1-Dashboard/
   view, so replays after a reconnect are discarded by comparing a per-topic
   sequence rather than by persisting resume state.
 - Date: 2026-07-29
+- Status: implemented
+
+### Replay feed for the live path
+
+- Decision: Provide a `ReplayFeed` satisfying the `LiveFeed` protocol that
+  replays a recorded session from disk, selected by `LIVE_TIMING_REPLAY_PATH`
+  with `LIVE_TIMING_REPLAY_SPEED`. `initial` frames are emitted immediately and
+  later frames are paced by their feed-timestamp difference divided by the
+  speed, with each scaled delay capped at five seconds. A finished recording
+  holds the connection open instead of ending. An unusable recording leaves the
+  feed unconfigured rather than failing API startup. Recordings live in a
+  gitignored `recordings/` directory bind-mounted read-only at `/recordings`.
+- Rationale: This makes the whole live path — collector, merge semantics,
+  session log, retention, WebSocket fan-out and dashboard — exercisable without
+  waiting for a session weekend. Pacing matters because replaying thousands of
+  frames instantly demonstrates nothing. The delay cap exists because real
+  sessions contain minutes of inactivity between runs. Holding a finished
+  recording open keeps the final state visible; ending the stream would make the
+  collector treat it as a disconnect and replay the file from the start,
+  rewinding state on a loop.
+- Date: 2026-07-30
 - Status: implemented
 
 ### Confirmed SignalR wire format
@@ -1747,14 +1771,14 @@ race-run classification remain intentionally unimplemented.
 
 ## Next Steps
 
-1. Implement a SignalR feed provider satisfying the `LiveFeed` protocol in
-   `app/live/collector.py`, and configure it through `app/live/state.py`. Until
-   then `POST /api/v1/live/session` returns `503 live_feed_unconfigured`. The
-   frame contract is now confirmed against a recorded session and covered by
-   `tests/test_live_signalr_contract.py`, so what remains is the transport: an
+1. Implement a live SignalR client satisfying the same `LiveFeed` protocol the
+   replay feed already implements, and resolve it in
+   `app/live/state.build_feed_factory`. Only the transport remains: an
    asynchronous WebSocket client dependency and the negotiate/connect handshake.
-   Those cannot be verified outside a session weekend, so the provider should
-   ship with a replay feed over recorded frames plus a thin live client.
+   The frame contract is confirmed against a recorded session and covered by
+   `tests/test_live_signalr_contract.py`, and the replay feed already proves
+   every stage downstream of the protocol, so the new client can be validated by
+   comparing its emitted frames against a recording.
 2. Replace the live view's generic topic cards with purpose-built renderings
    once the feed's payload schemas are confirmed against a real session, for
    example a position/gap leaderboard from `TimingData` and a stint view from
@@ -1813,8 +1837,8 @@ migrated PostgreSQL database. The complete suite passed with 420 tests against
 an isolated PostgreSQL 17 database after the runtime schema-compatibility
 repair. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
 
-The live-timing path added 150 tests, for 570 collected. Without
-`TEST_DATABASE_URL` the suite reports 461 passed and 109 skipped; the skips are
+The live-timing path added 164 tests, for 584 collected. Without
+`TEST_DATABASE_URL` the suite reports 475 passed and 109 skipped; the skips are
 the database integration tests, which the live module does not use because it
 touches no database. Asynchronous tests require the `pytest-asyncio` dev
 dependency with `asyncio_mode = "strict"`.

@@ -182,6 +182,22 @@ export default function LiveTiming() {
   }, [refreshStatus]);
 
   const active = status?.active ?? false;
+  const activeIdentity = status?.session?.session ?? null;
+
+  // While a session is running the form must describe it rather than keep
+  // showing defaults for a session that is not the one being collected.
+  useEffect(() => {
+    if (activeIdentity === null) {
+      return;
+    }
+    setSessionDate(activeIdentity.session_date);
+    setEventName(activeIdentity.event_name);
+    setSessionKey(activeIdentity.session_key);
+  }, [
+    activeIdentity?.session_date,
+    activeIdentity?.event_name,
+    activeIdentity?.session_key,
+  ]);
 
   useEffect(() => {
     if (!active) {
@@ -343,6 +359,7 @@ export default function LiveTiming() {
           <label htmlFor="live-session-date">
             Session date
             <input
+              disabled={active}
               id="live-session-date"
               onChange={(event) => setSessionDate(event.target.value)}
               type="date"
@@ -352,6 +369,7 @@ export default function LiveTiming() {
           <label htmlFor="live-event-name">
             Event name
             <input
+              disabled={active}
               id="live-event-name"
               onChange={(event) => setEventName(event.target.value)}
               placeholder="Dutch Grand Prix"
@@ -362,6 +380,7 @@ export default function LiveTiming() {
           <label htmlFor="live-session-key">
             Session
             <select
+              disabled={active}
               id="live-session-key"
               onChange={(event) => setSessionKey(event.target.value)}
               value={sessionKey}

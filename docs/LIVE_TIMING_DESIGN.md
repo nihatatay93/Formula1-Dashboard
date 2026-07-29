@@ -220,6 +220,31 @@ live-owned row.
 - No live failure can block, delay, or corrupt archive ingestion, because the
   two paths share no table, no lock, and no request budget.
 
+## Replaying a Recorded Session
+
+The live path can be driven from a recorded session instead of a live upstream
+connection, which makes every stage exercisable without waiting for a session
+weekend:
+
+```bash
+# Put a recording in ./recordings, then:
+LIVE_TIMING_REPLAY_PATH=/recordings/<file>.jsonl \
+LIVE_TIMING_REPLAY_SPEED=2 docker compose up -d api
+```
+
+- `initial` frames are emitted immediately, matching a real connect. Later frames
+  are paced by their feed-timestamp difference divided by the speed.
+- Each scaled delay is capped at five seconds, because real sessions contain
+  minutes of inactivity between runs and a replay should not stall on them.
+- A finished recording holds the connection open rather than ending. Ending it
+  would look like a disconnect, and the collector would reconnect and replay the
+  file from the start, rewinding state on a loop.
+- An unusable recording leaves the feed unconfigured rather than failing API
+  startup.
+- Recordings are not committed. `recordings/` is gitignored and bind-mounted
+  read-only at `/recordings`. A trimmed 45-frame extract is committed as a test
+  fixture only.
+
 ## Explicitly Out of Scope
 
 - No provisional sporting rows, and no use of `record_state = 'provisional'` or

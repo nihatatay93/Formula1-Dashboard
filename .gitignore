@@ -58,3 +58,7 @@ pnpm-debug.log*
 
 # Local database data
 postgres-data/
+
+# Local SignalR recordings for the live replay feed (README is tracked)
+recordings/*
+!recordings/README.md

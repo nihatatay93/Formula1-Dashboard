@@ -31,6 +31,10 @@ class LiveTimingSettings:
     reconnect_multiplier: int = 2
     reconnect_cap_seconds: int = 60
     reconnect_jitter_min_ratio: float = 0.5
+    #: When set, live sessions are driven by a recorded session instead of a
+    #: live upstream connection. Intended for development and demonstration.
+    replay_path: str | None = None
+    replay_speed: float = 10.0
 
     def __post_init__(self) -> None:
         if not isinstance(self.log_directory, str) or not self.log_directory.strip():
@@ -62,6 +66,17 @@ class LiveTimingSettings:
             raise LiveTimingPolicyError(
                 "reconnect_base_seconds must not exceed reconnect_cap_seconds"
             )
+        if self.replay_path is not None and not str(self.replay_path).strip():
+            raise LiveTimingPolicyError(
+                "replay_path must be a non-empty string when set"
+            )
+        if (
+            isinstance(self.replay_speed, bool)
+            or not isinstance(self.replay_speed, int | float)
+            or not math.isfinite(self.replay_speed)
+            or self.replay_speed <= 0
+        ):
+            raise LiveTimingPolicyError("replay_speed must be a positive number")
 
     @classmethod
     def from_environment(
@@ -94,6 +109,12 @@ class LiveTimingSettings:
                 values,
                 "LIVE_TIMING_MAX_DIRECTORY_BYTES",
                 defaults.max_directory_bytes,
+            ),
+            replay_path=values.get("LIVE_TIMING_REPLAY_PATH") or None,
+            replay_speed=_environment_float(
+                values,
+                "LIVE_TIMING_REPLAY_SPEED",
+                defaults.replay_speed,
             ),
         )
 
@@ -160,3 +181,17 @@ def _environment_integer(
         return int(raw_value)
     except ValueError:
         raise LiveTimingPolicyError(f"{name} must be an integer") from None
+
+
+def _environment_float(
+    environ: Mapping[str, str],
+    name: str,
+    default: float,
+) -> float:
+    raw_value = environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        return float(raw_value)
+    except ValueError:
+        raise LiveTimingPolicyError(f"{name} must be a number") from None

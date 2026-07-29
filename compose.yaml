@@ -51,10 +51,16 @@ services:
       DATABASE_URL: postgresql://formula1_dashboard@db:5432/formula1_dashboard
       FASTF1_CACHE_PATH: /cache/fastf1
       LIVE_TIMING_LOG_DIRECTORY: /live-sessions
+      # Optional: drive live timing from a recorded session instead of a live
+      # upstream connection. Put a recording in ./recordings and set this to
+      # /recordings/<file>.jsonl. Unset means no feed provider is configured.
+      LIVE_TIMING_REPLAY_PATH: ${LIVE_TIMING_REPLAY_PATH:-}
+      LIVE_TIMING_REPLAY_SPEED: ${LIVE_TIMING_REPLAY_SPEED:-10}
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./backend:/workspace
+      - ./recordings:/recordings:ro
       - fastf1_cache:/cache/fastf1
       - live_sessions:/live-sessions
     depends_on:
