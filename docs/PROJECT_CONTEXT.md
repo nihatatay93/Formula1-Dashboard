@@ -191,6 +191,7 @@ Formula1-Dashboard/
 │   ├── FASTF1_INGESTION_CONTRACT.md
 │   ├── HISTORICAL_API_DESIGN.md
 │   ├── HISTORICAL_SESSION_API_DESIGN.md
+│   ├── LIVE_TIMING_DESIGN.md
 │   ├── PROJECT_CONTEXT.md
 │   ├── SCHEDULE_DISCOVERY_DESIGN.md
 │   └── SPORTING_DATA_DESIGN.md
@@ -226,6 +227,9 @@ Formula1-Dashboard/
 - `docs/AUTOMATIC_CURRENT_SEASON_PLANNING.md`: Implemented Revision 7
   deferred-event persistence, automatic planning cadence, safety behavior,
   dashboard visibility, and verification.
+- `docs/LIVE_TIMING_DESIGN.md`: Proposed SignalR boundary, connection
+  lifecycle, deduplication, provisional storage, and FastF1 finalization
+  rules. Not accepted and not implemented; three open decisions remain.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
 - `AGENTS.md`: Mandatory repository workflow and context rules.
 
@@ -1549,9 +1553,18 @@ race-run classification remain intentionally unimplemented.
 
 ## Next Steps
 
-1. Design the SignalR live-timing protocol boundary, reconnect/resume,
-   deduplication, provisional schema, and FastF1 finalization/reconciliation
-   rules before implementing live ingestion.
+1. Agree the SignalR live-timing design. A proposal covering the protocol
+   boundary, connection lifecycle and resume, frame- and row-level
+   deduplication, provisional storage, and FastF1 finalization/reconciliation
+   is drafted in `docs/LIVE_TIMING_DESIGN.md`. It is not accepted yet. Three
+   decisions are open and change the migration shape: whether
+   `session_ingestions` becomes `(session_id, source)`; whether provisional
+   rows are readable through the existing session endpoints behind an explicit
+   opt-in; and whether reconciliation differences are retained as durable
+   history. The proposal also records two existing constraints that any live
+   design must resolve: one ingestion row per session, and sporting-data
+   natural keys that exclude `source` and `record_state`, so provisional and
+   finalized rows cannot coexist.
 2. Implement the live collector, provisional persistence, backend WebSocket
    fan-out, session finalization, and dashboard live views.
 3. Stabilize the shared API for the SwiftUI client, then implement the iOS
