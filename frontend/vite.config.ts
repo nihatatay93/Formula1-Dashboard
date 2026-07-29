@@ -25,6 +25,9 @@ export default defineConfig({
       "/api": {
         target: "http://api:8000",
         changeOrigin: true,
+        // Required for the live-timing WebSocket upgrade at
+        // /api/v1/live/stream; without it the proxy only forwards HTTP.
+        ws: true,
       },
     },
   },

@@ -5,6 +5,8 @@ import type {
   FastF1RequestBudget,
   LapSummaryRequest,
   LapSummaryResponse,
+  LiveSessionRequest,
+  LiveStatus,
   SeasonOverview,
   SessionDetail,
   SessionResults,
@@ -128,6 +130,35 @@ export function getSessionLaps(
     `/api/v1/sessions/${sessionId}/entries/${sessionEntryId}/laps${queryString}`,
     { signal },
   );
+}
+
+export function getLiveStatus(signal?: AbortSignal): Promise<LiveStatus> {
+  return requestJson<LiveStatus>("/api/v1/live/session", { signal });
+}
+
+export function startLiveSession(
+  request: LiveSessionRequest,
+  signal?: AbortSignal,
+): Promise<LiveStatus> {
+  return requestJson<LiveStatus>("/api/v1/live/session", {
+    body: JSON.stringify(request),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+    signal,
+  });
+}
+
+export function stopLiveSession(signal?: AbortSignal): Promise<LiveStatus> {
+  return requestJson<LiveStatus>("/api/v1/live/session", {
+    method: "DELETE",
+    signal,
+  });
+}
+
+/** Same-origin WebSocket URL for the live stream, upgraded to wss on https. */
+export function liveStreamUrl(): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/api/v1/live/stream`;
 }
 
 export async function checkApiReadiness(signal?: AbortSignal): Promise<boolean> {

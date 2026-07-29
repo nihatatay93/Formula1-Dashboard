@@ -2278,6 +2278,257 @@ th,
 }
 
 /* --------------------------------------------------------------------------
+   15b. Live timing
+   --------------------------------------------------------------------------
+   Cyan-led rather than red, because live data is unconfirmed rather than
+   requiring attention, and to keep it visually distinct from the archive.
+   -------------------------------------------------------------------------- */
+
+.live-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  padding: var(--s5);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--data);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.live-panel .section-kicker {
+  color: var(--data);
+}
+
+.live-panel__disclaimer {
+  max-width: 78ch;
+  color: var(--muted);
+  font-size: var(--t-small);
+}
+
+.live-panel__retention {
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line);
+  color: var(--muted-dark);
+  font-size: var(--t-micro);
+}
+
+.live-badge {
+  display: inline-flex;
+  flex: none;
+  gap: var(--s2);
+  align-items: center;
+  padding: 0.15rem var(--s2);
+  border-radius: var(--r-xs);
+  background: var(--neutral-soft);
+  color: var(--muted);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.live-badge::before {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: currentcolor;
+  content: "";
+}
+
+.live-badge--open {
+  background: var(--data-soft);
+  color: var(--data);
+}
+
+.live-badge--open::before {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.live-badge--connecting {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.live-badge--closed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.live-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3);
+  align-items: flex-end;
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel-inset);
+}
+
+.live-controls label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 9rem;
+  color: var(--muted);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.live-controls input,
+.live-controls select {
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: var(--t-body);
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.live-controls input:focus-visible,
+.live-controls select:focus-visible {
+  border-color: var(--data);
+}
+
+.live-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: var(--s2);
+}
+
+.live-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 0;
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel-inset);
+}
+
+.live-facts span {
+  color: var(--muted);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.live-facts strong {
+  overflow: hidden;
+  font-size: var(--t-body);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-overflow: ellipsis;
+}
+
+.live-topics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: var(--s3);
+}
+
+.live-topic {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-width: 0;
+  padding: var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--panel-raised);
+}
+
+.live-topic header {
+  display: flex;
+  gap: var(--s2);
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.live-topic header strong {
+  overflow: hidden;
+  font-size: var(--t-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-topic header span {
+  flex: none;
+  color: var(--data);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+}
+
+.live-topic__time {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+}
+
+.live-topic__empty,
+.live-topic__more {
+  color: var(--muted-dark);
+  font-size: var(--t-micro);
+}
+
+.live-topic dl {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin: 0;
+}
+
+.live-topic dl > div {
+  display: flex;
+  gap: var(--s2);
+  justify-content: space-between;
+  font-size: var(--t-micro);
+}
+
+.live-topic dt {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-topic dd {
+  flex: none;
+  margin: 0;
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 40rem) {
+  .live-panel {
+    padding: var(--s4);
+  }
+
+  .live-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .live-topics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* --------------------------------------------------------------------------
    16. Alerts and empty states
    -------------------------------------------------------------------------- */
 

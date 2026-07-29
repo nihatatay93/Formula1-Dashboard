@@ -363,3 +363,77 @@ export interface ApiErrorResponse {
     message?: string;
   };
 }
+
+/*
+ * Live timing. These describe the separate ephemeral live path and never mix
+ * with the archive contracts above: live rows are not stored as sporting data,
+ * and every payload is explicitly unconfirmed.
+ */
+
+export interface LiveSessionSummary {
+  session_date: string;
+  event_name: string;
+  session_key: string;
+}
+
+export interface LiveCollectorStats {
+  accepted: number;
+  duplicates: number;
+  rejected: Record<string, number>;
+  connection_attempts: number;
+  reconnects: number;
+  dropped_by_log_cap: number;
+}
+
+export interface LiveCollectorStatus {
+  state: string;
+  session: LiveSessionSummary;
+  topics_subscribed: string[];
+  log_degraded: boolean;
+  subscribers: number;
+  stats: LiveCollectorStats;
+}
+
+export interface LiveStatus {
+  record_state: string;
+  active: boolean;
+  feed_configured: boolean;
+  retention_days: number;
+  log_directory_bytes: number;
+  max_directory_bytes: number;
+  session: LiveCollectorStatus | null;
+}
+
+export interface LiveTopicState {
+  sequence: number;
+  received_at: string;
+  payload: Record<string, unknown>;
+}
+
+export interface LiveViewState {
+  latest_received_at: string | null;
+  applied_frames: number;
+  topics: Record<string, LiveTopicState>;
+}
+
+export interface LiveSessionRequest {
+  session_date: string;
+  event_name: string;
+  session_key: string;
+}
+
+export type LiveStreamMessage =
+  | {
+      type: "snapshot";
+      record_state: string;
+      session: LiveCollectorStatus | null;
+      state: LiveViewState;
+    }
+  | {
+      type: "update";
+      topic: string;
+      sequence: number;
+      received_at: string;
+      payload: Record<string, unknown>;
+    }
+  | { type: "error"; code: string; message: string };

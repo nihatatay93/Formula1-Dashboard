@@ -19,6 +19,7 @@ import type {
   SeasonSession,
   SeasonStatus,
 } from "./contracts";
+import LiveTiming from "./LiveTiming";
 import SessionExplorer from "./SessionExplorer";
 
 const FIRST_SUPPORTED_SEASON = 2018;
@@ -42,7 +43,7 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en", {
 });
 
 type ApiState = "checking" | "ready" | "unavailable";
-type DashboardView = "overview" | "calendar" | "session";
+type DashboardView = "overview" | "calendar" | "session" | "live";
 
 function humanize(value: string): string {
   return value
@@ -865,21 +866,25 @@ function App() {
   }
 
   const workspaceTitle =
-    activeView === "overview"
-      ? `${selectedYear} season control`
-      : activeView === "calendar"
-        ? `${selectedYear} season sessions`
-        : selectedSession
-          ? `${selectedSession.event.event_name} workspace`
-          : "Session workspace";
+    activeView === "live"
+      ? "Live timing"
+      : activeView === "overview"
+        ? `${selectedYear} season control`
+        : activeView === "calendar"
+          ? `${selectedYear} season sessions`
+          : selectedSession
+            ? `${selectedSession.event.event_name} workspace`
+            : "Session workspace";
   const workspaceDescription =
-    activeView === "overview"
-      ? "Coverage, synchronization health, and background ingestion at a glance."
-      : activeView === "calendar"
-        ? "Open any event and session without leaving the season archive."
-        : selectedSession
-          ? `${selectedSession.session.session_name} · round ${selectedSession.event.round_number}`
-          : "Choose a session from the season calendar to inspect its archive.";
+    activeView === "live"
+      ? "Unconfirmed live frames, served outside the archive and never stored as sporting data."
+      : activeView === "overview"
+        ? "Coverage, synchronization health, and background ingestion at a glance."
+        : activeView === "calendar"
+          ? "Open any event and session without leaving the season archive."
+          : selectedSession
+            ? `${selectedSession.session.session_name} · round ${selectedSession.event.round_number}`
+            : "Choose a session from the season calendar to inspect its archive.";
 
   return (
     <div className="dashboard-frame">
@@ -934,6 +939,16 @@ function App() {
             <span>03</span>
             <strong>Session workspace</strong>
             <small>{selectedSession ? "Open" : "—"}</small>
+          </button>
+          <button
+            aria-current={activeView === "live" ? "page" : undefined}
+            className={activeView === "live" ? "rail-nav__active" : ""}
+            onClick={() => setActiveView("live")}
+            type="button"
+          >
+            <span>04</span>
+            <strong>Live timing</strong>
+            <small>Beta</small>
           </button>
         </nav>
 
@@ -1003,21 +1018,29 @@ function App() {
         </header>
 
         <main className="workspace-content" aria-labelledby="dashboard-title">
-          {seasonError ? (
+          {/* Live timing is a separate path: it never waits on season coverage
+              and never reads archive state. */}
+          {activeView === "live" ? (
+            <div className="workspace-view" data-view="live">
+              <LiveTiming />
+            </div>
+          ) : null}
+
+          {activeView !== "live" && seasonError ? (
             <div className="inline-alert inline-alert--danger" role="alert">
               <strong>Dashboard unavailable</strong>
               <span>{seasonError}</span>
             </div>
           ) : null}
 
-          {notice ? (
+          {activeView !== "live" && notice ? (
             <div className="inline-alert inline-alert--success" role="status">
               <strong>Season updated</strong>
               <span>{notice}</span>
             </div>
           ) : null}
 
-          {seasonLoading ? (
+          {activeView === "live" ? null : seasonLoading ? (
             <section className="dashboard-loading" aria-live="polite">
               <span />
               <p>Loading {selectedYear} season coverage…</p>

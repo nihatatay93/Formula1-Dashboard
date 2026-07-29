@@ -34,6 +34,18 @@ async function installApiRoutes(page: Page) {
     if (path === "/api/v1/upstreams/fastf1/usage") {
       return json(route, requestBudget);
     }
+    if (path === "/api/v1/live/session") {
+      // No SignalR provider exists yet, so the deployed state is unconfigured.
+      return json(route, {
+        record_state: "unconfirmed_live",
+        active: false,
+        feed_configured: false,
+        retention_days: 7,
+        log_directory_bytes: 0,
+        max_directory_bytes: 5368709120,
+        session: null,
+      });
+    }
     if (path === "/api/v1/seasons/2026" && request.method() === "GET") {
       return json(route, completedSeason);
     }
@@ -212,5 +224,34 @@ test("keeps the primary dashboard within the viewport", async ({ page }) => {
     scrollWidth: document.documentElement.scrollWidth,
   }));
 
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+});
+
+test("opens live timing as a separate view without archive state", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /Live timing/ }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "Live timing", level: 1 }),
+  ).toBeVisible();
+  await expect(page.getByText("Unconfirmed live data")).toBeVisible();
+  await expect(
+    page.getByText("No live feed provider is configured"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Connect to session/ }),
+  ).toBeDisabled();
+
+  // The archive Session Workspace must not leak into the live view.
+  await expect(page.locator("#session-explorer")).toBeHidden();
+  await expect(page.getByText("Season calendar")).toBeHidden();
+
+  const dimensions = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
 });

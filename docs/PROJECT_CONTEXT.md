@@ -44,10 +44,14 @@ reconnect and bounded subscriber fan-out, and a `/api/v1/live` namespace with
 session status, start, stop, and a WebSocket stream. Historical endpoints are
 unchanged and still serve only finalized archive data.
 
-Two pieces remain. No SignalR feed provider is implemented, so the collector is
+The dashboard adds a fourth view, Live Timing, which reads only `/api/v1/live`,
+renders independently of season coverage, labels everything unconfirmed live
+data, and streams updates over WebSocket.
+
+One piece remains: no SignalR feed provider is implemented, so the collector is
 reached only through its `LiveFeed` protocol and `POST /api/v1/live/session`
-returns `503 live_feed_unconfigured` until a provider is configured. The
-dashboard live view is not built.
+returns `503 live_feed_unconfigured`. The dashboard reports that state instead of
+offering a connection.
 
 ### Architecture baseline through Milestone 3
 
@@ -231,6 +235,7 @@ Formula1-Dashboard/
 │   └── SPORTING_DATA_DESIGN.md
 └── frontend/
     ├── src/
+    ├── e2e/
     ├── Dockerfile
     ├── package.json
     ├── package-lock.json
@@ -385,15 +390,19 @@ Formula1-Dashboard/
 
 ### Responsive dashboard workspace navigation
 
-- Decision: Present the existing dashboard behavior in three mutually exclusive
-  views—Overview, Season Sessions, and Session Workspace—with a sticky desktop
+- Decision: Present the dashboard as four mutually exclusive views—Overview,
+  Season Sessions, Session Workspace, and Live Timing—with a sticky desktop
   control rail, compact mobile controls, and fixed mobile section navigation.
   Automatically open Session Workspace when a calendar session is selected and
-  return to Season Sessions when it is closed.
+  return to Season Sessions when it is closed. Live Timing renders independently
+  of season coverage: it never waits on the season request, never shows archive
+  errors or notices, and never reads archive state.
 - Rationale: Prevent season metrics, synchronization state, full calendars, and
   detailed session analysis from forming one long page that requires repeated
-  scrolling to find the next task.
-- Date: 2026-07-28
+  scrolling to find the next task. Live Timing is a fourth view rather than a
+  panel inside an existing one because live data is a separate ephemeral path
+  and must never be mixed with the archive record.
+- Date: 2026-07-30
 - Status: implemented
 
 ### Dashboard visual system
@@ -413,6 +422,23 @@ Formula1-Dashboard/
   calculated output onto adjacent screens, and tabular figures let timing
   values be compared down a column.
 - Date: 2026-07-29
+- Status: implemented
+
+### Live timing dashboard view
+
+- Decision: Serve live timing from a separate `LiveTiming` view with its own
+  cyan-led visual treatment, an explicit "unconfirmed live data" label, a
+  connection badge, an on-demand connect form, collector counters, and a
+  retention notice. Render each topic's latest payload generically rather than as
+  a purpose-built leaderboard. Add `ws: true` to the Vite `/api` proxy so the
+  WebSocket upgrade reaches the backend in development.
+- Rationale: Red is reserved for attention in the archive treatment, so live uses
+  cyan to read as unconfirmed rather than urgent. The feed's payload schemas are
+  confirmed alongside the SignalR provider, so a leaderboard built now would be a
+  guess rendered as fact; a generic topic renderer is honest and still useful.
+  Without `ws: true` the dev proxy forwards only HTTP and the stream silently
+  fails.
+- Date: 2026-07-30
 - Status: implemented
 
 ### Live timing inside the API process
@@ -1685,9 +1711,10 @@ race-run classification remain intentionally unimplemented.
    feed outside a session weekend, so it should land with contract tests over
    recorded frames rather than a live connection. Confirm the topic allowlist in
    `app/live/frames.py` against the real feed at the same time.
-2. Build the separate dashboard live view against `/api/v1/live`, presenting
-   data explicitly as `unconfirmed_live` and never mixing it with the archive
-   Session Workspace.
+2. Replace the live view's generic topic cards with purpose-built renderings
+   once the feed's payload schemas are confirmed against a real session, for
+   example a position/gap leaderboard from `TimingData` and a stint view from
+   `TimingAppData`.
 3. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
 4. Before production, add authentication/authorization, secret management,
@@ -1747,6 +1774,9 @@ The live-timing path added 122 tests, for 542 collected. Without
 the database integration tests, which the live module does not use because it
 touches no database. Asynchronous tests require the `pytest-asyncio` dev
 dependency with `asyncio_mode = "strict"`.
+
+The frontend suite reports 29 Vitest tests and 8 Playwright tests across
+desktop and mobile Chromium, including the live view.
 
 The live endpoints were additionally exercised against the running stack:
 
@@ -1962,14 +1992,18 @@ mounted writable at `/live-sessions`.
   analysis-field contract coverage.
 - `frontend/src/App.tsx`: Season selection, coverage metrics, request-budget
   visualization, detailed execution/countdown progress, event-grouped session
-  states, backfill command, active-job polling, and the responsive three-view
+  states, backfill command, active-job polling, and the responsive four-view
   workspace shell.
 - `frontend/src/SessionExplorer.tsx`: Session metadata and availability,
   entry/result classification, participant selection, compound-colored
   loaded-lap pace profile, detailed lap table, snapshot-safe keyset pagination,
   and ephemeral two-participant selected-lap analysis.
+- `frontend/src/LiveTiming.tsx`: Separate live view reading only
+  `/api/v1/live` — status polling, on-demand connect/stop, WebSocket snapshot
+  and incremental updates, collector counters, generic topic rendering, and the
+  retention notice.
 - `frontend/src/lapAnalysis.ts`: Pure selected-lap eligibility, statistics,
-  quality-fact, and two-selection comparison calculations.
+  ranking, and comparison calculations for two to four selections.
 - `frontend/src/api.ts`: Typed same-origin season, backfill, request-budget,
   session-detail, result, and lap API client with stable safe error handling.
 - `frontend/src/contracts.ts`: TypeScript representation of the implemented
@@ -1980,6 +2014,9 @@ mounted writable at `/live-sessions`.
 - `frontend/src/SessionExplorer.test.tsx`: Component coverage for historical
   session availability, errors, participant laps, pagination, and snapshot
   replacement.
+- `frontend/src/LiveTiming.test.tsx`: Component coverage for the unconfigured
+  feed state, connect/stop commands, WebSocket snapshot and update merging,
+  malformed frames, backend stream errors, and the degraded-log warning.
 - `frontend/e2e/dashboard.spec.ts`: Intercepted desktop/mobile Chromium
   workflows for workspace navigation, seasons, synchronization, session
   exploration, pagination, mobile action clearance, and viewport containment.
