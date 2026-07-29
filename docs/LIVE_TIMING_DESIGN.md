@@ -1,182 +1,186 @@
-# SignalR Live Timing Boundary, Provisional Storage, and Finalization
+# Live Timing as a Separate Ephemeral Path
 
 Status: **proposed**
 Date: **2026-07-29**
 
 ## Purpose
 
-This document defines the upstream SignalR boundary, connection lifecycle,
-deduplication rules, provisional storage model, and FastF1 reconciliation rules
-that must be agreed before live ingestion is implemented. It is the design half
-of `Next Steps` item 1.
+This document defines live timing as a self-contained service that never writes
+to the sporting-data schema. Live frames are appended to a disposable JSONL log,
+served to clients over WebSocket, and deleted after a retention window. The
+archive remains the only source of durable sporting data, reached through the
+already-implemented FastF1 backfill path.
 
-It does not define WebSocket payload schemas for the dashboard, live UI
-behavior, or the iOS client. Those follow the storage and finalization contract
-agreed here.
+It replaces an earlier proposal in which live frames were stored as provisional
+rows in the sporting-data tables and later reconciled against FastF1.
 
-## Existing Constraints This Design Must Respect
+## Core Decision
 
-The database already anticipates live timing, and two existing constraints
-decide most of the design:
+**Nothing produced by live timing is ever promoted into PostgreSQL sporting
+data.** A live session is a view onto a stream, not an ingestion phase.
 
-- `SOURCES` already contains `live_signalr` and `RECORD_STATES` already contains
-  `provisional`. No enum migration is required to store live-owned rows.
-- `session_ingestions` uses `session_id` alone as its primary key. **One session
-  can hold only one ingestion row, carrying one `source`.** Archive ingestion
-  already rejects rows owned by another source and excludes them from planning.
+After the session, FastF1 supplies the durable record through the existing
+archive worker. Live and archive are two independent products that happen to
+describe the same event, not two writers of one row.
+
+## Why This Is Simpler
+
+The provisional approach was constrained by two existing schema facts:
+
+- `session_ingestions` keys on `session_id` alone, so a session can hold only
+  one ingestion row and one `source`. Live and archive could not both hold
+  state.
 - `session_entries`, `results`, and `laps` enforce natural keys that exclude
-  `source` and `record_state`: `(session_id, entry_key)`,
-  `session_entry_id`, and `(session_entry_id, lap_number)`. **A provisional live
-  row and a finalized archive row cannot coexist on the same natural key.**
+  `source` and `record_state`, so a provisional live row and a finalized
+  archive row cannot coexist on the same key.
 
-The consequence is that live and archive ingestion are not two independent
-writers of the same session. They are two phases of one session's lifecycle, and
-the handover between them must be explicit.
+Both constraints disappear here, because live data never occupies those keys.
+No migration is required, and `record_state = 'provisional'` together with
+`source = 'live_signalr'` simply remain unused by this design.
+
+Reconciliation disappears with them. There is no finalization transaction, no
+authority rule for disagreements, no orphan policy, and no provisional read
+isolation in the historical endpoints.
+
+One further consequence is worth stating: because the log is disposable,
+**partial capture is not a correctness problem.** A user connecting at lap 30
+yields a log starting at lap 30. That needs no gap tracking and no degraded
+state, so the collector does not need to run continuously or predict session
+starts.
 
 ## Upstream Boundary
 
-The live collector is isolated behind a protocol, exactly as the FastF1 loader
-is, so the automated suite runs against controlled doubles and never opens a
-live upstream connection.
+The collector is isolated behind a protocol, as the FastF1 loader is, so the
+automated suite runs against controlled doubles and never opens a live upstream
+connection.
 
-The boundary is explicitly pinned:
+- Only the documented feed topics required for session state, entry identity,
+  lap timing, and track status are consumed.
+- Upstream frames are untrusted input. Unknown topics, unknown fields, and
+  unparseable frames are counted and dropped.
+- No credential, token, cookie, or session identifier is written to the JSONL
+  log, to diagnostics, or to any client payload. Connection configuration is
+  never logged alongside frames.
+- Clients never reach SignalR. The browser talks only to the backend, which
+  preserves the recorded client-isolation decision. Separating the live service
+  does not mean exposing it to the browser.
+- SignalR does not share the FastF1 request gate, rolling request ledger, or
+  400/450 thresholds. Those measure cache-miss HTTP sends against a
+  FastF1-specific limit and have no meaning for a streaming connection.
 
-- The collector consumes only the documented live timing feed topics required
-  for session state, entry identity, lap timing, and track status.
-- Raw upstream frames are treated as untrusted input. Unknown topics, unknown
-  fields, and unparseable frames are counted and dropped, never persisted
-  as sporting data.
-- No credential, token, cookie, or session identifier is written to logs,
-  diagnostics, database rows, or documentation.
-- The collector never serves clients directly. Dashboard and iOS clients reach
-  live data only through the backend, preserving the recorded client isolation
-  decision.
-- SignalR is a separate upstream from FastF1. It does not share the FastF1
-  request gate, the rolling request ledger, or the 400/450 thresholds, because
-  those measure cache-miss HTTP sends against a FastF1-specific limit. Live
-  connection attempts get their own counters and their own backoff.
+## Connection Lifecycle
 
-## Connection Lifecycle, Reconnect, and Resume
+A live session is started on demand when a user opens the live view, rather
+than by a always-running collector.
 
-Live timing is a long-lived streaming connection, which does not fit the
-existing single-concurrency claim/heartbeat worker. It runs as a separate
-process.
+- One collector owns at most one live session at a time.
+- States are `disconnected → connecting → subscribed → streaming → stopped`.
+- Reconnect reuses the existing equal-jitter backoff calculation. Live
+  reconnects never consume any session's archive retry budget.
+- On reconnect the collector requests the feed's current full state and rebuilds
+  its in-memory view rather than assuming continuity. Because the log is
+  append-only and disposable, a replayed frame is harmless: it is appended again
+  and the in-memory view converges on the newer value.
+- No resume token, sequence persistence, or gap ledger is required.
 
-- One collector process owns at most one live session at a time.
-- Ownership is claimed through the same PostgreSQL advisory-lock and fencing
-  primitives already used for archive claims, so two collectors cannot both
-  write one session.
-- The connection state machine is `disconnected → connecting → subscribed →
-  streaming → draining`. Only `streaming` may write sporting data.
-- Reconnect uses the existing equal-jitter backoff calculation. Repeated
-  connect failures do not consume a session's archive retry budget, because the
-  two budgets describe different upstreams.
-- On reconnect the collector does **not** assume continuity. It requests the
-  feed's current full state, rebuilds its in-memory view, and reconciles that
-  view against already-persisted provisional rows before resuming incremental
-  writes.
-- A resumed connection that cannot obtain a coherent full state transitions the
-  session to a recorded live-degraded condition rather than writing a partial
-  view over good data.
+## Storage
 
-## Deduplication
+Two representations, each with one job.
 
-The feed replays and re-sends. Deduplication is defined at two levels.
+**Append-only JSONL log — the durable-enough record.** One file per live
+session under a dedicated Docker volume:
 
-**Frame level.** Each accepted frame carries a monotonic per-topic sequence
-derived from the feed. The collector keeps the last applied sequence per topic
-in memory and discards frames at or below it. This is process-local and is
-rebuilt from the full state after reconnect, so it never needs persistence.
+```
+live-sessions/{utc_date}__{event_slug}__{session_key}.jsonl
+```
 
-**Row level.** Frame-level dedup is not sufficient, because a reconnect can
-legitimately replay content the previous connection already persisted.
-Persistence is therefore idempotent on the existing natural keys: a provisional
-lap upserts on `(session_entry_id, lap_number)`, a provisional entry upserts on
-`(session_id, entry_key)`. Re-applying a frame rewrites the same row rather than
-inserting a duplicate.
+Each accepted frame appends one line:
 
-A provisional row is only overwritten by a later observation of the same natural
-key. Live data never deletes rows it did not write.
+```json
+{"received_at":"2026-08-21T13:04:11.482Z","topic":"TimingData","seq":18422,"payload":{}}
+```
 
-## Provisional Storage
+- Writes are append-and-flush. No `fsync` per line: losing the last few lines to
+  a hard crash is acceptable for disposable data, and the archive is
+  authoritative regardless.
+- A truncated final line on restart is dropped rather than repaired.
+- The file is never rewritten, deduplicated, or compacted in place.
+- A per-file size cap and a directory size cap are enforced. On breach the
+  collector stops appending and marks the session log-degraded, but keeps
+  streaming to clients. Filling the disk is a worse failure than losing a log.
 
-Provisional live rows use the existing sporting-data tables with
-`source = 'live_signalr'` and `record_state = 'provisional'`. No parallel live
-table set is introduced, for three reasons: the natural keys already forbid
-coexistence, the read API would otherwise need to union two shapes, and
-finalization would become a cross-table migration rather than a state change.
+**In-memory current view — what clients actually read.** The collector keeps the
+latest state per topic and per driver so a connecting client receives an
+immediate snapshot without replaying the file. On a collector restart during a
+live session, this view is rebuilt by replaying the session's JSONL file.
 
-Two schema changes are required.
+No Redis and no temporary PostgreSQL tables. Redis would earn its place only for
+restart survival across processes, multi-process fan-out, or TTL cleanup, none
+of which apply to a single local collector; this keeps the recorded "No Redis at
+the start" decision intact. Temporary PostgreSQL tables are rejected because
+they would place disposable data back under Alembic and re-create the schema
+coupling this design exists to avoid.
 
-1. **Session ingestion ownership.** `session_ingestions` cannot express "live
-   ingestion finished, archive ingestion is now due" while its primary key is
-   `session_id` alone. The recommended change is to make the row's `source`
-   part of its identity — primary key `(session_id, source)` — so a session may
-   hold one live row and one archive row across its lifecycle, and the archive
-   planner's existing "owned by another source" exclusion keeps working
-   unchanged. The alternative, reusing the single row and rewriting its
-   `source` at handover, destroys the live attempt's history and its failure
-   diagnostics, and is not recommended.
+## Serving Clients
 
-2. **Provisional read isolation.** Existing historical endpoints must not begin
-   returning provisional rows, or a completed-session response could silently
-   change shape mid-session. Read services filter on
-   `record_state = 'finalized'` explicitly rather than relying on the absence of
-   live data.
+- A separate endpoint namespace, `/api/v1/live/...`, with its own WebSocket
+  stream. Historical REST endpoints are untouched and continue to serve only
+  finalized archive data.
+- On connect a client receives the current snapshot, then incremental updates.
+- The live UI is a separate view from the Session Workspace. It is not required
+  to reuse the archive display components, and the two are expected to show
+  different things: live favours positions, gaps, and sector state, while the
+  archive view favours completed-session pace analysis.
+- Live responses are explicitly marked as unconfirmed live data so a reader
+  never mistakes them for the archive record.
 
-The existing `deleted`, `is_accurate`, and `record_state` markers already give
-the dashboard everything it needs to present live data as unconfirmed.
+## Retention and Cleanup
 
-## Finalization and Reconciliation
+A periodic sweep inside the live service owns the directory it writes.
 
-Finalization is the transition from a live-owned provisional session to an
-archive-owned finalized session. It reuses the implemented archive path rather
-than inventing a second writer.
+- The sweep runs at startup and on an interval, and deletes any session log
+  whose modification time is older than a configured retention window.
+- Retention defaults to 7 days and is configurable through an environment
+  variable, following the existing validated-settings pattern in
+  `app/ingestion/runtime_policy.py`.
+- Deletion is unconditionally safe. A log older than the archive availability
+  grace has already been superseded by the FastF1 backfill of the same session,
+  and nothing in the application reads these files except live replay.
+- The sweep never touches PostgreSQL and never inspects sporting data.
 
-- A session becomes archive-eligible under the existing freshness policy, after
-  the recorded archive grace period. Live streaming ending does not by itself
-  make a session eligible.
-- The existing atomic archive persistence already performs stale-row
-  replacement inside one transaction under row locks. Finalization extends that
-  replacement to also claim rows currently owned by `live_signalr` in the
-  `provisional` state.
-- The replacement remains all-or-nothing. A failed finalization leaves the
-  provisional session intact and readable; it never leaves a session with some
-  finalized and some provisional rows.
-- **FastF1 is authoritative at finalization.** Where archive and live disagree
-  on a lap time, a deletion, a classification, or an entry identity, the archive
-  value wins and the provisional value is replaced, not merged.
-- A provisional row whose natural key is absent from the archive snapshot is
-  removed by the replacement rather than retained as an orphan. Live-only
-  artefacts — a lap the feed reported and FastF1 does not recognize — are not
-  evidence, and keeping them would make a finalized session a mixture of two
-  sources.
-- Reconciliation is observable. The finalizing transaction records how many
-  provisional rows were replaced, added, and removed, so a systematic feed
-  disagreement is measurable instead of silent.
+## Handoff to the Archive
 
-This preserves the recorded decision that clients never see two archive
-snapshots mixed, and extends it: a client never sees provisional and finalized
-rows mixed either.
+There is no handoff to build. It already works.
+
+`archive_availability_grace_seconds` defaults to `7200`
+(`app/ingestion/runtime_policy.py`), and archive eligibility is
+`scheduled_end_at + archive_availability_grace`
+(`app/ingestion/freshness_policy.py`). The worker replans the current UTC season
+at startup and every 15 minutes by default.
+
+A session therefore becomes archive-eligible two hours after its scheduled end
+and is backfilled by the existing worker with no live-specific code. Live data
+is not promoted, not compared, and not consulted during that backfill.
+
+The implemented replacement-safety guard that refuses to replace a session
+containing non-archive sporting rows remains valid and simply never encounters a
+live-owned row.
 
 ## Failure Behavior
 
-- A collector failure never deletes previously finalized sporting data.
-- A live session that never finalizes remains provisional and clearly marked;
-  it does not block archive backfill, which reaches it through normal
-  eligibility.
-- Losing the live feed mid-session is not a session failure. It is a recorded
-  gap, and the archive pass is what closes it.
-- The collector stops gracefully without taking new sessions, matching the
-  existing worker's shutdown contract.
+- A collector crash loses at most the unflushed tail of one log. No PostgreSQL
+  state is affected.
+- An unavailable feed makes the live view unavailable. Archive backfill,
+  historical endpoints, and the dashboard are unaffected.
+- A full or unwritable log directory degrades logging only; streaming continues.
+- No live failure can block, delay, or corrupt archive ingestion, because the
+  two paths share no table, no lock, and no request budget.
 
-## Open Decisions
+## Explicitly Out of Scope
 
-These change the migration shape and are not settled by this document:
-
-1. Whether `session_ingestions` becomes `(session_id, source)` as recommended,
-   or live ingestion state is tracked in a separate table.
-2. Whether provisional rows are readable through the existing session endpoints
-   behind an explicit opt-in parameter, or only through a separate live channel.
-3. Whether reconciliation differences are retained as durable history for
-   measurement, or only logged and counted.
+- No provisional sporting rows, and no use of `record_state = 'provisional'` or
+  `source = 'live_signalr'` in the sporting-data tables.
+- No change to `session_ingestions`, and no migration of any kind.
+- No live-versus-archive comparison, and no durable record of feed
+  disagreements. If that is wanted later, the JSONL logs are the input, and
+  retention would need to be reconsidered first.

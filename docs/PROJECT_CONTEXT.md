@@ -98,7 +98,10 @@ Target data flow:
 2. The backend will use FastF1 for historical data and SignalR for live timing.
 3. Ingestion processes will normalize data into PostgreSQL.
 4. REST endpoints will serve historical data, while WebSocket connections will serve live timing.
-5. Live session data will initially be stored as provisional data and finalized against FastF1 archive data after the session.
+5. Live session data will be streamed and logged outside the sporting-data
+   schema, then discarded after a retention window. The durable record of a
+   session comes only from the FastF1 archive backfill, so live data is never
+   promoted or reconciled.
 
 ## Directory Structure
 
@@ -227,9 +230,10 @@ Formula1-Dashboard/
 - `docs/AUTOMATIC_CURRENT_SEASON_PLANNING.md`: Implemented Revision 7
   deferred-event persistence, automatic planning cadence, safety behavior,
   dashboard visibility, and verification.
-- `docs/LIVE_TIMING_DESIGN.md`: Proposed SignalR boundary, connection
-  lifecycle, deduplication, provisional storage, and FastF1 finalization
-  rules. Not accepted and not implemented; three open decisions remain.
+- `docs/LIVE_TIMING_DESIGN.md`: Proposed separate ephemeral live path — SignalR
+  boundary, on-demand connection lifecycle, disposable JSONL session logs,
+  retention sweep, and handoff to the existing archive backfill. Not
+  implemented; requires no migration.
 - `compose.yaml`: Local service topology, health checks, and persistent volumes.
 - `AGENTS.md`: Mandatory repository workflow and context rules.
 
@@ -564,7 +568,7 @@ Formula1-Dashboard/
 ### Replacement safety boundary
 
 - Decision: Fully load and validate FastF1 data before opening the replacement transaction; roll back all sporting writes on failure, never delete global drivers, and refuse to replace sessions containing non-archive sporting rows.
-- Rationale: Preserve the previous complete snapshot on failure and prevent the historical ingestion phase from damaging future provisional live data.
+- Rationale: Preserve the previous complete snapshot on failure and prevent the historical ingestion phase from damaging sporting rows owned by another source. The guard remains in force for non-archive sources generally; under the proposed live design in `docs/LIVE_TIMING_DESIGN.md` it will never encounter a live-owned row, because live timing does not write sporting data.
 - Date: 2026-07-28
 - Status: implemented
 
@@ -1253,13 +1257,25 @@ Live timing has not been implemented.
 
 Accepted target behavior:
 
-- SignalR data is stored as live/provisional data during a session.
-- FastF1 archive data is used for finalization and reconciliation after the session.
-- Data source identity is preserved as `live_signalr`, `fastf1_archive`, or `jolpica`.
-- Web and future iOS clients communicate only with the backend.
-- Tokens, cookies, credentials, and similar sensitive values are never sent to a client.
+- Live timing is a separate service with its own endpoints and its own view.
+  Nothing it produces is written to the sporting-data tables.
+- SignalR frames are appended to a disposable per-session JSONL log and served
+  to clients over WebSocket from an in-memory current view.
+- Logs are deleted after a retention window; no live data survives as a
+  durable record.
+- The durable record of a session comes only from the existing FastF1 archive
+  backfill, which needs no live-specific code. There is no finalization or
+  reconciliation step.
+- Data source identity is preserved as `live_signalr`, `fastf1_archive`, or
+  `jolpica`. This design leaves `live_signalr` and the `provisional` record
+  state unused in the sporting-data tables.
+- Web and future iOS clients communicate only with the backend. Separating the
+  live service does not expose SignalR to clients.
+- Tokens, cookies, credentials, and similar sensitive values are never sent to a
+  client and are never written to a session log.
 
-SignalR protocol details, connection lifecycle, message schemas, and reconciliation rules remain future design work.
+The proposal is recorded in `docs/LIVE_TIMING_DESIGN.md`. SignalR message
+schemas, the live UI, and WebSocket payload contracts remain future design work.
 
 ## Completed Work
 
@@ -1553,20 +1569,15 @@ race-run classification remain intentionally unimplemented.
 
 ## Next Steps
 
-1. Agree the SignalR live-timing design. A proposal covering the protocol
-   boundary, connection lifecycle and resume, frame- and row-level
-   deduplication, provisional storage, and FastF1 finalization/reconciliation
-   is drafted in `docs/LIVE_TIMING_DESIGN.md`. It is not accepted yet. Three
-   decisions are open and change the migration shape: whether
-   `session_ingestions` becomes `(session_id, source)`; whether provisional
-   rows are readable through the existing session endpoints behind an explicit
-   opt-in; and whether reconciliation differences are retained as durable
-   history. The proposal also records two existing constraints that any live
-   design must resolve: one ingestion row per session, and sporting-data
-   natural keys that exclude `source` and `record_state`, so provisional and
-   finalized rows cannot coexist.
-2. Implement the live collector, provisional persistence, backend WebSocket
-   fan-out, session finalization, and dashboard live views.
+1. Define the SignalR message schemas, WebSocket payload contract, and live UI
+   on top of the agreed separate ephemeral path in
+   `docs/LIVE_TIMING_DESIGN.md`. The storage and handoff questions are settled:
+   live frames never enter the sporting-data tables, so no migration is
+   required and no finalization or reconciliation step exists.
+2. Implement the on-demand live collector, per-session JSONL logging with size
+   caps, the in-memory current view, the retention sweep, the `/api/v1/live`
+   endpoint namespace with WebSocket fan-out, and a separate dashboard live
+   view.
 3. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
 4. Before production, add authentication/authorization, secret management,
