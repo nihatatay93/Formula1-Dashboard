@@ -7,6 +7,7 @@ only the disposable per-session JSONL logs and their retention. See
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -26,6 +27,10 @@ class LiveTimingSettings:
     retention_sweep_interval_seconds: int = 3_600
     max_log_bytes: int = 536_870_912
     max_directory_bytes: int = 5_368_709_120
+    reconnect_base_seconds: int = 2
+    reconnect_multiplier: int = 2
+    reconnect_cap_seconds: int = 60
+    reconnect_jitter_min_ratio: float = 0.5
 
     def __post_init__(self) -> None:
         if not isinstance(self.log_directory, str) or not self.log_directory.strip():
@@ -40,6 +45,22 @@ class LiveTimingSettings:
         if self.max_log_bytes > self.max_directory_bytes:
             raise LiveTimingPolicyError(
                 "max_log_bytes must not exceed max_directory_bytes"
+            )
+        _positive_integer(self.reconnect_base_seconds, "reconnect_base_seconds")
+        _positive_integer(self.reconnect_multiplier, "reconnect_multiplier")
+        _positive_integer(self.reconnect_cap_seconds, "reconnect_cap_seconds")
+        if (
+            isinstance(self.reconnect_jitter_min_ratio, bool)
+            or not isinstance(self.reconnect_jitter_min_ratio, int | float)
+            or not math.isfinite(self.reconnect_jitter_min_ratio)
+            or not 0 <= self.reconnect_jitter_min_ratio <= 1
+        ):
+            raise LiveTimingPolicyError(
+                "reconnect_jitter_min_ratio must be between zero and one"
+            )
+        if self.reconnect_base_seconds > self.reconnect_cap_seconds:
+            raise LiveTimingPolicyError(
+                "reconnect_base_seconds must not exceed reconnect_cap_seconds"
             )
 
     @classmethod
@@ -83,6 +104,43 @@ class LiveTimingSettings:
     @property
     def retention_sweep_interval(self) -> timedelta:
         return timedelta(seconds=self.retention_sweep_interval_seconds)
+
+
+def calculate_reconnect_delay(
+    *,
+    attempt: int,
+    jitter_fraction: float,
+    settings: LiveTimingSettings,
+) -> timedelta:
+    """Equal-jitter reconnect delay for an unbounded number of attempts.
+
+    This deliberately does not reuse ``calculate_retry_schedule`` from
+    ``app.ingestion.runtime_policy``. That function shares the same equal-jitter
+    formula but enforces the archive retry budget and raises once attempts are
+    exhausted. Live reconnects are unbounded and must never consume a session's
+    archive retry budget, so only the formula is shared, not the semantics.
+    """
+    _positive_integer(attempt, "attempt")
+    if (
+        isinstance(jitter_fraction, bool)
+        or not isinstance(jitter_fraction, int | float)
+        or not math.isfinite(jitter_fraction)
+        or not 0 <= jitter_fraction <= 1
+    ):
+        raise LiveTimingPolicyError(
+            "jitter_fraction must be between zero and one"
+        )
+
+    nominal_seconds = min(
+        settings.reconnect_base_seconds
+        * settings.reconnect_multiplier ** (attempt - 1),
+        settings.reconnect_cap_seconds,
+    )
+    minimum_seconds = nominal_seconds * settings.reconnect_jitter_min_ratio
+    delay_seconds = minimum_seconds + (
+        nominal_seconds - minimum_seconds
+    ) * jitter_fraction
+    return timedelta(seconds=delay_seconds)
 
 
 def _positive_integer(value: object, field: str) -> None:
