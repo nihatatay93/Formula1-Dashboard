@@ -5,6 +5,7 @@ import {
   calculateLapSelectionStats,
   compareLapSelections,
   isLapSelectable,
+  rankLapSelections,
 } from "./lapAnalysis";
 import { firstLapPage } from "./test/fixtures";
 
@@ -77,5 +78,50 @@ describe("lap analysis", () => {
       average_delta_us: -250_000,
       faster: "second",
     });
+  });
+
+  it("ranks more than two selections by average with gaps to the fastest", () => {
+    const build = (name: string, times: number[]) => ({
+      entry: name,
+      stats: calculateLapSelectionStats(
+        times.map((time, index) => selectedLap(index + 1, time)),
+      )!,
+    });
+
+    const ranked = rankLapSelections([
+      build("slowest", [92_000_000, 92_000_000]),
+      build("fastest", [90_000_000, 90_000_000]),
+      build("middle", [91_000_000, 91_000_000]),
+    ]);
+
+    expect(
+      ranked.map((item) => [
+        item.entry,
+        item.rank,
+        item.delta_to_fastest_us,
+      ]),
+    ).toEqual([
+      ["fastest", 1, 0],
+      ["middle", 2, 1_000_000],
+      ["slowest", 3, 2_000_000],
+    ]);
+  });
+
+  it("gives equal averages the same rank instead of inventing an order", () => {
+    const stats = calculateLapSelectionStats([selectedLap(1, 90_000_000)])!;
+    const slower = calculateLapSelectionStats([selectedLap(1, 91_000_000)])!;
+
+    const ranked = rankLapSelections([
+      { entry: "a", stats },
+      { entry: "b", stats },
+      { entry: "c", stats: slower },
+    ]);
+
+    expect(ranked.map((item) => item.rank)).toEqual([1, 1, 3]);
+    expect(ranked[2].delta_to_fastest_us).toBe(1_000_000);
+  });
+
+  it("returns nothing to rank for an empty selection list", () => {
+    expect(rankLapSelections([])).toEqual([]);
   });
 });

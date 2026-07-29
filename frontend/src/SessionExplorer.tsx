@@ -19,10 +19,12 @@ import {
   calculateLapSelectionStats,
   compareLapSelections,
   isLapSelectable,
+  rankLapSelections,
 } from "./lapAnalysis";
 
 const LAP_PAGE_SIZE = 50;
-const MAX_ANALYSIS_PARTICIPANTS = 2;
+const DEFAULT_ANALYSIS_SLOTS = 2;
+const MAX_ANALYSIS_PARTICIPANTS = 4;
 
 interface AnalysisSelection {
   entry: SessionEntryResult;
@@ -355,17 +357,219 @@ function LapTable({
   );
 }
 
+/** Distinct strokes for entries whose archive row carries no team colour. */
+const FALLBACK_SERIES_COLORS = ["#38bdf8", "#fbbf24", "#34d399", "#c084fc"];
+
+const CHART = {
+  width: 720,
+  height: 260,
+  padLeft: 64,
+  padRight: 12,
+  padTop: 12,
+  padBottom: 30,
+};
+
+interface PaceSeries {
+  color: string;
+  dashed: boolean;
+  entry: SessionEntryResult;
+  points: { lap_number: number; lap_time_us: number }[];
+}
+
+function buildPaceSeries(selections: AnalysisSelection[]): PaceSeries[] {
+  const usedColors = new Set<string>();
+
+  return selections.map((selection, index) => {
+    const color =
+      selection.entry.team_color_hex ??
+      FALLBACK_SERIES_COLORS[index % FALLBACK_SERIES_COLORS.length];
+    // Team-mates share one colour, so the second of a pair is dashed rather
+    // than drawn as an indistinguishable duplicate line.
+    const dashed = usedColors.has(color);
+    usedColors.add(color);
+
+    return {
+      color,
+      dashed,
+      entry: selection.entry,
+      points: [...selection.laps]
+        .filter(isLapSelectable)
+        .sort((left, right) => left.lap_number - right.lap_number)
+        .map((lap) => ({
+          lap_number: lap.lap_number,
+          lap_time_us: lap.lap_time_us,
+        })),
+    };
+  });
+}
+
+function PaceTrendChart({ series }: { series: PaceSeries[] }) {
+  const populated = series.filter((item) => item.points.length > 0);
+  if (populated.length === 0) {
+    return null;
+  }
+
+  const lapNumbers = populated.flatMap((item) =>
+    item.points.map((point) => point.lap_number),
+  );
+  const lapTimes = populated.flatMap((item) =>
+    item.points.map((point) => point.lap_time_us),
+  );
+
+  const minLap = Math.min(...lapNumbers);
+  const maxLap = Math.max(...lapNumbers);
+  const fastest = Math.min(...lapTimes);
+  const slowest = Math.max(...lapTimes);
+  // A flat or single-lap selection still needs a non-zero domain to scale.
+  const timePad = Math.max(Math.round((slowest - fastest) * 0.08), 100_000);
+  const yMin = fastest - timePad;
+  const yMax = slowest + timePad;
+  const lapSpan = Math.max(maxLap - minLap, 1);
+  const timeSpan = Math.max(yMax - yMin, 1);
+
+  const plotWidth = CHART.width - CHART.padLeft - CHART.padRight;
+  const plotHeight = CHART.height - CHART.padTop - CHART.padBottom;
+  const scaleX = (lap: number) =>
+    CHART.padLeft + ((lap - minLap) / lapSpan) * plotWidth;
+  // Faster laps are lower numbers, and belong at the top of the plot.
+  const scaleY = (time: number) =>
+    CHART.padTop + ((time - yMin) / timeSpan) * plotHeight;
+
+  const gridLines = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+    const time = Math.round(yMax - ratio * timeSpan);
+    return { label: formatLapTime(time), y: scaleY(time) };
+  });
+
+  const tickCount = Math.min(6, maxLap - minLap + 1);
+  const lapTicks = Array.from({ length: tickCount }, (_, index) =>
+    Math.round(minLap + (index * (maxLap - minLap)) / Math.max(tickCount - 1, 1)),
+  ).filter((lap, index, all) => all.indexOf(lap) === index);
+
+  return (
+    <figure className="pace-trend">
+      <svg
+        aria-label={`Selected-lap pace over laps ${minLap} to ${maxLap} for ${populated
+          .map((item) => item.entry.display_name)
+          .join(", ")}`}
+        className="pace-trend__svg"
+        role="img"
+        viewBox={`0 0 ${CHART.width} ${CHART.height}`}
+      >
+        {gridLines.map((line) => (
+          <g key={line.label}>
+            <line
+              className="pace-trend__grid"
+              x1={CHART.padLeft}
+              x2={CHART.width - CHART.padRight}
+              y1={line.y}
+              y2={line.y}
+            />
+            <text
+              className="pace-trend__axis"
+              dominantBaseline="middle"
+              textAnchor="end"
+              x={CHART.padLeft - 8}
+              y={line.y}
+            >
+              {line.label}
+            </text>
+          </g>
+        ))}
+
+        {lapTicks.map((lap) => (
+          <text
+            className="pace-trend__axis"
+            key={lap}
+            textAnchor="middle"
+            x={scaleX(lap)}
+            y={CHART.height - 10}
+          >
+            {lap}
+          </text>
+        ))}
+
+        {populated.map((item) => (
+          <g key={item.entry.session_entry_id}>
+            <polyline
+              className="pace-trend__line"
+              fill="none"
+              stroke={item.color}
+              strokeDasharray={item.dashed ? "6 4" : undefined}
+              points={item.points
+                .map(
+                  (point) =>
+                    `${scaleX(point.lap_number)},${scaleY(point.lap_time_us)}`,
+                )
+                .join(" ")}
+            />
+            {item.points.map((point) => (
+              <circle
+                className="pace-trend__point"
+                cx={scaleX(point.lap_number)}
+                cy={scaleY(point.lap_time_us)}
+                fill={item.color}
+                key={point.lap_number}
+                r={3}
+              >
+                <title>
+                  {`${item.entry.display_name} · lap ${point.lap_number} · ${formatLapTime(point.lap_time_us)}`}
+                </title>
+              </circle>
+            ))}
+          </g>
+        ))}
+      </svg>
+
+      <figcaption className="pace-trend__legend">
+        {populated.map((item) => (
+          <span key={item.entry.session_entry_id}>
+            <i
+              style={{
+                background: item.dashed
+                  ? `repeating-linear-gradient(90deg, ${item.color} 0 4px, transparent 4px 7px)`
+                  : item.color,
+              }}
+            />
+            {item.entry.display_name}
+          </span>
+        ))}
+        <small>Lap number → · selected laps only</small>
+      </figcaption>
+    </figure>
+  );
+}
+
 function PaceAnalysisPanel({
+  maxSlots,
+  onAddSlot,
   onClearSelection,
+  onRemoveSlot,
   selections,
+  slots,
 }: {
+  maxSlots: number;
+  onAddSlot: () => void;
   onClearSelection: (sessionEntryId: string) => void;
+  onRemoveSlot: () => void;
   selections: AnalysisSelection[];
+  slots: number;
 }) {
   const analyzed = selections.flatMap((selection) => {
     const stats = calculateLapSelectionStats(selection.laps);
     return stats ? [{ selection, stats }] : [];
   });
+  const ranked = rankLapSelections(
+    analyzed.map((item) => ({
+      entry: item.selection.entry,
+      stats: item.stats,
+    })),
+  );
+  const rankByEntryId = new Map(
+    ranked.map((item) => [item.entry.session_entry_id, item]),
+  );
+  const series = buildPaceSeries(analyzed.map((item) => item.selection));
+  // The two-participant sentence stays the primary read-out; three or more
+  // are ranked instead, because "X is faster than Y" no longer describes it.
   const comparison =
     analyzed.length === 2
       ? compareLapSelections(analyzed[0].stats, analyzed[1].stats)
@@ -381,9 +585,27 @@ function PaceAnalysisPanel({
           <p className="section-kicker">Manual long-run study</p>
           <h3 id="pace-analysis-title">Selected-lap pace analysis</h3>
         </div>
-        <span>
-          {analyzed.length}/{MAX_ANALYSIS_PARTICIPANTS} comparison slots
-        </span>
+        <div className="pace-analysis__slots">
+          <span>
+            {analyzed.length}/{slots} comparison slots
+          </span>
+          <button
+            aria-label="Remove a comparison slot"
+            disabled={slots <= DEFAULT_ANALYSIS_SLOTS || selections.length >= slots}
+            onClick={onRemoveSlot}
+            type="button"
+          >
+            − Slot
+          </button>
+          <button
+            aria-label="Add a comparison slot"
+            disabled={slots >= maxSlots}
+            onClick={onAddSlot}
+            type="button"
+          >
+            + Slot
+          </button>
+        </div>
       </div>
       <p className="pace-analysis__disclaimer">
         Select the laps you consider representative. The dashboard calculates
@@ -392,7 +614,7 @@ function PaceAnalysisPanel({
       </p>
 
       <div className="pace-analysis__grid">
-        {[0, 1].map((slot) => {
+        {Array.from({ length: slots }, (_, slot) => {
           const analysis = analyzed[slot];
           if (!analysis) {
             return (
@@ -416,6 +638,20 @@ function PaceAnalysisPanel({
                     {selection.entry.abbreviation ?? "Driver"}
                   </span>
                   <strong>{selection.entry.display_name}</strong>
+                  {rankByEntryId.has(selection.entry.session_entry_id) ? (
+                    <span className="pace-analysis__rank">
+                      {(() => {
+                        const rankInfo = rankByEntryId.get(
+                          selection.entry.session_entry_id,
+                        ) as NonNullable<
+                          ReturnType<typeof rankByEntryId.get>
+                        >;
+                        return rankInfo.delta_to_fastest_us === 0
+                          ? `P${rankInfo.rank} · fastest average`
+                          : `P${rankInfo.rank} · +${formatShortDelta(rankInfo.delta_to_fastest_us)}`;
+                      })()}
+                    </span>
+                  ) : null}
                 </div>
                 <button
                   aria-label={`Clear ${selection.entry.display_name} pace selection`}
@@ -469,6 +705,8 @@ function PaceAnalysisPanel({
         })}
       </div>
 
+      <PaceTrendChart series={series} />
+
       {comparison ? (
         <p className="pace-analysis__comparison" role="status">
           {comparison.faster === "equal" ? (
@@ -485,6 +723,21 @@ function PaceAnalysisPanel({
             </>
           )}
         </p>
+      ) : ranked.length > 2 ? (
+        <ol className="pace-analysis__ranking" role="status">
+          {ranked.map((item) => (
+            <li key={item.entry.session_entry_id}>
+              <span>P{item.rank}</span>
+              <strong>{item.entry.display_name}</strong>
+              <span>{formatLapTime(item.stats.average_lap_time_us)}</span>
+              <span>
+                {item.delta_to_fastest_us === 0
+                  ? "Fastest"
+                  : `+${formatShortDelta(item.delta_to_fastest_us)}`}
+              </span>
+            </li>
+          ))}
+        </ol>
       ) : null}
     </section>
   );
@@ -514,6 +767,9 @@ export default function SessionExplorer({
   const [analysisSelections, setAnalysisSelections] = useState<
     AnalysisSelection[]
   >([]);
+  const [comparisonSlots, setComparisonSlots] = useState(
+    DEFAULT_ANALYSIS_SLOTS,
+  );
   const lapSnapshotRef = useRef<string | null>(null);
   const analysisSelectionsRef = useRef<AnalysisSelection[]>([]);
 
@@ -531,6 +787,7 @@ export default function SessionExplorer({
     lapSnapshotRef.current = null;
     setAnalysisNotice(null);
     setAnalysisSelections([]);
+    setComparisonSlots(DEFAULT_ANALYSIS_SLOTS);
     setError(null);
     setLoading(true);
 
@@ -657,9 +914,11 @@ export default function SessionExplorer({
         (selection) =>
           selection.entry.session_entry_id === selectedEntry.session_entry_id,
       );
-      if (existingIndex === -1 && current.length >= MAX_ANALYSIS_PARTICIPANTS) {
+      if (existingIndex === -1 && current.length >= comparisonSlots) {
         setAnalysisNotice(
-          "Two participants are already in the comparison. Clear one selection before adding another.",
+          comparisonSlots >= MAX_ANALYSIS_PARTICIPANTS
+            ? `All ${MAX_ANALYSIS_PARTICIPANTS} comparison slots are in use. Clear one selection before adding another.`
+            : `${comparisonSlots} participants are already in the comparison. Add a slot or clear one selection before adding another.`,
         );
         return current;
       }
@@ -721,7 +980,7 @@ export default function SessionExplorer({
     [analysisSelections, selectedEntry?.session_entry_id],
   );
   const selectionParticipantLimitReached =
-    analysisSelections.length >= MAX_ANALYSIS_PARTICIPANTS &&
+    analysisSelections.length >= comparisonSlots &&
     !analysisSelections.some(
       (selection) =>
         selection.entry.session_entry_id === selectedEntry?.session_entry_id,
@@ -823,8 +1082,20 @@ export default function SessionExplorer({
                 </p>
               ) : null}
               <PaceAnalysisPanel
+                maxSlots={MAX_ANALYSIS_PARTICIPANTS}
+                onAddSlot={() =>
+                  setComparisonSlots((current) =>
+                    Math.min(current + 1, MAX_ANALYSIS_PARTICIPANTS),
+                  )
+                }
                 onClearSelection={handleClearSelection}
+                onRemoveSlot={() =>
+                  setComparisonSlots((current) =>
+                    Math.max(current - 1, DEFAULT_ANALYSIS_SLOTS),
+                  )
+                }
                 selections={analysisSelections}
+                slots={comparisonSlots}
               />
             </>
           ) : null}

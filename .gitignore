@@ -8,6 +8,9 @@
 *.pfx
 secrets/
 
+# Local agent configuration and skills
+.claude/
+
 # Operating-system and editor files
 .DS_Store
 Thumbs.db

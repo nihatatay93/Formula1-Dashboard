@@ -21,6 +21,15 @@ export interface LapSelectionComparison {
   faster: "first" | "second" | "equal";
 }
 
+export interface RankedLapSelection<T> {
+  entry: T;
+  stats: LapSelectionStats;
+  /** 1-based position by selected average, fastest first. Ties share a rank. */
+  rank: number;
+  /** Always >= 0: how far this average sits behind the fastest average. */
+  delta_to_fastest_us: number;
+}
+
 export function isLapSelectable(
   lap: LapSummary,
 ): lap is LapSummary & { lap_time_us: number } {
@@ -69,6 +78,41 @@ export function calculateLapSelectionStats(
       ).length,
     },
   };
+}
+
+/**
+ * Orders any number of selections by their selected average, fastest first,
+ * and reports how far each sits behind the fastest. Equal averages share a
+ * rank so two identical long runs are not presented as one beating the other.
+ */
+export function rankLapSelections<T>(
+  selections: readonly { entry: T; stats: LapSelectionStats }[],
+): RankedLapSelection<T>[] {
+  const ordered = [...selections].sort(
+    (left, right) =>
+      left.stats.average_lap_time_us - right.stats.average_lap_time_us,
+  );
+  if (ordered.length === 0) {
+    return [];
+  }
+
+  const fastest = ordered[0].stats.average_lap_time_us;
+  let rank = 0;
+  let previousAverage: number | null = null;
+
+  return ordered.map((selection, index) => {
+    const average = selection.stats.average_lap_time_us;
+    if (previousAverage === null || average !== previousAverage) {
+      rank = index + 1;
+      previousAverage = average;
+    }
+    return {
+      entry: selection.entry,
+      stats: selection.stats,
+      rank,
+      delta_to_fastest_us: average - fastest,
+    };
+  });
 }
 
 export function compareLapSelections(
