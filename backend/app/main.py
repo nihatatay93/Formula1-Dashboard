@@ -1,4 +1,6 @@
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import psycopg
 from fastapi import FastAPI
@@ -9,11 +11,29 @@ from app.db.schema import (
     DatabaseSchemaMismatchError,
     verify_database_schema,
 )
+from app.live.state import get_live_service
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Run the live-timing retention loop for the lifetime of the process.
+
+    No live session is started here; collection is on demand. Startup only
+    schedules the retention sweep for the disposable session logs.
+    """
+    live_service = get_live_service()
+    await live_service.startup()
+    try:
+        yield
+    finally:
+        await live_service.shutdown()
+
 
 app = FastAPI(
     title="Formula1 Dashboard API",
     description="Backend API for Formula1 Dashboard.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 app.include_router(api_v1_router)
 

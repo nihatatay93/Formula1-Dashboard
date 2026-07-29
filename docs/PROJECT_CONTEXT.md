@@ -34,13 +34,20 @@ between Overview, Season Sessions, and Session Workspace views. Season
 selection and synchronization controls remain available without searching
 through unrelated content, and selecting a session opens its workspace
 directly.
-The ephemeral live-timing storage foundation is implemented as a self-contained
-synchronous `app/live` module: validated settings, untrusted-frame
-normalization with a topic allowlist and redaction, an append-only JSONL
-session log with slugified paths and a size cap, an in-memory latest-state view
-carrying per-topic deduplication, and a retention sweep. It is not yet wired to
-any process. The SignalR collector, the `/api/v1/live` namespace with WebSocket
-fan-out, and the dashboard live view remain unimplemented.
+The ephemeral live-timing path is implemented inside the `api` process as a
+self-contained `app/live` module that touches no PostgreSQL state: validated
+settings, untrusted-frame normalization with a topic allowlist and redaction, an
+append-only JSONL session log with slugified paths and a size cap, an in-memory
+latest-state view carrying per-topic deduplication, a retention sweep started
+from the FastAPI lifespan, an on-demand collector with unbounded equal-jitter
+reconnect and bounded subscriber fan-out, and a `/api/v1/live` namespace with
+session status, start, stop, and a WebSocket stream. Historical endpoints are
+unchanged and still serve only finalized archive data.
+
+Two pieces remain. No SignalR feed provider is implemented, so the collector is
+reached only through its `LiveFeed` protocol and `POST /api/v1/live/session`
+returns `503 live_feed_unconfigured` until a provider is configured. The
+dashboard live view is not built.
 
 ### Architecture baseline through Milestone 3
 
@@ -158,11 +165,15 @@ Formula1-Dashboard/
 │   │   │   ├── runtime_policy.py
 │   │   │   └── season_backfill.py
 │   │   ├── live/
+│   │   │   ├── api.py
+│   │   │   ├── collector.py
 │   │   │   ├── current_view.py
 │   │   │   ├── frames.py
 │   │   │   ├── policy.py
 │   │   │   ├── retention.py
-│   │   │   └── session_log.py
+│   │   │   ├── service.py
+│   │   │   ├── session_log.py
+│   │   │   └── state.py
 │   │   ├── main.py
 │   │   └── worker.py
 │   ├── tests/
@@ -182,10 +193,13 @@ Formula1-Dashboard/
 │   │   ├── test_freshness_policy.py
 │   │   ├── test_health.py
 │   │   ├── test_historical_session_contracts.py
+│   │   ├── test_live_collector.py
 │   │   ├── test_live_current_view.py
+│   │   ├── test_live_endpoints.py
 │   │   ├── test_live_frames.py
 │   │   ├── test_live_policy.py
 │   │   ├── test_live_retention.py
+│   │   ├── test_live_service.py
 │   │   ├── test_live_session_log.py
 │   │   ├── test_runtime_policy.py
 │   │   ├── test_request_budget.py
@@ -399,6 +413,51 @@ Formula1-Dashboard/
   calculated output onto adjacent screens, and tabular figures let timing
   values be compared down a column.
 - Date: 2026-07-29
+- Status: implemented
+
+### Live timing inside the API process
+
+- Decision: Run the live service inside the existing `api` process rather than as
+  its own Compose service, exposing `/api/v1/live` and holding the collector,
+  the in-memory current view, and WebSocket fan-out in one process. Start the
+  retention sweep from the FastAPI lifespan, and mount a dedicated
+  `live_sessions` volume on `api`.
+- Rationale: Without Redis, the collector and the WebSocket handler must share a
+  process, and one process also gives the dashboard a single origin. The live
+  module shares no table, lock, or request budget with the archive path, so
+  extraction into its own container later requires no archive change. The
+  lifespan starts only the retention sweep; collection stays on demand.
+- Date: 2026-07-30
+- Status: implemented
+
+### Live collector reconnect budget
+
+- Decision: Give live reconnects their own unbounded equal-jitter delay in
+  `app/live/policy.py` rather than reusing `calculate_retry_schedule` from
+  `app/ingestion/runtime_policy.py`.
+- Rationale: The two share the equal-jitter formula, but the archive function
+  enforces the archive retry budget and raises once attempts are exhausted. Live
+  reconnects must be unbounded and must never consume a session's archive retry
+  budget, so only the formula is shared. This corrects the live-timing design's
+  earlier claim that the existing calculation is reused directly.
+- Date: 2026-07-30
+- Status: implemented
+
+### Live session ownership and command behavior
+
+- Decision: The live service owns at most one session. Starting the identical
+  session returns the running collector, starting a different one fails with
+  `409`, and an unconfigured feed provider fails with `503`. Stopping requests a
+  cooperative stop, then cancels the task if the feed does not yield within a
+  grace period. When the log directory exceeds its cap, the service sweeps
+  first and otherwise streams with logging disabled rather than refusing the
+  session.
+- Rationale: Idempotent reuse matches the existing season-backfill command
+  style. Cancellation is required because the collector observes a stop request
+  only between frames, so a feed blocked upstream would otherwise hang
+  shutdown. Streaming without a log is preferable to refusing a live view or
+  filling the disk.
+- Date: 2026-07-30
 - Status: implemented
 
 ### Ephemeral live-timing store
@@ -1618,21 +1677,17 @@ race-run classification remain intentionally unimplemented.
 
 ## Next Steps
 
-1. Define the SignalR message schemas, WebSocket payload contract, and live UI
-   on top of the agreed separate ephemeral path in
-   `docs/LIVE_TIMING_DESIGN.md`. The storage and handoff questions are settled:
-   live frames never enter the sporting-data tables, so no migration is
-   required and no finalization or reconciliation step exists.
-2. Wire the implemented `app/live` store into a running process: the on-demand
-   SignalR collector behind a protocol with controlled doubles, a scheduled
-   retention sweep, the directory-level size cap, a dedicated log volume in
-   `compose.yaml`, the `/api/v1/live` endpoint namespace with WebSocket
-   fan-out, and a separate dashboard live view. Settings, frame normalization,
-   the JSONL session log, the in-memory current view, and the sweep function
-   are already implemented and tested. This step introduces the project's first
-   asynchronous code, so it also decides whether the collector runs inside the
-   `api` process or as its own Compose service, and whether a test dependency
-   such as `pytest-asyncio` is added.
+1. Implement a SignalR feed provider satisfying the `LiveFeed` protocol in
+   `app/live/collector.py`, and configure it through `app/live/state.py`. Until
+   then `POST /api/v1/live/session` returns `503 live_feed_unconfigured`. This
+   needs an asynchronous WebSocket client dependency and the live
+   negotiate/connect handshake, neither of which can be verified against the
+   feed outside a session weekend, so it should land with contract tests over
+   recorded frames rather than a live connection. Confirm the topic allowlist in
+   `app/live/frames.py` against the real feed at the same time.
+2. Build the separate dashboard live view against `/api/v1/live`, presenting
+   data explicitly as `unconfirmed_live` and never mixing it with the archive
+   Session Workspace.
 3. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
 4. Before production, add authentication/authorization, secret management,
@@ -1687,10 +1742,25 @@ migrated PostgreSQL database. The complete suite passed with 420 tests against
 an isolated PostgreSQL 17 database after the runtime schema-compatibility
 repair. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
 
-The live-timing store added 78 tests, for 498 collected. Without
-`TEST_DATABASE_URL` the suite reports 389 passed and 109 skipped; the skips are
+The live-timing path added 122 tests, for 542 collected. Without
+`TEST_DATABASE_URL` the suite reports 433 passed and 109 skipped; the skips are
 the database integration tests, which the live module does not use because it
-touches no database.
+touches no database. Asynchronous tests require the `pytest-asyncio` dev
+dependency with `asyncio_mode = "strict"`.
+
+The live endpoints were additionally exercised against the running stack:
+
+```bash
+curl -s http://localhost:8000/api/v1/live/session
+curl -s -X POST http://localhost:8000/api/v1/live/session \
+  -H 'Content-Type: application/json' \
+  -d '{"session_date":"2026-08-21","event_name":"Dutch Grand Prix","session_key":"qualifying"}'
+```
+
+Status returns `feed_configured: false`, and the start command returns `503
+live_feed_unconfigured` because no SignalR provider exists yet. Season overview
+and database readiness continued to return `200`, and the `live_sessions` volume
+mounted writable at `/live-sessions`.
 
 ## Known Issues and Technical Debt
 

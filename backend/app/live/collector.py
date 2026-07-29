@@ -106,7 +106,9 @@ class LiveCollector:
         clock: Callable[[], datetime] | None = None,
         jitter: Callable[[], float] | None = None,
         sleep: Callable[[float], object] | None = None,
+        logging_enabled: bool = True,
     ) -> None:
+        self._logging_enabled = logging_enabled
         self._identity = identity
         self._feed_factory = feed_factory
         self._settings = settings
@@ -153,6 +155,9 @@ class LiveCollector:
 
     @property
     def log_degraded(self) -> bool:
+        """True when frames are not reaching the log, for any reason."""
+        if not self._logging_enabled:
+            return True
         return self._log is not None and self._log.degraded
 
     def status(self) -> dict[str, object]:
@@ -179,10 +184,11 @@ class LiveCollector:
 
     async def run(self) -> None:
         """Stream until ``stop`` is requested, reconnecting with backoff."""
-        self._log = LiveSessionLog(
-            self._log_path,
-            max_bytes=self._settings.max_log_bytes,
-        )
+        if self._logging_enabled:
+            self._log = LiveSessionLog(
+                self._log_path,
+                max_bytes=self._settings.max_log_bytes,
+            )
         attempt = 0
         try:
             while not self._stopping:
@@ -243,7 +249,9 @@ class LiveCollector:
             return
 
         self._stats.accepted += 1
-        if self._log is not None and not self._log.append(frame):
+        if self._log is None or not self._log.append(frame):
+            # Streaming continues regardless: losing the disposable log is
+            # always preferable to interrupting the live view.
             self._stats.dropped_by_log_cap += 1
         self._publish(frame)
 
