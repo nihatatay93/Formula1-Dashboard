@@ -40,6 +40,8 @@ class LiveTimingSettings:
     #: when the token carries no usable expiry claim of its own.
     token_path: str = DEFAULT_TOKEN_PATH
     token_ttl_hours: int = 96
+    #: Port the companion extension is told to post the token back to.
+    auth_callback_port: int = 8000
 
     def __post_init__(self) -> None:
         if not isinstance(self.log_directory, str) or not self.log_directory.strip():
@@ -74,6 +76,9 @@ class LiveTimingSettings:
         if not isinstance(self.token_path, str) or not self.token_path.strip():
             raise LiveTimingPolicyError("token_path must be a non-empty string")
         _positive_integer(self.token_ttl_hours, "token_ttl_hours")
+        _positive_integer(self.auth_callback_port, "auth_callback_port")
+        if self.auth_callback_port > 65535:
+            raise LiveTimingPolicyError("auth_callback_port must be a valid port")
         if self.replay_path is not None and not str(self.replay_path).strip():
             raise LiveTimingPolicyError(
                 "replay_path must be a non-empty string when set"
@@ -129,6 +134,11 @@ class LiveTimingSettings:
                 values,
                 "LIVE_TIMING_TOKEN_TTL_HOURS",
                 defaults.token_ttl_hours,
+            ),
+            auth_callback_port=_environment_integer(
+                values,
+                "LIVE_TIMING_AUTH_CALLBACK_PORT",
+                defaults.auth_callback_port,
             ),
         )
 

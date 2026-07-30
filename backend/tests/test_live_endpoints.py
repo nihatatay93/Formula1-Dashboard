@@ -189,13 +189,12 @@ def test_auth_status_starts_unauthenticated(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "no-store"
-    assert response.json() == {
-        "authenticated": False,
-        "expired": False,
-        "expires_at": None,
-        "seconds_remaining": 0,
-        "expiry_source": None,
-    }
+    body = response.json()
+    assert body["authenticated"] is False
+    assert body["expires_at"] is None
+    assert body["token_source"] is None
+    # A one-click entry point for the companion extension, carrying our port.
+    assert body["companion_url"] == "https://f1login.fastf1.dev?port=8000"
 
 
 def test_storing_a_token_reports_authenticated(client: TestClient) -> None:
@@ -278,6 +277,11 @@ def test_the_token_value_is_never_returned_by_any_live_endpoint(
 def test_session_status_reports_authentication(client: TestClient) -> None:
     before = client.get("/api/v1/live/session").json()
     assert before["authentication"]["authenticated"] is False
+    # The dashboard reads the sign-in link from here, not from /live/auth.
+    assert (
+        before["authentication"]["companion_url"]
+        == "https://f1login.fastf1.dev?port=8000"
+    )
 
     client.post("/api/v1/live/auth", json={"login_session": TOKEN})
 
@@ -286,7 +290,7 @@ def test_session_status_reports_authentication(client: TestClient) -> None:
 
 
 def test_a_rejected_token_is_not_echoed_back(client: TestClient) -> None:
-    secret = "s" * 9000
+    secret = "s" * 40000
 
     response = client.post("/api/v1/live/auth", json={"login_session": secret})
 

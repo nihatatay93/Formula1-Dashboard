@@ -49,6 +49,8 @@ async function installApiRoutes(page: Page) {
           expires_at: null,
           seconds_remaining: 0,
           expiry_source: null,
+          token_source: null,
+          companion_url: "https://f1login.fastf1.dev?port=8000",
         },
         session: null,
       });
@@ -254,13 +256,17 @@ test("opens live timing as a separate view without archive state", async ({
   await expect(
     page.getByText(/Your password is never sent to this application/),
   ).toBeVisible();
+  // The primary path is one click; the cookie paste is a collapsed fallback.
+  await expect(
+    page.getByRole("link", { name: /Sign in with Formula 1/ }),
+  ).toHaveAttribute("href", "https://f1login.fastf1.dev?port=8000");
+  await expect(
+    page.getByRole("link", { name: /FastF1 companion extension/ }),
+  ).toBeVisible();
   await expect(page.getByLabel(/login-session cookie/)).toHaveAttribute(
     "type",
     "password",
   );
-  await expect(
-    page.getByRole("button", { name: /Connect account/ }),
-  ).toBeDisabled();
   await expect(
     page.getByRole("button", { name: /Connect to session/ }),
   ).toBeDisabled();

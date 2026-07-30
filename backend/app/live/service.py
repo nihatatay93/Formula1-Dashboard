@@ -78,8 +78,24 @@ class LiveService:
     def tokens(self) -> F1TokenStore:
         return self._tokens
 
+    @property
+    def companion_auth_url(self) -> str:
+        """Primes the companion extension with this API's port, then sends the
+        browser to formula1.com to sign in."""
+        return (
+            "https://f1login.fastf1.dev"
+            f"?port={self._settings.auth_callback_port}"
+        )
+
     def authentication_status(self) -> dict[str, object]:
-        return self._tokens.status(now=self._clock())
+        """Auth state plus the one-click sign-in entry point.
+
+        The dashboard reads this through live status, so the companion URL has
+        to travel with it rather than only from the auth endpoint.
+        """
+        status = dict(self._tokens.status(now=self._clock()))
+        status["companion_url"] = self.companion_auth_url
+        return status
 
     def save_token(self, login_session: object) -> StoredToken:
         return self._tokens.save(login_session, now=self._clock())

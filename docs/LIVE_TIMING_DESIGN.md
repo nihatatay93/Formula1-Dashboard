@@ -88,10 +88,20 @@ the browser keeps bot protection and multi-factor sign-in working, survives
 changes to the login flow, and confines the secret to a cookie that expires in
 days rather than a password that does not.
 
+- The primary flow is: install the companion extension once, open
+  `https://f1login.fastf1.dev?port={port}` from the dashboard button, sign in at
+  Formula 1, click Connect. Live status carries that URL so the port is always
+  correct.
 - `POST /api/v1/live/auth` accepts `{login_session}` or the extension's
   `{loginSession}`. The same contract is mounted at the application root as
-  `POST /auth`, so the existing extension can be pointed at this instance.
-- Pasting the cookie manually is the fallback when the extension is not used.
+  `POST /auth`, with a matching `OPTIONS` preflight, because the extension
+  fetches from its own origin and would otherwise fail CORS. Permissive CORS is
+  scoped to that route only.
+- The cookie is a wrapper: URL-decoded JSON whose `data.subscriptionToken` holds
+  the RS256 JWT used for live access. Only that inner token is stored, which is
+  also what makes the real expiry claim readable.
+- Pasting the cookie manually is a collapsed fallback for users without the
+  extension.
 - The token is stored as JSON in a dedicated volume, created with owner-only
   permissions before any content is written.
 - Expiry comes from the token's own `exp` claim when it is a JWT with a sane

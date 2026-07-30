@@ -27,6 +27,8 @@ function auth(overrides: Partial<LiveAuthStatus> = {}): LiveAuthStatus {
     expires_at: null,
     seconds_remaining: 0,
     expiry_source: null,
+    token_source: null,
+    companion_url: "https://f1login.fastf1.dev?port=8000",
     ...overrides,
   };
 }
@@ -54,13 +56,46 @@ describe("LiveAuthPanel", () => {
     ).toBeVisible();
   });
 
-  it("explains the browser sign-in step and links to formula1.com", () => {
+  it("offers a one-click sign-in link carrying our callback port", () => {
     render(<LiveAuthPanel auth={auth()} onChanged={vi.fn()} />);
 
-    const link = screen.getByRole("link", { name: /account.formula1.com/ });
-    expect(link).toHaveAttribute("href", "https://account.formula1.com/");
+    const link = screen.getByRole("link", { name: /Sign in with Formula 1/ });
+    expect(link).toHaveAttribute(
+      "href",
+      "https://f1login.fastf1.dev?port=8000",
+    );
     expect(link).toHaveAttribute("rel", expect.stringContaining("noreferrer"));
     expect(screen.getByText("Not connected")).toBeVisible();
+  });
+
+  it("links to the companion extension as the one-time install step", () => {
+    render(<LiveAuthPanel auth={auth()} onChanged={vi.fn()} />);
+
+    expect(
+      screen.getByRole("link", { name: /FastF1 companion extension/ }),
+    ).toHaveAttribute(
+      "href",
+      "https://github.com/theOehrly/fastf1-companion",
+    );
+  });
+
+  it("keeps the manual cookie paste as a secondary fallback", () => {
+    render(<LiveAuthPanel auth={auth()} onChanged={vi.fn()} />);
+
+    // Present, but tucked behind a disclosure rather than the primary path.
+    const disclosure = screen.getByText(/No extension\? Paste the cookie/);
+    expect(disclosure.closest("details")).not.toBeNull();
+    expect(screen.getByLabelText(/login-session cookie/)).toBeInTheDocument();
+  });
+
+  it("hides the sign-in link when the backend supplies none", () => {
+    render(
+      <LiveAuthPanel auth={auth({ companion_url: null })} onChanged={vi.fn()} />,
+    );
+
+    expect(
+      screen.queryByRole("link", { name: /Sign in with Formula 1/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps connect disabled until a token is entered", async () => {
@@ -152,7 +187,11 @@ describe("LiveAuthPanel", () => {
 
     expect(screen.getByText("Your F1 TV session has expired")).toBeVisible();
     expect(screen.getByText("Expired")).toBeVisible();
-    expect(screen.getByLabelText(/login-session cookie/)).toBeVisible();
+    // Re-authentication offers the same one-click path, not a manual chore.
+    expect(
+      screen.getByRole("link", { name: /Sign in with Formula 1/ }),
+    ).toBeVisible();
+    expect(screen.getByLabelText(/login-session cookie/)).toBeInTheDocument();
   });
 
   it("signs out and reports the cleared status", async () => {

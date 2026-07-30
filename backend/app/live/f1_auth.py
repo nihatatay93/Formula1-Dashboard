@@ -19,6 +19,7 @@ import binascii
 import json
 import os
 import stat
+import urllib.parse
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -26,7 +27,7 @@ from pathlib import Path
 #: A cookie value, not free text. Bounds and a control-character check keep
 #: obviously wrong input out of the store.
 MIN_TOKEN_LENGTH = 16
-MAX_TOKEN_LENGTH = 8192
+MAX_TOKEN_LENGTH = 32768
 
 #: An expiry claim further out than this is not trusted; the configured TTL is
 #: used instead, so a malformed or hostile claim cannot pin a token open.
@@ -47,12 +48,39 @@ class StoredToken:
     expires_at: datetime
     #: Whether the expiry came from the token's own claim or the configured TTL.
     expiry_source: str
+    #: Whether the caller supplied the cookie wrapper or the token directly.
+    token_source: str = "direct"
 
     def is_expired(self, now: datetime) -> bool:
         return now >= self.expires_at
 
     def seconds_remaining(self, now: datetime) -> int:
         return max(0, int((self.expires_at - now).total_seconds()))
+
+
+def extract_subscription_token(value: str) -> tuple[str, str]:
+    """Pull the subscription token out of a ``login-session`` cookie.
+
+    The cookie is URL-encoded JSON whose ``data.subscriptionToken`` holds the
+    actual RS256 JWT used for live access; the cookie itself is a wrapper. A
+    value that is not that wrapper is treated as the token already, so pasting
+    either the cookie or the bare token works.
+
+    Returns the token and where it came from.
+    """
+    try:
+        decoded = json.loads(urllib.parse.unquote(value))
+    except ValueError:
+        return value, "direct"
+    if not isinstance(decoded, dict):
+        return value, "direct"
+    data = decoded.get("data")
+    if not isinstance(data, dict):
+        return value, "direct"
+    token = data.get("subscriptionToken")
+    if isinstance(token, str) and token.strip():
+        return token.strip(), "login_session_cookie"
+    return value, "direct"
 
 
 def validate_login_session(value: object) -> str:
@@ -114,7 +142,8 @@ class F1TokenStore:
 
     def save(self, login_session: object, *, now: datetime) -> StoredToken:
         """Validate and persist a token, returning its metadata."""
-        token = validate_login_session(login_session)
+        supplied = validate_login_session(login_session)
+        token, token_source = extract_subscription_token(supplied)
         claimed = read_jwt_expiry(token)
         fallback = now + self._default_ttl
         if claimed is not None and now < claimed <= now + MAX_TRUSTED_TTL:
@@ -127,6 +156,7 @@ class F1TokenStore:
             "obtained_at": now.isoformat(),
             "expires_at": expires_at.isoformat(),
             "expiry_source": source,
+            "token_source": token_source,
         }
         self._path.parent.mkdir(parents=True, exist_ok=True)
         # Create with owner-only permissions before any content is written, so
@@ -144,6 +174,7 @@ class F1TokenStore:
             obtained_at=now,
             expires_at=expires_at,
             expiry_source=source,
+            token_source=token_source,
         )
 
     def load(self) -> StoredToken | None:
@@ -155,10 +186,14 @@ class F1TokenStore:
         if obtained_at is None or expires_at is None:
             return None
         source = record.get("expiry_source")
+        token_source = record.get("token_source")
         return StoredToken(
             obtained_at=obtained_at,
             expires_at=expires_at,
             expiry_source=source if isinstance(source, str) else "configured_ttl",
+            token_source=(
+                token_source if isinstance(token_source, str) else "direct"
+            ),
         )
 
     def login_session(self, *, now: datetime) -> str | None:
@@ -196,6 +231,7 @@ class F1TokenStore:
                 "expires_at": None,
                 "seconds_remaining": 0,
                 "expiry_source": None,
+                "token_source": None,
             }
         expired = stored.is_expired(now)
         return {
@@ -204,6 +240,7 @@ class F1TokenStore:
             "expires_at": stored.expires_at.isoformat(),
             "seconds_remaining": stored.seconds_remaining(now),
             "expiry_source": stored.expiry_source,
+            "token_source": stored.token_source,
         }
 
     def _read(self) -> dict[str, object] | None:

@@ -529,6 +529,41 @@ Formula1-Dashboard/
 - Date: 2026-07-30
 - Status: implemented
 
+### Companion extension as the primary sign-in path
+
+- Decision: Make the FastF1 companion extension the primary way to connect an F1
+  TV account. Live status carries a `companion_url` of
+  `https://f1login.fastf1.dev?port={auth_callback_port}`, which the dashboard
+  renders as a single sign-in button; the manual cookie paste moves behind a
+  collapsed disclosure. The root `POST /auth` route and a matching `OPTIONS`
+  preflight send permissive CORS headers.
+- Rationale: Copying a cookie out of browser developer tools is not a usable
+  flow. The extension already reduces this to install once, click a link, sign
+  in, click Connect — but it fetches `http://localhost:{port}/auth` from an
+  extension origin, which triggers a CORS preflight. Without those headers the
+  extension's request failed, so the easy path was unreachable. Extension
+  origins are per-install identifiers that cannot be pinned, so any origin is
+  allowed on that route only, exactly as FastF1's own local auth server does.
+  The API is loopback-bound and the route returns nothing sensitive; the
+  residual risk is that a page could plant a token, which signing out clears.
+- Date: 2026-07-30
+- Status: implemented
+
+### Subscription token extraction
+
+- Decision: Treat the `login-session` cookie as a wrapper. URL-decode it, parse
+  the JSON, and store only `data.subscriptionToken`, recording whether the value
+  arrived as a cookie or already as a bare token. A value that is not that
+  wrapper is stored directly, so pasting either form works.
+- Rationale: Reading `fastf1/internals/f1auth.py` shows the cookie is
+  URL-encoded JSON and the RS256 JWT used for live access is nested inside it.
+  Storing the whole cookie meant the expiry claim was unreachable, so the
+  `token_claim` path never fired and every token silently fell back to the
+  configured TTL. Unwrapping makes the real expiry readable and stores the value
+  the live connection actually needs.
+- Date: 2026-07-30
+- Status: implemented
+
 ### Live token storage and confinement
 
 - Decision: Store the token as JSON in a dedicated `live_auth` volume, created
@@ -1878,13 +1913,13 @@ migrated PostgreSQL database. The complete suite passed with 420 tests against
 an isolated PostgreSQL 17 database after the runtime schema-compatibility
 repair. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
 
-The live-timing path added 223 tests, for 643 collected. Without
-`TEST_DATABASE_URL` the suite reports 534 passed and 109 skipped; the skips are
+The live-timing path added 235 tests, for 655 collected. Without
+`TEST_DATABASE_URL` the suite reports 546 passed and 109 skipped; the skips are
 the database integration tests, which the live module does not use because it
 touches no database. Asynchronous tests require the `pytest-asyncio` dev
 dependency with `asyncio_mode = "strict"`.
 
-The frontend suite reports 39 Vitest tests and 8 Playwright tests across
+The frontend suite reports 42 Vitest tests and 8 Playwright tests across
 desktop and mobile Chromium, including the live view and the F1 TV panel.
 
 The live endpoints were additionally exercised against the running stack:

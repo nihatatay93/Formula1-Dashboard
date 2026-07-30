@@ -68,6 +68,8 @@ function status(overrides: Partial<LiveStatus> = {}): LiveStatus {
       expires_at: null,
       seconds_remaining: 0,
       expiry_source: null,
+      token_source: null,
+      companion_url: "https://f1login.fastf1.dev?port=8000",
     },
     session: null,
     ...overrides,

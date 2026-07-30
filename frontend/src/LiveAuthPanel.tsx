@@ -119,6 +119,39 @@ export default function LiveAuthPanel({
 
           <ol className="live-auth__steps">
             <li>
+              Install the{" "}
+              <a
+                href="https://github.com/theOehrly/fastf1-companion"
+                rel="noreferrer noopener"
+                target="_blank"
+              >
+                FastF1 companion extension
+              </a>{" "}
+              once, in this browser.
+            </li>
+            <li>
+              Open the sign-in link below. It sends you to Formula 1 to log in,
+              then offers a <strong>Connect</strong> button that hands the
+              session straight to this dashboard. An F1 TV subscription is
+              required.
+            </li>
+          </ol>
+
+          {auth.companion_url ? (
+            <a
+              className="primary-action live-auth__connect"
+              href={auth.companion_url}
+              rel="noreferrer noopener"
+              target="_blank"
+            >
+              Sign in with Formula 1
+              <span aria-hidden="true">↗</span>
+            </a>
+          ) : null}
+
+          <details className="live-auth__manual">
+            <summary>No extension? Paste the cookie instead</summary>
+            <p>
               Sign in at{" "}
               <a
                 href="https://account.formula1.com/"
@@ -126,37 +159,31 @@ export default function LiveAuthPanel({
                 target="_blank"
               >
                 account.formula1.com
-              </a>{" "}
-              in this browser. An F1 TV subscription is required.
-            </li>
-            <li>
-              Either use the FastF1 companion extension pointed at this
-              instance, or copy the <code>login-session</code> cookie for{" "}
-              <code>livetiming.formula1.com</code> and paste it below.
-            </li>
-          </ol>
-
-          <label className="live-auth__field" htmlFor="live-auth-token">
-            login-session cookie
-            <input
-              autoComplete="off"
-              id="live-auth-token"
-              onChange={(event) => setToken(event.target.value)}
-              placeholder="Paste the cookie value"
-              spellCheck={false}
-              type="password"
-              value={token}
-            />
-          </label>
-
-          <button
-            className="primary-action"
-            disabled={pending || token.trim().length === 0}
-            onClick={() => void handleConnect()}
-            type="button"
-          >
-            {pending ? "Connecting…" : "Connect account"}
-          </button>
+              </a>
+              , then copy the <code>login-session</code> cookie for{" "}
+              <code>livetiming.formula1.com</code> from your browser tools.
+            </p>
+            <label className="live-auth__field" htmlFor="live-auth-token">
+              login-session cookie
+              <input
+                autoComplete="off"
+                id="live-auth-token"
+                onChange={(event) => setToken(event.target.value)}
+                placeholder="Paste the cookie value"
+                spellCheck={false}
+                type="password"
+                value={token}
+              />
+            </label>
+            <button
+              className="secondary-action"
+              disabled={pending || token.trim().length === 0}
+              onClick={() => void handleConnect()}
+              type="button"
+            >
+              {pending ? "Connecting…" : "Connect account"}
+            </button>
+          </details>
         </>
       )}
 

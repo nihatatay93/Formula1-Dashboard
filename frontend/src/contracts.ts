@@ -401,6 +401,9 @@ export interface LiveAuthStatus {
   expires_at: string | null;
   seconds_remaining: number;
   expiry_source: string | null;
+  token_source: string | null;
+  /** One-click entry point that primes the companion extension with our port. */
+  companion_url: string | null;
 }
 
 export interface LiveStatus {

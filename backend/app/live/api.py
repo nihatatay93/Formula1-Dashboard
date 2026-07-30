@@ -66,6 +66,10 @@ class AuthStatusResponse(BaseModel):
     expires_at: str | None = None
     seconds_remaining: int = 0
     expiry_source: str | None = None
+    token_source: str | None = None
+    #: One-click entry point that primes the FastF1 companion extension with the
+    #: port this API is reachable on, then sends the browser to formula1.com.
+    companion_url: str | None = None
 
 
 #: Accepted spellings for the token field. The companion extension sends
@@ -185,6 +189,26 @@ async def stop_live_session(
     return _status(service)
 
 
+def _auth_status(service: LiveService) -> AuthStatusResponse:
+    return AuthStatusResponse(**service.authentication_status())
+
+
+def _allow_extension_origin(response: Response) -> None:
+    """Permit the companion extension's cross-origin POST.
+
+    The extension fetches ``http://localhost:{port}/auth`` from its own
+    extension origin, which is a different origin and triggers a preflight.
+    Extension origins are per-install identifiers that cannot be pinned, so any
+    origin is allowed on this route only, exactly as FastF1's own local auth
+    server does. The API is bound to loopback and this route returns no
+    sensitive data; the residual risk is that a page could plant a token, which
+    the user can clear by signing out.
+    """
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+
+
 def _save_token(service: LiveService, login_session: object) -> AuthStatusResponse:
     try:
         service.save_token(login_session)
@@ -201,7 +225,7 @@ def _save_token(service: LiveService, login_session: object) -> AuthStatusRespon
             code="token_store_unavailable",
             message="The token could not be stored.",
         ) from None
-    return AuthStatusResponse(**service.authentication_status())
+    return _auth_status(service)
 
 
 @router.get(
@@ -214,7 +238,7 @@ def read_live_auth(
     service: Annotated[LiveService, Depends(get_live_service)],
 ) -> AuthStatusResponse:
     response.headers["Cache-Control"] = "no-store"
-    return AuthStatusResponse(**service.authentication_status())
+    return _auth_status(service)
 
 
 @router.post(
@@ -242,7 +266,7 @@ def clear_live_auth(
 ) -> AuthStatusResponse:
     response.headers["Cache-Control"] = "no-store"
     service.clear_token()
-    return AuthStatusResponse(**service.authentication_status())
+    return _auth_status(service)
 
 
 @compat_router.post(
@@ -258,7 +282,19 @@ async def store_live_auth_compat(
 ) -> AuthStatusResponse:
     """Same contract the companion extension already posts to."""
     response.headers["Cache-Control"] = "no-store"
+    _allow_extension_origin(response)
     return _save_token(service, await read_login_session(request))
+
+
+@compat_router.options(
+    "/auth",
+    include_in_schema=False,
+    summary="Preflight for the companion extension",
+)
+def preflight_live_auth_compat(response: Response) -> Response:
+    _allow_extension_origin(response)
+    response.status_code = 200
+    return response
 
 
 @router.websocket("/stream")

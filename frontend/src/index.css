@@ -2620,6 +2620,48 @@ th,
   align-self: flex-start;
 }
 
+.live-auth__connect {
+  text-decoration: none;
+}
+
+.live-auth__manual {
+  border-top: 1px solid var(--line);
+  padding-top: var(--s3);
+}
+
+.live-auth__manual summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: var(--t-small);
+}
+
+.live-auth__manual summary:hover {
+  color: var(--ink);
+}
+
+.live-auth__manual > p {
+  margin: var(--s3) 0;
+  color: var(--muted);
+  font-size: var(--t-small);
+}
+
+.live-auth__manual a {
+  color: var(--data);
+  text-decoration: underline;
+}
+
+.live-auth__manual code {
+  padding: 0.05rem var(--s1);
+  border-radius: var(--r-xs);
+  background: var(--panel-raised);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+}
+
+.live-auth__manual .live-auth__field {
+  margin-bottom: var(--s3);
+}
+
 /* --------------------------------------------------------------------------
    16. Alerts and empty states
    -------------------------------------------------------------------------- */

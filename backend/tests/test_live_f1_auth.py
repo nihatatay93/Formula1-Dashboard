@@ -7,10 +7,12 @@ from pathlib import Path
 import pytest
 
 from app.live.f1_auth import (
+    MAX_TOKEN_LENGTH,
     MAX_TRUSTED_TTL,
     F1AuthError,
     F1TokenStore,
     InvalidF1TokenError,
+    extract_subscription_token,
     read_jwt_expiry,
     validate_login_session,
 )
@@ -54,7 +56,7 @@ class TestValidation:
 
     def test_too_long_is_rejected(self) -> None:
         with pytest.raises(InvalidF1TokenError, match="too long"):
-            validate_login_session("a" * 9000)
+            validate_login_session("a" * (MAX_TOKEN_LENGTH + 1))
 
     @pytest.mark.parametrize(
         "value",
@@ -70,7 +72,7 @@ class TestValidation:
             validate_login_session(value)
 
     def test_the_rejected_value_is_never_echoed(self) -> None:
-        secret = "s" * 9000
+        secret = "s" * (MAX_TOKEN_LENGTH + 1)
         with pytest.raises(InvalidF1TokenError) as caught:
             validate_login_session(secret)
 
@@ -234,6 +236,7 @@ class TestStatus:
             "expires_at": None,
             "seconds_remaining": 0,
             "expiry_source": None,
+            "token_source": None,
         }
 
     def test_status_while_authenticated(self, tmp_path: Path) -> None:
@@ -266,3 +269,73 @@ class TestStatus:
         assert PLAUSIBLE not in rendered
         # The value is on disk, so the guarantee is about what status exposes.
         assert PLAUSIBLE in keeper.path.read_text(encoding="utf-8")
+
+
+def login_session_cookie(token: str) -> str:
+    """The wrapper the browser actually holds: URL-encoded JSON."""
+    import urllib.parse
+
+    return urllib.parse.quote(json.dumps({"data": {"subscriptionToken": token}}))
+
+
+class TestSubscriptionTokenExtraction:
+    def test_the_token_is_unwrapped_from_the_cookie(self) -> None:
+        token, source = extract_subscription_token(login_session_cookie(PLAUSIBLE))
+
+        assert token == PLAUSIBLE
+        assert source == "login_session_cookie"
+
+    def test_a_bare_token_passes_through(self) -> None:
+        assert extract_subscription_token(PLAUSIBLE) == (PLAUSIBLE, "direct")
+
+    @pytest.mark.parametrize(
+        "wrapper",
+        [
+            '{"data": {}}',
+            '{"data": {"subscriptionToken": ""}}',
+            '{"data": {"subscriptionToken": 7}}',
+            '{"data": "not-an-object"}',
+            '{"other": 1}',
+            "[1, 2, 3]",
+            '"just a string"',
+        ],
+    )
+    def test_a_wrapper_without_a_usable_token_is_treated_as_direct(
+        self,
+        wrapper: str,
+    ) -> None:
+        token, source = extract_subscription_token(wrapper)
+
+        assert token == wrapper
+        assert source == "direct"
+
+    def test_storing_the_cookie_persists_only_the_inner_token(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        keeper = store(tmp_path)
+        cookie = login_session_cookie(PLAUSIBLE)
+
+        stored = keeper.save(cookie, now=NOW)
+
+        assert stored.token_source == "login_session_cookie"
+        assert keeper.login_session(now=NOW) == PLAUSIBLE
+        # The wrapper itself is not what gets used for the live connection.
+        assert cookie not in keeper.path.read_text(encoding="utf-8")
+
+    def test_the_inner_jwt_expiry_is_used(self, tmp_path: Path) -> None:
+        expiry = NOW + timedelta(days=4)
+        cookie = login_session_cookie(jwt_with({"exp": int(expiry.timestamp())}))
+
+        stored = store(tmp_path).save(cookie, now=NOW)
+
+        # This is the case the wrapper previously hid: the expiry claim lives in
+        # the inner token, so unwrapping is what makes it readable at all.
+        assert stored.expiry_source == "token_claim"
+        assert stored.expires_at == expiry.replace(microsecond=0)
+
+    def test_status_reports_where_the_token_came_from(self, tmp_path: Path) -> None:
+        keeper = store(tmp_path)
+        keeper.save(login_session_cookie(PLAUSIBLE), now=NOW)
+
+        assert keeper.status(now=NOW)["token_source"] == "login_session_cookie"

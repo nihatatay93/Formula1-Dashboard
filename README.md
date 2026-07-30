@@ -141,10 +141,14 @@ reports an unconfigured feed by default.
 
 ### F1 TV account
 
-A live SignalR connection needs an F1 TV subscription. Sign in at
-`account.formula1.com` in your browser, then either point the
-[FastF1 companion extension](https://github.com/theOehrly/fastf1-companion) at
-this instance or paste the `login-session` cookie into the Live Timing view. No
+A live SignalR connection needs an F1 TV subscription. In the Live Timing view:
+
+1. Install the
+   [FastF1 companion extension](https://github.com/theOehrly/fastf1-companion)
+   once.
+2. Click **Sign in with Formula 1**, log in, then click **Connect**.
+
+Pasting the `login-session` cookie by hand is available as a fallback. No
 password is ever sent to this application, and the stored token is never
 returned to the browser.
 
