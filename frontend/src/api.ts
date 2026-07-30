@@ -6,7 +6,6 @@ import type {
   LapSummaryRequest,
   LapSummaryResponse,
   LiveAuthStatus,
-  LiveSessionRequest,
   LiveStatus,
   SeasonOverview,
   SessionDetail,
@@ -137,13 +136,9 @@ export function getLiveStatus(signal?: AbortSignal): Promise<LiveStatus> {
   return requestJson<LiveStatus>("/api/v1/live/session", { signal });
 }
 
-export function startLiveSession(
-  request: LiveSessionRequest,
-  signal?: AbortSignal,
-): Promise<LiveStatus> {
+/** No identity is sent: the feed states which session it is. */
+export function startLiveSession(signal?: AbortSignal): Promise<LiveStatus> {
   return requestJson<LiveStatus>("/api/v1/live/session", {
-    body: JSON.stringify(request),
-    headers: { "Content-Type": "application/json" },
     method: "POST",
     signal,
   });

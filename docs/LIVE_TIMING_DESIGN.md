@@ -147,7 +147,10 @@ signing in takes effect without a restart.
 ## Connection Lifecycle
 
 A live session is started on demand when a user opens the live view, rather
-than by a always-running collector.
+than by a always-running collector. Starting takes no identity: the collector
+begins unnamed and names itself from the feed's `SessionInfo`, buffering the
+frames that arrive before then. Only one session can be live, so a second start
+reuses the running one.
 
 - One collector owns at most one live session at a time.
 - States are `disconnected → connecting → streaming → stopped`.

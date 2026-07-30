@@ -589,6 +589,27 @@ Formula1-Dashboard/
 - Date: 2026-07-30
 - Status: implemented
 
+### Session identity from the feed
+
+- Decision: Starting a live session takes no identity. `POST
+  /api/v1/live/session` accepts no body, the collector begins unnamed, and it
+  names itself from the feed's `SessionInfo` — meeting name, session name and
+  the date part of `StartDate`. Frames that arrive before that are buffered, up
+  to 512, and flushed once the log path is known. Because only one session can
+  ever be live, a second start reuses the running one and the `409
+  live_session_conflict` response is removed.
+- Rationale: The feed states which session it is, so asking the reader to type
+  an event name was redundant and easy to get wrong; a typo produced a
+  misnamed log for a session the feed had already identified correctly. This
+  needs no access to the archive schedule, so the recorded rule that the live
+  view never reads archive state is preserved. Buffering exists because the log
+  path depends on an identity that arrives with the first frames; the initial
+  batch is one frame per topic, so the buffer stays small. Log-based resume
+  after a restart now applies only when an identity is already known, which
+  costs nothing in practice because a reconnect resends full state anyway.
+- Date: 2026-07-30
+- Status: implemented
+
 ### Live timing board
 
 - Decision: Normalise merged live topic state into a display-ready board in
@@ -1926,9 +1947,7 @@ race-run classification remain intentionally unimplemented.
    state per topic, but sustained delta traffic, reconnects mid-session and the
    `TimingData` update rate have not been observed live. The next event is the
    Dutch Grand Prix on 2026-08-21.
-2. Detect a live session from the schedule so the live view can say what is on
-   now instead of asking the reader to type an event name.
-3. Stabilize the shared API for the SwiftUI client, then implement the iOS
+2. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
 4. Before production, add authentication/authorization, secret management,
    secure PostgreSQL configuration, observability, backups, CI, deployment,
@@ -1982,8 +2001,8 @@ migrated PostgreSQL database. The complete suite passed with 420 tests against
 an isolated PostgreSQL 17 database after the runtime schema-compatibility
 repair. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
 
-The live-timing path added 299 tests, for 719 collected. Without
-`TEST_DATABASE_URL` the suite reports 610 passed and 109 skipped; the skips are
+The live-timing path added 296 tests, for 716 collected. Without
+`TEST_DATABASE_URL` the suite reports 607 passed and 109 skipped; the skips are
 the database integration tests, which the live module does not use because it
 touches no database. Asynchronous tests require the `pytest-asyncio` dev
 dependency with `asyncio_mode = "strict"`.

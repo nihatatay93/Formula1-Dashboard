@@ -1,4 +1,5 @@
 import asyncio
+import time
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,15 +14,21 @@ from app.live.state import set_live_service
 from app.main import app
 
 NOW = datetime(2026, 8, 21, 13, 0, 0, tzinfo=UTC)
-SESSION_BODY = {
-    "session_date": "2026-08-21",
-    "event_name": "Dutch Grand Prix",
-    "session_key": "qualifying",
-}
 
 
 class SingleFrameFeed:
     async def stream(self) -> AsyncIterator[RawFrame]:
+        # SessionInfo is what names the session; the feed states it, not the user.
+        yield RawFrame(
+            "SessionInfo",
+            {
+                "Meeting": {"Name": "Dutch Grand Prix"},
+                "Name": "Qualifying",
+                "Type": "Qualifying",
+                "StartDate": "2026-08-21T14:00:00",
+            },
+            initial=True,
+        )
         yield RawFrame("TimingData", {"Lines": {"1": {"Position": "1"}}}, initial=True)
         await asyncio.Event().wait()
 
@@ -71,20 +78,8 @@ def test_status_reports_no_active_session_and_disables_caching(
     assert body["session"] is None
 
 
-def test_starting_a_session_reports_it_active(client: TestClient) -> None:
-    response = client.post("/api/v1/live/session", json=SESSION_BODY)
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["active"] is True
-    assert body["session"]["session"]["event_name"] == "Dutch Grand Prix"
-
-    client.delete("/api/v1/live/session")
-
-
-def test_starting_the_same_session_twice_is_idempotent(client: TestClient) -> None:
-    client.post("/api/v1/live/session", json=SESSION_BODY)
-    response = client.post("/api/v1/live/session", json=SESSION_BODY)
+def test_starting_a_session_needs_no_identity(client: TestClient) -> None:
+    response = client.post("/api/v1/live/session")
 
     assert response.status_code == 200
     assert response.json()["active"] is True
@@ -92,16 +87,41 @@ def test_starting_the_same_session_twice_is_idempotent(client: TestClient) -> No
     client.delete("/api/v1/live/session")
 
 
-def test_starting_a_different_session_conflicts(client: TestClient) -> None:
-    client.post("/api/v1/live/session", json=SESSION_BODY)
+def test_the_session_names_itself_from_the_feed(client: TestClient) -> None:
+    client.post("/api/v1/live/session")
 
-    response = client.post(
-        "/api/v1/live/session",
-        json={**SESSION_BODY, "session_key": "race"},
-    )
+    # The identity is unknown until SessionInfo arrives, then it is the feed's.
+    for _ in range(50):
+        session = client.get("/api/v1/live/session").json()["session"]
+        if session and session.get("session"):
+            break
+        time.sleep(0.05)
 
-    assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "live_session_conflict"
+    assert session["session"]["event_name"] == "Dutch Grand Prix"
+    assert session["session"]["session_key"] == "Qualifying"
+    assert session["session"]["session_date"] == "2026-08-21"
+
+    client.delete("/api/v1/live/session")
+
+
+def test_starting_the_same_session_twice_is_idempotent(client: TestClient) -> None:
+    client.post("/api/v1/live/session")
+    response = client.post("/api/v1/live/session")
+
+    assert response.status_code == 200
+    assert response.json()["active"] is True
+
+    client.delete("/api/v1/live/session")
+
+
+def test_starting_again_reuses_the_running_session(client: TestClient) -> None:
+    client.post("/api/v1/live/session")
+
+    # Only one session can be live, so a second start is a reuse.
+    response = client.post("/api/v1/live/session")
+
+    assert response.status_code == 200
+    assert response.json()["active"] is True
 
     client.delete("/api/v1/live/session")
 
@@ -109,14 +129,14 @@ def test_starting_a_different_session_conflicts(client: TestClient) -> None:
 def test_starting_without_a_configured_feed_returns_service_unavailable(
     unconfigured_client: TestClient,
 ) -> None:
-    response = unconfigured_client.post("/api/v1/live/session", json=SESSION_BODY)
+    response = unconfigured_client.post("/api/v1/live/session")
 
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "live_feed_unconfigured"
 
 
 def test_stopping_returns_the_idle_status(client: TestClient) -> None:
-    client.post("/api/v1/live/session", json=SESSION_BODY)
+    client.post("/api/v1/live/session")
 
     response = client.delete("/api/v1/live/session")
 
@@ -128,24 +148,20 @@ def test_stopping_when_idle_is_not_an_error(client: TestClient) -> None:
     assert client.delete("/api/v1/live/session").status_code == 200
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        {},
-        {"session_date": "not-a-date", "event_name": "x", "session_key": "y"},
-        {"session_date": "2026-08-21", "event_name": "", "session_key": "y"},
-        {**SESSION_BODY, "unexpected": "field"},
-    ],
-)
-def test_invalid_start_requests_are_rejected(
-    client: TestClient,
-    body: dict[str, object],
-) -> None:
-    assert client.post("/api/v1/live/session", json=body).status_code == 422
+def test_a_start_request_ignores_any_body(client: TestClient) -> None:
+    # Older clients may still post an identity; it is simply not used.
+    response = client.post(
+        "/api/v1/live/session",
+        json={"event_name": "ignored"},
+    )
+
+    assert response.status_code == 200
+
+    client.delete("/api/v1/live/session")
 
 
 def test_stream_sends_a_display_ready_board(client: TestClient) -> None:
-    client.post("/api/v1/live/session", json=SESSION_BODY)
+    client.post("/api/v1/live/session")
 
     with client.websocket_connect("/api/v1/live/stream") as websocket:
         snapshot = websocket.receive_json()

@@ -1,28 +1,14 @@
 import asyncio
 from collections.abc import AsyncIterator
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from app.live.collector import LiveSessionIdentity, RawFrame
+from app.live.collector import RawFrame
 from app.live.policy import LiveTimingSettings
-from app.live.service import (
-    LiveFeedUnconfiguredError,
-    LiveService,
-    LiveSessionConflictError,
-)
+from app.live.service import LiveFeedUnconfiguredError, LiveService
 
-IDENTITY = LiveSessionIdentity(
-    session_date=date(2026, 8, 21),
-    event_name="Dutch Grand Prix",
-    session_key="qualifying",
-)
-OTHER_IDENTITY = LiveSessionIdentity(
-    session_date=date(2026, 8, 21),
-    event_name="Dutch Grand Prix",
-    session_key="race",
-)
 NOW = datetime(2026, 8, 21, 13, 0, 0, tzinfo=UTC)
 
 
@@ -65,7 +51,7 @@ async def test_starting_without_a_configured_feed_is_refused(tmp_path: Path) -> 
     )
 
     with pytest.raises(LiveFeedUnconfiguredError):
-        await unconfigured.start_session(IDENTITY)
+        await unconfigured.start_session()
 
     assert unconfigured.feed_configured is False
     assert unconfigured.active is None
@@ -75,7 +61,7 @@ async def test_starting_without_a_configured_feed_is_refused(tmp_path: Path) -> 
 async def test_start_then_stop_owns_exactly_one_session(tmp_path: Path) -> None:
     live = service(tmp_path)
 
-    collector = await live.start_session(IDENTITY)
+    collector = await live.start_session()
     assert live.active is collector
     assert live.status()["active"] is True
 
@@ -85,25 +71,13 @@ async def test_start_then_stop_owns_exactly_one_session(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_starting_the_same_session_twice_reuses_the_collector(
-    tmp_path: Path,
-) -> None:
+async def test_starting_again_returns_the_running_session(tmp_path: Path) -> None:
     live = service(tmp_path)
+    first = await live.start_session()
 
-    first = await live.start_session(IDENTITY)
-    second = await live.start_session(IDENTITY)
-
-    assert first is second
-    await live.stop_session()
-
-
-@pytest.mark.asyncio
-async def test_starting_a_different_session_conflicts(tmp_path: Path) -> None:
-    live = service(tmp_path)
-    await live.start_session(IDENTITY)
-
-    with pytest.raises(LiveSessionConflictError):
-        await live.start_session(OTHER_IDENTITY)
+    # There is only ever "the session that is on now", so a second start is a
+    # reuse rather than a conflict.
+    assert await live.start_session() is first
 
     await live.stop_session()
 
@@ -116,7 +90,7 @@ async def test_stopping_when_idle_reports_no_session(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_stop_cancels_a_feed_that_never_yields(tmp_path: Path) -> None:
     live = service(tmp_path)
-    await live.start_session(IDENTITY)
+    await live.start_session()
 
     # IdleFeed blocks forever, so this exercises the cancel path rather than a
     # cooperative stop between frames.
@@ -135,7 +109,7 @@ async def test_collected_frames_are_visible_through_the_service(
         feed_factory=SingleFrameFeed,
         clock=lambda: NOW,
     )
-    collector = await live.start_session(IDENTITY)
+    collector = await live.start_session()
     await asyncio.sleep(0.05)
 
     assert collector.stats.accepted == 1
@@ -166,7 +140,7 @@ async def test_directory_cap_disables_logging_but_still_streams(
         clock=lambda: NOW,
     )
 
-    collector = await live.start_session(IDENTITY)
+    collector = await live.start_session()
     await asyncio.sleep(0.05)
 
     assert collector.log_degraded is True
@@ -196,7 +170,7 @@ async def test_directory_cap_sweeps_expired_logs_before_disabling_logging(
         clock=lambda: NOW,
     )
 
-    collector = await live.start_session(IDENTITY)
+    collector = await live.start_session()
 
     assert not stale.exists()
     assert collector.log_degraded is False
@@ -240,7 +214,7 @@ async def test_startup_schedules_a_sweep_and_shutdown_cancels_it(
 @pytest.mark.asyncio
 async def test_shutdown_stops_an_active_session(tmp_path: Path) -> None:
     live = service(tmp_path)
-    await live.start_session(IDENTITY)
+    await live.start_session()
 
     await asyncio.wait_for(live.shutdown(), timeout=5)
 

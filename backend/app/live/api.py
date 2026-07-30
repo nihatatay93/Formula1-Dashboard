@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from datetime import date
 from typing import Annotated
 
 from fastapi import (
@@ -25,12 +24,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.errors import ApiError
 from app.live.board import board_to_dict, build_board
-from app.live.collector import LiveSessionIdentity
 from app.live.f1_auth import InvalidF1TokenError
 from app.live.service import (
     LiveFeedUnconfiguredError,
     LiveService,
-    LiveSessionConflictError,
     LiveUnauthenticatedError,
 )
 from app.live.state import get_live_service
@@ -47,21 +44,6 @@ RECORD_STATE = "unconfirmed_live"
 #: one board per interval, which keeps the payload small during a live session
 #: without the client having to reconstruct state from raw deltas.
 BOARD_MIN_INTERVAL_SECONDS = 0.25
-
-
-class LiveSessionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    session_date: date
-    event_name: str = Field(min_length=1, max_length=120)
-    session_key: str = Field(min_length=1, max_length=60)
-
-    def to_identity(self) -> LiveSessionIdentity:
-        return LiveSessionIdentity(
-            session_date=self.session_date,
-            event_name=self.event_name,
-            session_key=self.session_key,
-        )
 
 
 class AuthStatusResponse(BaseModel):
@@ -165,13 +147,13 @@ def read_live_session(
     summary="Start collecting a live session on demand",
 )
 async def start_live_session(
-    request: LiveSessionRequest,
     response: Response,
     service: Annotated[LiveService, Depends(get_live_service)],
 ) -> LiveStatusResponse:
+    """Start collecting. The feed states which session it is."""
     response.headers["Cache-Control"] = "no-store"
     try:
-        await service.start_session(request.to_identity())
+        await service.start_session()
     except LiveFeedUnconfiguredError:
         raise ApiError(
             status_code=503,
@@ -183,12 +165,6 @@ async def start_live_session(
             status_code=403,
             code="live_not_authenticated",
             message="Connect an F1 TV account before starting a live session.",
-        ) from None
-    except LiveSessionConflictError:
-        raise ApiError(
-            status_code=409,
-            code="live_session_conflict",
-            message="A different live session is already active.",
         ) from None
     return _status(service)
 

@@ -2366,6 +2366,13 @@ th,
   background: var(--panel-inset);
 }
 
+.live-controls__hint {
+  flex: 1;
+  min-width: 14rem;
+  color: var(--muted);
+  font-size: var(--t-small);
+}
+
 .live-controls label {
   display: flex;
   flex: 1;

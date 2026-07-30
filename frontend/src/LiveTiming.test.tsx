@@ -192,47 +192,37 @@ describe("LiveTiming", () => {
     ).toBeVisible();
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: /Connect to session/ }),
+        screen.getByRole("button", { name: /Connect to live session/ }),
       ).toBeDisabled(),
     );
   });
 
-  it("keeps connect disabled until an event name is entered", async () => {
-    const user = userEvent.setup();
-    getLiveStatus.mockResolvedValue(status());
-
-    render(<LiveTiming />);
-
-    const connect = await screen.findByRole("button", {
-      name: /Connect to session/,
-    });
-    expect(connect).toBeDisabled();
-
-    await user.type(screen.getByLabelText(/Event name/), "Dutch Grand Prix");
-
-    expect(connect).toBeEnabled();
-  });
-
-  it("starts a session with the entered identity", async () => {
+  it("connects without asking for a session identity", async () => {
     const user = userEvent.setup();
     getLiveStatus.mockResolvedValue(status());
     startLiveSession.mockResolvedValue(activeStatus());
 
     render(<LiveTiming />);
 
-    await user.type(
-      await screen.findByLabelText(/Event name/),
-      "Dutch Grand Prix",
-    );
-    await user.selectOptions(screen.getByLabelText(/^Session$/), "qualifying");
-    await user.click(screen.getByRole("button", { name: /Connect to session/ }));
-
-    expect(startLiveSession).toHaveBeenCalledWith({
-      event_name: "Dutch Grand Prix",
-      session_date: expect.any(String),
-      session_key: "qualifying",
+    const connect = await screen.findByRole("button", {
+      name: /Connect to live session/,
     });
+    // Nothing to fill in: the feed states which session it is.
+    expect(connect).toBeEnabled();
+    expect(screen.queryByLabelText(/Event name/)).not.toBeInTheDocument();
+
+    await user.click(connect);
+
+    expect(startLiveSession).toHaveBeenCalledWith();
     expect(await screen.findByText("Streaming")).toBeInTheDocument();
+  });
+
+  it("shows the session as identifying until the feed names it", async () => {
+    getLiveStatus.mockResolvedValue(activeStatus({ session: null }));
+
+    render(<LiveTiming />);
+
+    expect(await screen.findByText("Identifying…")).toBeVisible();
   });
 
   it("surfaces a rejected start without claiming a session is live", async () => {
@@ -248,8 +238,9 @@ describe("LiveTiming", () => {
 
     render(<LiveTiming />);
 
-    await user.type(await screen.findByLabelText(/Event name/), "Dutch GP");
-    await user.click(screen.getByRole("button", { name: /Connect to session/ }));
+    await user.click(
+      await screen.findByRole("button", { name: /Connect to live session/ }),
+    );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "A different live session is already active.",
@@ -430,7 +421,7 @@ describe("LiveTiming", () => {
     getLiveStatus.mockResolvedValue(status());
 
     render(<LiveTiming />);
-    await screen.findByRole("button", { name: /Connect to session/ });
+    await screen.findByRole("button", { name: /Connect to live session/ });
 
     expect(FakeWebSocket.instances).toHaveLength(0);
   });

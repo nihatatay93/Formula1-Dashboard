@@ -14,11 +14,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.live.collector import (
-    LiveCollector,
-    LiveFeedFactory,
-    LiveSessionIdentity,
-)
+from app.live.collector import LiveCollector, LiveFeedFactory
 from app.live.f1_auth import F1TokenStore, StoredToken
 from app.live.policy import LiveTimingSettings
 from app.live.retention import (
@@ -36,10 +32,6 @@ class LiveServiceError(RuntimeError):
 
 class LiveFeedUnconfiguredError(LiveServiceError):
     """Raised when no upstream feed provider has been configured."""
-
-
-class LiveSessionConflictError(LiveServiceError):
-    """Raised when a different live session is already active."""
 
 
 class LiveUnauthenticatedError(LiveServiceError):
@@ -130,8 +122,12 @@ class LiveService:
         self._feed_factory = feed_factory
         self._requires_authentication = requires_authentication
 
-    async def start_session(self, identity: LiveSessionIdentity) -> LiveCollector:
-        """Start collection, or return the already-running identical session."""
+    async def start_session(self) -> LiveCollector:
+        """Start collection, or return the session already running.
+
+        No identity is supplied: the feed states which session it is, and the
+        collector names itself from ``SessionInfo``.
+        """
         if self._feed_factory is None:
             raise LiveFeedUnconfiguredError(
                 "no live feed provider is configured in this deployment"
@@ -145,15 +141,10 @@ class LiveService:
         async with self._lock:
             existing = self._collector
             if existing is not None and self._task is not None and not self._task.done():
-                if existing.identity == identity:
-                    return existing
-                raise LiveSessionConflictError(
-                    "a different live session is already active"
-                )
+                return existing
 
             logging_enabled = self._prepare_log_directory()
             collector = LiveCollector(
-                identity=identity,
                 feed_factory=self._feed_factory,
                 settings=self._settings,
                 log_directory=self.log_directory,

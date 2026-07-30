@@ -60,6 +60,45 @@ class LiveSessionIdentity:
     event_name: str
     session_key: str
 
+    @classmethod
+    def from_session_info(
+        cls,
+        payload: object,
+        *,
+        fallback_date: date,
+    ) -> LiveSessionIdentity | None:
+        """Derive identity from the feed's own ``SessionInfo``.
+
+        The feed states which session it is, so the reader never has to. Returns
+        None until a payload carrying a meeting and session name arrives.
+        """
+        if not isinstance(payload, Mapping):
+            return None
+        meeting = payload.get("Meeting")
+        event_name = (
+            meeting.get("Name") if isinstance(meeting, Mapping) else None
+        )
+        session_name = payload.get("Name") or payload.get("Type")
+        if not isinstance(event_name, str) or not event_name.strip():
+            return None
+        if not isinstance(session_name, str) or not session_name.strip():
+            return None
+        return cls(
+            session_date=_session_date(payload.get("StartDate"), fallback_date),
+            event_name=event_name,
+            session_key=session_name,
+        )
+
+
+def _session_date(value: object, fallback: date) -> date:
+    """The date part of the feed's local StartDate, or today."""
+    if isinstance(value, str) and len(value) >= 10:
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return fallback
+    return fallback
+
 
 class LiveFeed(Protocol):
     """One attempt at a live upstream connection."""
@@ -74,6 +113,11 @@ class LiveFeed(Protocol):
 #: A factory is used rather than a single feed so each reconnect gets a fresh
 #: connection, and so the collector never has to reset upstream state itself.
 LiveFeedFactory = Callable[[], LiveFeed]
+
+#: Frames held while waiting for SessionInfo to name the session. The initial
+#: batch is one frame per topic, so this only needs to cover that plus a little
+#: delta traffic before the feed identifies itself.
+MAX_PENDING_FRAMES = 512
 
 
 @dataclass
@@ -105,7 +149,7 @@ class LiveCollector:
     def __init__(
         self,
         *,
-        identity: LiveSessionIdentity,
+        identity: LiveSessionIdentity | None = None,
         feed_factory: LiveFeedFactory,
         settings: LiveTimingSettings,
         log_directory: Path | None = None,
@@ -124,23 +168,36 @@ class LiveCollector:
         self._directory = (
             Path(settings.log_directory) if log_directory is None else log_directory
         )
-        self._log_path = build_log_path(
+        self._log_path = self._build_log_path() if identity is not None else None
+        self._state = CollectorState.DISCONNECTED
+        self._stats = CollectorStats()
+        self._stopping = False
+        self._log: LiveSessionLog | None = None
+        # Frames that arrived before the feed said which session this is. The
+        # initial batch is one frame per topic, so this stays small.
+        self._pending: list[LiveFrame] = []
+        # With a known identity a restart resumes from the existing log; without
+        # one there is nothing to resume from, and a reconnect resends full
+        # state anyway.
+        self._view = (
+            rebuild_from_log(self._log_path)
+            if self._log_path is not None
+            else LiveCurrentView()
+        )
+        self._subscribers: set[asyncio.Queue[Mapping[str, object]]] = set()
+
+    def _build_log_path(self) -> Path:
+        identity = self._identity
+        assert identity is not None
+        return build_log_path(
             self._directory,
             session_date=identity.session_date,
             event_name=identity.event_name,
             session_key=identity.session_key,
         )
-        self._state = CollectorState.DISCONNECTED
-        self._stats = CollectorStats()
-        self._stopping = False
-        self._log: LiveSessionLog | None = None
-        # A restart mid-session rebuilds from the log rather than waiting for
-        # the feed to resend everything.
-        self._view = rebuild_from_log(self._log_path)
-        self._subscribers: set[asyncio.Queue[Mapping[str, object]]] = set()
 
     @property
-    def identity(self) -> LiveSessionIdentity:
+    def identity(self) -> LiveSessionIdentity | None:
         return self._identity
 
     @property
@@ -156,7 +213,8 @@ class LiveCollector:
         return self._view
 
     @property
-    def log_path(self) -> Path:
+    def log_path(self) -> Path | None:
+        """None until the feed has said which session this is."""
         return self._log_path
 
     @property
@@ -169,11 +227,15 @@ class LiveCollector:
     def status(self) -> dict[str, object]:
         return {
             "state": self._state.value,
-            "session": {
-                "session_date": self._identity.session_date.isoformat(),
-                "event_name": self._identity.event_name,
-                "session_key": self._identity.session_key,
-            },
+            "session": (
+                None
+                if self._identity is None
+                else {
+                    "session_date": self._identity.session_date.isoformat(),
+                    "event_name": self._identity.event_name,
+                    "session_key": self._identity.session_key,
+                }
+            ),
             "topics_subscribed": sorted(CONSUMED_TOPICS),
             "log_degraded": self.log_degraded,
             "subscribers": len(self._subscribers),
@@ -190,11 +252,7 @@ class LiveCollector:
 
     async def run(self) -> None:
         """Stream until ``stop`` is requested, reconnecting with backoff."""
-        if self._logging_enabled:
-            self._log = LiveSessionLog(
-                self._log_path,
-                max_bytes=self._settings.max_log_bytes,
-            )
+        self._open_log()
         attempt = 0
         try:
             while not self._stopping:
@@ -258,11 +316,55 @@ class LiveCollector:
             return
 
         self._stats.accepted += 1
+        self._resolve_identity(frame)
+        self._record(frame)
+        self._publish(frame)
+
+    def _record(self, frame: LiveFrame) -> None:
+        """Log a frame, buffering while the session is still unidentified."""
+        if not self._logging_enabled:
+            self._stats.dropped_by_log_cap += 1
+            return
+        if self._log is None:
+            if self._identity is None:
+                if len(self._pending) < MAX_PENDING_FRAMES:
+                    self._pending.append(frame)
+                else:
+                    self._stats.dropped_by_log_cap += 1
+                return
+            self._open_log()
         if self._log is None or not self._log.append(frame):
             # Streaming continues regardless: losing the disposable log is
             # always preferable to interrupting the live view.
             self._stats.dropped_by_log_cap += 1
-        self._publish(frame)
+
+    def _resolve_identity(self, frame: LiveFrame) -> None:
+        """Name the session from the feed's own SessionInfo."""
+        if self._identity is not None or frame.topic != "SessionInfo":
+            return
+        identity = LiveSessionIdentity.from_session_info(
+            frame.payload,
+            fallback_date=self._clock().date(),
+        )
+        if identity is None:
+            return
+        self._identity = identity
+        self._log_path = self._build_log_path()
+
+    def _open_log(self) -> None:
+        """Open the log once the session is named, flushing anything buffered."""
+        if not self._logging_enabled or self._log is not None:
+            return
+        if self._log_path is None:
+            return
+        self._log = LiveSessionLog(
+            self._log_path,
+            max_bytes=self._settings.max_log_bytes,
+        )
+        pending, self._pending = self._pending, []
+        for buffered in pending:
+            if not self._log.append(buffered):
+                self._stats.dropped_by_log_cap += 1
 
     def _publish(self, frame: LiveFrame) -> None:
         # Subscribers receive the merged topic state rather than the raw delta,

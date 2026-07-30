@@ -387,7 +387,8 @@ export interface LiveCollectorStats {
 
 export interface LiveCollectorStatus {
   state: string;
-  session: LiveSessionSummary;
+  /** Null until the feed's SessionInfo has named the session. */
+  session: LiveSessionSummary | null;
   topics_subscribed: string[];
   log_degraded: boolean;
   subscribers: number;
@@ -496,12 +497,6 @@ export interface LiveViewState {
   latest_received_at: string | null;
   applied_frames: number;
   topics: Record<string, LiveTopicState>;
-}
-
-export interface LiveSessionRequest {
-  session_date: string;
-  event_name: string;
-  session_key: string;
 }
 
 export type LiveStreamMessage =

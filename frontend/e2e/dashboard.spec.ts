@@ -267,8 +267,10 @@ test("opens live timing as a separate view without archive state", async ({
     "type",
     "password",
   );
+  // No session identity to fill in: the feed states which session it is.
+  await expect(page.getByLabel(/Event name/)).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: /Connect to session/ }),
+    page.getByRole("button", { name: /Connect to live session/ }),
   ).toBeDisabled();
 
   // The archive Session Workspace must not leak into the live view.

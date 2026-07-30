@@ -18,16 +18,6 @@ import type {
 
 const STATUS_POLL_INTERVAL_MS = 5_000;
 
-const SESSION_KEYS = [
-  "practice_1",
-  "practice_2",
-  "practice_3",
-  "sprint_qualifying",
-  "sprint",
-  "qualifying",
-  "race",
-] as const;
-
 type ConnectionState = "idle" | "connecting" | "open" | "closed";
 
 const CONNECTION_LABELS: Record<ConnectionState, string> = {
@@ -83,10 +73,6 @@ function errorMessage(error: unknown): string {
   return "The dashboard could not reach the live timing service.";
 }
 
-function todayUtc(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 export default function LiveTiming() {
   const [status, setStatus] = useState<LiveStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -96,9 +82,6 @@ export default function LiveTiming() {
   const [board, setBoard] = useState<LiveBoard | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("idle");
   const [streamError, setStreamError] = useState<string | null>(null);
-  const [sessionDate, setSessionDate] = useState(todayUtc);
-  const [eventName, setEventName] = useState("");
-  const [sessionKey, setSessionKey] = useState<string>("race");
   const socketRef = useRef<WebSocket | null>(null);
 
   const refreshStatus = useCallback(async (signal?: AbortSignal) => {
@@ -135,23 +118,6 @@ export default function LiveTiming() {
   }, [refreshStatus]);
 
   const active = status?.active ?? false;
-  const activeIdentity = status?.session?.session ?? null;
-
-  // While a session is running the form must describe it rather than keep
-  // showing defaults for a session that is not the one being collected.
-  useEffect(() => {
-    if (activeIdentity === null) {
-      return;
-    }
-    setSessionDate(activeIdentity.session_date);
-    setEventName(activeIdentity.event_name);
-    setSessionKey(activeIdentity.session_key);
-  }, [
-    activeIdentity?.session_date,
-    activeIdentity?.event_name,
-    activeIdentity?.session_key,
-  ]);
-
   useEffect(() => {
     if (!active) {
       socketRef.current?.close();
@@ -198,13 +164,7 @@ export default function LiveTiming() {
     setCommandPending(true);
     setCommandError(null);
     try {
-      setStatus(
-        await startLiveSession({
-          event_name: eventName.trim(),
-          session_date: sessionDate,
-          session_key: sessionKey,
-        }),
-      );
+      setStatus(await startLiveSession());
     } catch (error) {
       setCommandError(errorMessage(error));
     } finally {
@@ -223,11 +183,6 @@ export default function LiveTiming() {
       setCommandPending(false);
     }
   }
-
-  const startDisabled =
-    commandPending ||
-    !status?.feed_configured ||
-    eventName.trim().length === 0;
 
   return (
     <section aria-labelledby="live-timing-title" className="live-panel">
@@ -291,42 +246,11 @@ export default function LiveTiming() {
 
       {status ? (
         <div className="live-controls">
-          <label htmlFor="live-session-date">
-            Session date
-            <input
-              disabled={active}
-              id="live-session-date"
-              onChange={(event) => setSessionDate(event.target.value)}
-              type="date"
-              value={sessionDate}
-            />
-          </label>
-          <label htmlFor="live-event-name">
-            Event name
-            <input
-              disabled={active}
-              id="live-event-name"
-              onChange={(event) => setEventName(event.target.value)}
-              placeholder="Dutch Grand Prix"
-              type="text"
-              value={eventName}
-            />
-          </label>
-          <label htmlFor="live-session-key">
-            Session
-            <select
-              disabled={active}
-              id="live-session-key"
-              onChange={(event) => setSessionKey(event.target.value)}
-              value={sessionKey}
-            >
-              {SESSION_KEYS.map((key) => (
-                <option key={key} value={key}>
-                  {humanize(key)}
-                </option>
-              ))}
-            </select>
-          </label>
+          <p className="live-controls__hint">
+            {active
+              ? "Collecting the session the feed is currently broadcasting."
+              : "Connect while a session is running. The feed states which session it is."}
+          </p>
           {active ? (
             <button
               className="secondary-action"
@@ -339,11 +263,11 @@ export default function LiveTiming() {
           ) : (
             <button
               className="primary-action"
-              disabled={startDisabled}
+              disabled={commandPending || !status.feed_configured}
               onClick={() => void handleStart()}
               type="button"
             >
-              {commandPending ? "Connecting…" : "Connect to session"}
+              {commandPending ? "Connecting…" : "Connect to live session"}
             </button>
           )}
         </div>
@@ -359,7 +283,11 @@ export default function LiveTiming() {
         <div className="live-facts">
           <div>
             <span>Session</span>
-            <strong>{status.session.session.event_name}</strong>
+            <strong>
+              {status.session.session
+                ? status.session.session.event_name
+                : "Identifying…"}
+            </strong>
           </div>
           <div>
             <span>Collector</span>
