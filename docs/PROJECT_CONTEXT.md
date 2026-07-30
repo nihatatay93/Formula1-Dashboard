@@ -1925,10 +1925,10 @@ race-run classification remain intentionally unimplemented.
    state per topic, but sustained delta traffic, reconnects mid-session and the
    `TimingData` update rate have not been observed live. The next event is the
    Dutch Grand Prix on 2026-08-21.
-2. Replace the live view's generic topic cards with purpose-built renderings
-   once the feed's payload schemas are confirmed against a real session, for
-   example a position/gap leaderboard from `TimingData` and a stint view from
-   `TimingAppData`.
+2. Add automated tests for `app/live/signalr_feed.py`. It is the only live
+   module without a test file: it was verified against the real endpoint but
+   nothing covers its message-shape handling, so a refactor could silently
+   break the completion-message and `[topic, payload, timestamp]` branches.
 3. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
 4. Before production, add authentication/authorization, secret management,
