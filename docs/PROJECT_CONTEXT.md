@@ -48,11 +48,11 @@ The dashboard adds a fourth view, Live Timing, which reads only `/api/v1/live`,
 renders independently of season coverage, labels everything unconfirmed live
 data, and streams updates over WebSocket.
 
-A `ReplayFeed` drives the whole path from a recorded session, selected with
-`LIVE_TIMING_REPLAY_PATH`. With one configured, the dashboard streams real
-recorded frames end to end. No live SignalR client exists yet, so without a
-recording `POST /api/v1/live/session` returns `503 live_feed_unconfigured` and
-the dashboard reports that state instead of offering a connection.
+Two feeds satisfy the `LiveFeed` protocol. A `ReplayFeed` drives the whole path
+from a recorded session when `LIVE_TIMING_REPLAY_PATH` is set; otherwise the
+live `SignalRFeed` connects to F1 with the stored F1 TV token. The live client
+has been verified against the real endpoint: connecting returned full state for
+all fourteen consumed topics with no rejections.
 
 ### Architecture baseline through Milestone 3
 
@@ -178,6 +178,7 @@ Formula1-Dashboard/
 │   │   │   ├── policy.py
 │   │   │   ├── replay_feed.py
 │   │   │   ├── retention.py
+│   │   │   ├── signalr_feed.py
 │   │   │   ├── service.py
 │   │   │   ├── session_log.py
 │   │   │   └── state.py
@@ -582,6 +583,55 @@ Formula1-Dashboard/
   so distant claims fall back to the configured lifetime. The token lives in its
   own volume rather than the disposable session-log volume so that clearing logs
   does not sign the user out.
+- Date: 2026-07-30
+- Status: implemented
+
+### Live SignalR client
+
+- Decision: Implement the live feed with the `signalrcore` client against
+  `wss://livetiming.formula1.com/signalrcore`, running the connection on its own
+  thread and handing frames to the event loop through a bounded queue. Subscribe
+  only to the fourteen consumed topics. The subscribe completion carries full
+  state per topic and becomes the `initial` frames; later `feed` invocations
+  carry `[topic, payload, timestamp]` deltas. Add `websocket-client` explicitly,
+  because `signalrcore` needs it at connect time but declares only `msgpack`.
+- Rationale: Reusing the client FastF1 uses against this exact endpoint avoids
+  re-deriving the negotiate handshake, the `AWSALBCORS` load-balancer cookie and
+  the bearer-token header format. It is synchronous and callback-driven, so a
+  thread plus a queue is the bridge; a full queue drops a frame rather than
+  blocking the connection thread, which the collector already treats like a
+  missed delta. Subscribing to only the consumed topics avoids `CarData.z` and
+  `Position.z`, which were roughly 39% of frames in a recorded session.
+- Date: 2026-07-30
+- Status: implemented
+
+### Live feed selection and authentication requirement
+
+- Decision: A configured recording wins over the live feed, and the live feed is
+  used otherwise. Whether a token is required is an explicit `LiveService`
+  constructor flag set by whoever selected the feed, not derived from settings.
+  Starting a live session without a valid token fails with `403
+  live_not_authenticated`. The token is read per connection attempt.
+- Rationale: Replay is an explicit development choice and must not be silently
+  overridden by a stored token. Deriving the auth requirement from settings was
+  wrong: it forced injected test doubles and any future feed to demand
+  credentials they do not use. Reading the token per attempt means signing in
+  makes the feed usable without restarting the API.
+- Date: 2026-07-30
+- Status: implemented
+
+### Displayable subscription claims
+
+- Decision: Surface only `SubscribedProduct`, `SubscriptionStatus` and
+  `FirstName` from the token, through an explicit allowlist, and only when they
+  are short strings. Cache them in the token record but fall back to parsing the
+  stored token when the cache is absent.
+- Rationale: The token also carries `SubscriberId`, `hashedSubscriberId`,
+  `SessionId`, `jti`, `ents` and `ExternalAuthorizationsContextData`. An
+  allowlist means a future claim cannot start leaking by default, and the length
+  bound stops an unexpected claim becoming a large dashboard payload. The
+  fallback means a token stored before extraction existed does not force the
+  user to sign in again.
 - Date: 2026-07-30
 - Status: implemented
 
@@ -1847,14 +1897,11 @@ race-run classification remain intentionally unimplemented.
 
 ## Next Steps
 
-1. Implement a live SignalR client satisfying the same `LiveFeed` protocol the
-   replay feed already implements, and resolve it in
-   `app/live/state.build_feed_factory`. Only the transport remains: an
-   asynchronous WebSocket client dependency and the negotiate/connect handshake.
-   The frame contract is confirmed against a recorded session and covered by
-   `tests/test_live_signalr_contract.py`, and the replay feed already proves
-   every stage downstream of the protocol, so the new client can be validated by
-   comparing its emitted frames against a recording.
+1. Exercise the live client during an actual session weekend. It has been
+   verified against the real endpoint outside a session, which returns the last
+   state per topic, but sustained delta traffic, reconnects mid-session and the
+   `TimingData` update rate have not been observed live. The next event is the
+   Dutch Grand Prix on 2026-08-21.
 2. Replace the live view's generic topic cards with purpose-built renderings
    once the feed's payload schemas are confirmed against a real session, for
    example a position/gap leaderboard from `TimingData` and a stint view from
@@ -1913,13 +1960,13 @@ migrated PostgreSQL database. The complete suite passed with 420 tests against
 an isolated PostgreSQL 17 database after the runtime schema-compatibility
 repair. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
 
-The live-timing path added 235 tests, for 655 collected. Without
-`TEST_DATABASE_URL` the suite reports 546 passed and 109 skipped; the skips are
+The live-timing path added 245 tests, for 665 collected. Without
+`TEST_DATABASE_URL` the suite reports 556 passed and 109 skipped; the skips are
 the database integration tests, which the live module does not use because it
 touches no database. Asynchronous tests require the `pytest-asyncio` dev
 dependency with `asyncio_mode = "strict"`.
 
-The frontend suite reports 42 Vitest tests and 8 Playwright tests across
+The frontend suite reports 44 Vitest tests and 8 Playwright tests across
 desktop and mobile Chromium, including the live view and the F1 TV panel.
 
 The live endpoints were additionally exercised against the running stack:

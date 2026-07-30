@@ -33,6 +33,18 @@ MAX_TOKEN_LENGTH = 32768
 #: used instead, so a malformed or hostile claim cannot pin a token open.
 MAX_TRUSTED_TTL = timedelta(days=14)
 
+#: Claims the dashboard may show, mapped to the names it uses. This is an
+#: allowlist rather than a denylist: the token also carries subscriber
+#: identifiers, entitlements and a session id, and none of those are ever
+#: surfaced. Anything not listed here stays inside the token.
+DISPLAYABLE_CLAIMS: dict[str, str] = {
+    "SubscribedProduct": "product",
+    "SubscriptionStatus": "status",
+    "FirstName": "first_name",
+}
+
+MAX_CLAIM_LENGTH = 80
+
 
 class F1AuthError(ValueError):
     """Base error for F1 TV token handling."""
@@ -99,12 +111,12 @@ def validate_login_session(value: object) -> str:
     return candidate
 
 
-def read_jwt_expiry(token: str) -> datetime | None:
-    """Return a JWT ``exp`` claim, or None when the value is not a usable JWT.
+def _decode_claims(token: str) -> dict[str, object] | None:
+    """Decode a JWT payload without verifying it.
 
-    The token is opaque as far as this application is concerned, so every step
-    is defensive: a non-JWT, an unparseable segment, or a missing claim simply
-    means the configured TTL is used instead.
+    Signature verification is F1's job at connection time; this only reads
+    claims for display and expiry, so every step is defensive and any failure
+    simply yields no claims.
     """
     parts = token.split(".")
     if len(parts) != 3:
@@ -116,7 +128,13 @@ def read_jwt_expiry(token: str) -> datetime | None:
         claims = json.loads(decoded)
     except (ValueError, binascii.Error, UnicodeEncodeError):
         return None
-    if not isinstance(claims, dict):
+    return claims if isinstance(claims, dict) else None
+
+
+def read_jwt_expiry(token: str) -> datetime | None:
+    """Return a JWT ``exp`` claim, or None when the value is not a usable JWT."""
+    claims = _decode_claims(token)
+    if claims is None:
         return None
     expiry = claims.get("exp")
     if isinstance(expiry, bool) or not isinstance(expiry, int | float):
@@ -125,6 +143,24 @@ def read_jwt_expiry(token: str) -> datetime | None:
         return datetime.fromtimestamp(float(expiry), tz=UTC)
     except (OverflowError, OSError, ValueError):
         return None
+
+
+def read_subscription_claims(token: str) -> dict[str, str]:
+    """Allowlisted, display-safe claims from the token.
+
+    Only ``DISPLAYABLE_CLAIMS`` are returned, and only when they are short
+    strings, so an unexpected or hostile claim cannot become a large payload in
+    the dashboard.
+    """
+    claims = _decode_claims(token)
+    if claims is None:
+        return {}
+    displayable: dict[str, str] = {}
+    for claim, name in DISPLAYABLE_CLAIMS.items():
+        value = claims.get(claim)
+        if isinstance(value, str) and 0 < len(value) <= MAX_CLAIM_LENGTH:
+            displayable[name] = value
+    return displayable
 
 
 class F1TokenStore:
@@ -157,6 +193,7 @@ class F1TokenStore:
             "expires_at": expires_at.isoformat(),
             "expiry_source": source,
             "token_source": token_source,
+            "subscription": read_subscription_claims(token),
         }
         self._path.parent.mkdir(parents=True, exist_ok=True)
         # Create with owner-only permissions before any content is written, so
@@ -232,6 +269,7 @@ class F1TokenStore:
                 "seconds_remaining": 0,
                 "expiry_source": None,
                 "token_source": None,
+                "subscription": {},
             }
         expired = stored.is_expired(now)
         return {
@@ -241,7 +279,28 @@ class F1TokenStore:
             "seconds_remaining": stored.seconds_remaining(now),
             "expiry_source": stored.expiry_source,
             "token_source": stored.token_source,
+            "subscription": self._subscription(),
         }
+
+    def _subscription(self) -> dict[str, str]:
+        """Display claims for the stored token.
+
+        The record holds a cached copy, but the token is the source of truth, so
+        a record written before claims were extracted still yields them rather
+        than forcing the user to sign in again.
+        """
+        record = self._read() or {}
+        cached = record.get("subscription")
+        if isinstance(cached, dict):
+            allowed = {
+                name: claim
+                for name, claim in cached.items()
+                if name in DISPLAYABLE_CLAIMS.values() and isinstance(claim, str)
+            }
+            if allowed:
+                return allowed
+        token = record.get("login_session")
+        return read_subscription_claims(token) if isinstance(token, str) else {}
 
     def _read(self) -> dict[str, object] | None:
         try:

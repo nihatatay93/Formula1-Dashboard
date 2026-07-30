@@ -42,6 +42,10 @@ class LiveSessionConflictError(LiveServiceError):
     """Raised when a different live session is already active."""
 
 
+class LiveUnauthenticatedError(LiveServiceError):
+    """Raised when the live feed needs an F1 TV token and none is valid."""
+
+
 class LiveService:
     def __init__(
         self,
@@ -49,9 +53,14 @@ class LiveService:
         settings: LiveTimingSettings,
         feed_factory: LiveFeedFactory | None = None,
         clock: Callable[[], datetime] | None = None,
+        requires_authentication: bool = False,
     ) -> None:
         self._settings = settings
         self._feed_factory = feed_factory
+        # Whether the chosen feed needs an F1 TV token. Only the caller that
+        # selected the feed knows this; a replay or an injected test double
+        # needs no credentials.
+        self._requires_authentication = requires_authentication
         self._clock = clock if clock is not None else lambda: datetime.now(tz=UTC)
         self._tokens = F1TokenStore(
             Path(settings.token_path),
@@ -107,14 +116,31 @@ class LiveService:
     def feed_configured(self) -> bool:
         return self._feed_factory is not None
 
-    def configure_feed(self, feed_factory: LiveFeedFactory | None) -> None:
+    @property
+    def requires_authentication(self) -> bool:
+        """True when the active feed needs an F1 TV token."""
+        return self._requires_authentication
+
+    def configure_feed(
+        self,
+        feed_factory: LiveFeedFactory | None,
+        *,
+        requires_authentication: bool = False,
+    ) -> None:
         self._feed_factory = feed_factory
+        self._requires_authentication = requires_authentication
 
     async def start_session(self, identity: LiveSessionIdentity) -> LiveCollector:
         """Start collection, or return the already-running identical session."""
         if self._feed_factory is None:
             raise LiveFeedUnconfiguredError(
                 "no live feed provider is configured in this deployment"
+            )
+        if self.requires_authentication and not self._tokens.login_session(
+            now=self._clock()
+        ):
+            raise LiveUnauthenticatedError(
+                "an F1 TV subscription token is required for the live feed"
             )
         async with self._lock:
             existing = self._collector
@@ -199,6 +225,7 @@ class LiveService:
             "retention_days": self._settings.retention_days,
             "log_directory_bytes": directory_size_bytes(self.log_directory),
             "max_directory_bytes": self._settings.max_directory_bytes,
+            "requires_authentication": self.requires_authentication,
             "authentication": self.authentication_status(),
             "session": None if collector is None else collector.status(),
         }

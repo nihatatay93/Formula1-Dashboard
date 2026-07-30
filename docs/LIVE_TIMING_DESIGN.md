@@ -1,6 +1,6 @@
 # Live Timing as a Separate Ephemeral Path
 
-Status: **implemented, except the SignalR feed provider**
+Status: **implemented**
 Date: **2026-07-30**
 
 ## Purpose
@@ -119,6 +119,30 @@ The token is readable by anything that can read the volume: any process running
 as the same user, and anyone able to `docker exec` into the container. On a
 single-user local machine that is an acceptable risk, and it is the same risk
 FastF1 accepts, but it is not an absolute guarantee.
+
+## Upstream Client
+
+The live feed uses `signalrcore` against SignalR Core at
+`wss://livetiming.formula1.com/signalrcore`, the same client and endpoint FastF1
+uses. That reuse is deliberate: it avoids re-deriving the negotiate handshake,
+the `AWSALBCORS` load-balancer cookie and the bearer-token header format.
+
+- The client is synchronous and callback-driven, so the connection runs on its
+  own thread and frames reach the event loop through a bounded queue. A full
+  queue drops a frame rather than blocking the connection thread.
+- Only the fourteen consumed topics are subscribed, which avoids `CarData.z` and
+  `Position.z` entirely.
+- The subscribe completion carries full state per topic and becomes the
+  `initial` frames. Later `feed` invocations carry `[topic, payload, timestamp]`.
+- `websocket-client` is an explicit dependency: `signalrcore` needs it at connect
+  time but declares only `msgpack`.
+- Stopping is bounded, so a socket that never closes cannot hang process
+  shutdown.
+
+A configured recording wins over the live feed, so replay stays an explicit
+development choice. Whether a token is required is set by whoever selected the
+feed rather than inferred, and the token is read per connection attempt so
+signing in takes effect without a restart.
 
 ## Connection Lifecycle
 

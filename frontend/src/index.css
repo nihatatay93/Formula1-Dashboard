@@ -2624,6 +2624,39 @@ th,
   text-decoration: none;
 }
 
+.live-auth__subscription {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--s2);
+  margin: 0;
+}
+
+.live-auth__subscription > div {
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+}
+
+.live-auth__subscription dt {
+  color: var(--muted);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.live-auth__subscription dd {
+  margin: var(--s1) 0 0;
+  font-size: var(--t-body);
+  font-weight: 600;
+}
+
+.live-auth__status {
+  color: var(--success);
+  text-transform: capitalize;
+}
+
 .live-auth__manual {
   border-top: 1px solid var(--line);
   padding-top: var(--s3);

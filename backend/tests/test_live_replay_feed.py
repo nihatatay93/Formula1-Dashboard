@@ -12,7 +12,11 @@ from app.live.replay_feed import (
     ReplayFeedError,
     build_replay_feed_factory,
 )
-from app.live.state import build_feed_factory
+from app.live.signalr_feed import SignalRFeed
+from app.live.state import (
+    build_feed_factory,
+    feed_requires_authentication,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "live_signalr_qualifying.jsonl"
 IDENTITY = LiveSessionIdentity(
@@ -200,22 +204,28 @@ def test_factory_returns_a_fresh_feed_per_connection() -> None:
 
 
 class TestFeedResolution:
-    def test_no_replay_path_means_no_configured_feed(self) -> None:
-        assert build_feed_factory(LiveTimingSettings()) is None
+    def test_without_a_recording_the_live_feed_is_used(self) -> None:
+        settings = LiveTimingSettings()
 
-    def test_a_configured_recording_produces_a_factory(self) -> None:
+        assert isinstance(build_feed_factory(settings)(), SignalRFeed)
+        assert feed_requires_authentication(settings) is True
+
+    def test_a_configured_recording_wins_and_needs_no_token(self) -> None:
         settings = LiveTimingSettings(replay_path=str(FIXTURE), replay_speed=50.0)
 
-        assert build_feed_factory(settings) is not None
+        # Replay is an explicit development choice; a stored token must not
+        # silently override it.
+        assert isinstance(build_feed_factory(settings)(), ReplayFeed)
+        assert feed_requires_authentication(settings) is False
 
-    def test_an_unusable_recording_leaves_the_feed_unconfigured(
+    def test_an_unusable_recording_falls_back_to_the_live_feed(
         self,
         tmp_path: Path,
     ) -> None:
         settings = LiveTimingSettings(replay_path=str(tmp_path / "absent.jsonl"))
 
         # A misconfigured recording must not stop the API from starting.
-        assert build_feed_factory(settings) is None
+        assert isinstance(build_feed_factory(settings)(), SignalRFeed)
 
 
 @pytest.mark.asyncio

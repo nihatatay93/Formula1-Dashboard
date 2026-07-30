@@ -14,6 +14,7 @@ from app.live.f1_auth import (
     InvalidF1TokenError,
     extract_subscription_token,
     read_jwt_expiry,
+    read_subscription_claims,
     validate_login_session,
 )
 
@@ -237,6 +238,7 @@ class TestStatus:
             "seconds_remaining": 0,
             "expiry_source": None,
             "token_source": None,
+            "subscription": {},
         }
 
     def test_status_while_authenticated(self, tmp_path: Path) -> None:
@@ -339,3 +341,98 @@ class TestSubscriptionTokenExtraction:
         keeper.save(login_session_cookie(PLAUSIBLE), now=NOW)
 
         assert keeper.status(now=NOW)["token_source"] == "login_session_cookie"
+
+
+class TestSubscriptionClaims:
+    def test_only_allowlisted_claims_are_returned(self) -> None:
+        token = jwt_with(
+            {
+                "SubscribedProduct": "F1 TV Pro Annual",
+                "SubscriptionStatus": "active",
+                "FirstName": "Ada",
+                # None of the following may ever be surfaced.
+                "LastName": "Lovelace",
+                "SubscriberId": "sub-12345",
+                "hashedSubscriberId": "deadbeef",
+                "SessionId": "sess-999",
+                "jti": "token-id",
+                "ents": ["a", "b"],
+                "ExternalAuthorizationsContextData": "opaque",
+            }
+        )
+
+        claims = read_subscription_claims(token)
+
+        assert claims == {
+            "product": "F1 TV Pro Annual",
+            "status": "active",
+            "first_name": "Ada",
+        }
+
+    def test_a_non_jwt_yields_no_claims(self) -> None:
+        assert read_subscription_claims("not-a-jwt") == {}
+
+    @pytest.mark.parametrize("value", [None, 42, ["list"], {"a": 1}, ""])
+    def test_non_string_claims_are_skipped(self, value: object) -> None:
+        token = jwt_with({"SubscribedProduct": value, "SubscriptionStatus": "active"})
+
+        assert read_subscription_claims(token) == {"status": "active"}
+
+    def test_an_absurdly_long_claim_is_skipped(self) -> None:
+        token = jwt_with({"FirstName": "x" * 500, "SubscriptionStatus": "active"})
+
+        # A hostile claim must not become a large dashboard payload.
+        assert read_subscription_claims(token) == {"status": "active"}
+
+    def test_status_exposes_the_subscription_but_no_identifiers(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        keeper = store(tmp_path)
+        keeper.save(
+            jwt_with(
+                {
+                    "exp": int((NOW + timedelta(days=2)).timestamp()),
+                    "SubscribedProduct": "F1 TV Pro Annual",
+                    "SubscriptionStatus": "active",
+                    "FirstName": "Ada",
+                    "SubscriberId": "sub-12345",
+                    "hashedSubscriberId": "deadbeef",
+                }
+            ),
+            now=NOW,
+        )
+
+        status = keeper.status(now=NOW)
+
+        assert status["subscription"] == {
+            "product": "F1 TV Pro Annual",
+            "status": "active",
+            "first_name": "Ada",
+        }
+        rendered = json.dumps(status)
+        assert "sub-12345" not in rendered
+        assert "deadbeef" not in rendered
+
+
+def test_a_record_without_cached_claims_still_reports_them(tmp_path: Path) -> None:
+    """A token stored before claim extraction existed must not need a re-auth."""
+    keeper = store(tmp_path)
+    keeper.save(
+        jwt_with(
+            {
+                "exp": int((NOW + timedelta(days=2)).timestamp()),
+                "SubscribedProduct": "F1 TV Pro Annual",
+                "SubscriptionStatus": "active",
+            }
+        ),
+        now=NOW,
+    )
+    record = json.loads(keeper.path.read_text(encoding="utf-8"))
+    del record["subscription"]
+    keeper.path.write_text(json.dumps(record), encoding="utf-8")
+
+    assert keeper.status(now=NOW)["subscription"] == {
+        "product": "F1 TV Pro Annual",
+        "status": "active",
+    }

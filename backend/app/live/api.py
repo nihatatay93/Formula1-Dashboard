@@ -29,6 +29,7 @@ from app.live.service import (
     LiveFeedUnconfiguredError,
     LiveService,
     LiveSessionConflictError,
+    LiveUnauthenticatedError,
 )
 from app.live.state import get_live_service
 
@@ -67,6 +68,9 @@ class AuthStatusResponse(BaseModel):
     seconds_remaining: int = 0
     expiry_source: str | None = None
     token_source: str | None = None
+    #: Allowlisted, display-safe claims only. Subscriber identifiers,
+    #: entitlements and the session id are never included.
+    subscription: dict[str, str] = Field(default_factory=dict)
     #: One-click entry point that primes the FastF1 companion extension with the
     #: port this API is reachable on, then sends the browser to formula1.com.
     companion_url: str | None = None
@@ -126,6 +130,7 @@ class LiveStatusResponse(BaseModel):
     retention_days: int
     log_directory_bytes: int
     max_directory_bytes: int
+    requires_authentication: bool = False
     authentication: AuthStatusResponse
     session: dict | None = None
 
@@ -165,6 +170,12 @@ async def start_live_session(
             status_code=503,
             code="live_feed_unconfigured",
             message="No live timing feed provider is configured.",
+        ) from None
+    except LiveUnauthenticatedError:
+        raise ApiError(
+            status_code=403,
+            code="live_not_authenticated",
+            message="Connect an F1 TV account before starting a live session.",
         ) from None
     except LiveSessionConflictError:
         raise ApiError(

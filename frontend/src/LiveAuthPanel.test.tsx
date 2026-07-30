@@ -29,6 +29,7 @@ function auth(overrides: Partial<LiveAuthStatus> = {}): LiveAuthStatus {
     expiry_source: null,
     token_source: null,
     companion_url: "https://f1login.fastf1.dev?port=8000",
+    subscription: {},
     ...overrides,
   };
 }
@@ -154,6 +155,32 @@ describe("LiveAuthPanel", () => {
       "login session is too short to be valid",
     );
     expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  it("shows subscription product and status but no identifiers", () => {
+    render(
+      <LiveAuthPanel
+        auth={{
+          ...connected(),
+          subscription: {
+            product: "F1 TV Pro Annual",
+            status: "active",
+            first_name: "Ada",
+          },
+        }}
+        onChanged={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("F1 TV Pro Annual")).toBeVisible();
+    expect(screen.getByText("active")).toBeVisible();
+    expect(screen.getByText("Ada")).toBeVisible();
+  });
+
+  it("omits the subscription block when no claims are available", () => {
+    render(<LiveAuthPanel auth={connected()} onChanged={vi.fn()} />);
+
+    expect(screen.queryByText("Subscription")).not.toBeInTheDocument();
   });
 
   it("reports remaining validity when connected", () => {

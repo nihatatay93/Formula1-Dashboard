@@ -404,6 +404,8 @@ export interface LiveAuthStatus {
   token_source: string | null;
   /** One-click entry point that primes the companion extension with our port. */
   companion_url: string | null;
+  /** Allowlisted display claims only; never subscriber identifiers. */
+  subscription: { product?: string; status?: string; first_name?: string };
 }
 
 export interface LiveStatus {
@@ -413,6 +415,7 @@ export interface LiveStatus {
   retention_days: number;
   log_directory_bytes: number;
   max_directory_bytes: number;
+  requires_authentication: boolean;
   authentication: LiveAuthStatus;
   session: LiveCollectorStatus | null;
 }

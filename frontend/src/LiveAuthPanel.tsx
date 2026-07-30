@@ -91,6 +91,30 @@ export default function LiveAuthPanel({
 
       {auth.authenticated ? (
         <>
+          {auth.subscription.product || auth.subscription.status ? (
+            <dl className="live-auth__subscription">
+              {auth.subscription.first_name ? (
+                <div>
+                  <dt>Account</dt>
+                  <dd>{auth.subscription.first_name}</dd>
+                </div>
+              ) : null}
+              {auth.subscription.product ? (
+                <div>
+                  <dt>Subscription</dt>
+                  <dd>{auth.subscription.product}</dd>
+                </div>
+              ) : null}
+              {auth.subscription.status ? (
+                <div>
+                  <dt>Status</dt>
+                  <dd className="live-auth__status">
+                    {auth.subscription.status}
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+          ) : null}
           <p className="live-auth__detail">
             Session token valid for {formatRemaining(auth.seconds_remaining)}.
             Expiry taken from{" "}
