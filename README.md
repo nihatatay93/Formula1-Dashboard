@@ -139,6 +139,17 @@ the archive, never stored as sporting data, and deleted after a retention
 window. No live SignalR client exists yet, so the dashboard's Live Timing view
 reports an unconfigured feed by default.
 
+### F1 TV account
+
+A live SignalR connection needs an F1 TV subscription. Sign in at
+`account.formula1.com` in your browser, then either point the
+[FastF1 companion extension](https://github.com/theOehrly/fastf1-companion) at
+this instance or paste the `login-session` cookie into the Live Timing view. No
+password is ever sent to this application, and the stored token is never
+returned to the browser.
+
+### Replay
+
 To drive it from a recorded session, put a recording in `recordings/` and start
 the API with it selected:
 

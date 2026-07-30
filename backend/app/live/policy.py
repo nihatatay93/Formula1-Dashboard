@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 DEFAULT_LOG_DIRECTORY = "/live-sessions"
+DEFAULT_TOKEN_PATH = "/live-auth/f1-token.json"
 
 
 class LiveTimingPolicyError(ValueError):
@@ -35,6 +36,10 @@ class LiveTimingSettings:
     #: live upstream connection. Intended for development and demonstration.
     replay_path: str | None = None
     replay_speed: float = 10.0
+    #: Where the F1 TV login-session token is stored, and how long it is trusted
+    #: when the token carries no usable expiry claim of its own.
+    token_path: str = DEFAULT_TOKEN_PATH
+    token_ttl_hours: int = 96
 
     def __post_init__(self) -> None:
         if not isinstance(self.log_directory, str) or not self.log_directory.strip():
@@ -66,6 +71,9 @@ class LiveTimingSettings:
             raise LiveTimingPolicyError(
                 "reconnect_base_seconds must not exceed reconnect_cap_seconds"
             )
+        if not isinstance(self.token_path, str) or not self.token_path.strip():
+            raise LiveTimingPolicyError("token_path must be a non-empty string")
+        _positive_integer(self.token_ttl_hours, "token_ttl_hours")
         if self.replay_path is not None and not str(self.replay_path).strip():
             raise LiveTimingPolicyError(
                 "replay_path must be a non-empty string when set"
@@ -116,6 +124,12 @@ class LiveTimingSettings:
                 "LIVE_TIMING_REPLAY_SPEED",
                 defaults.replay_speed,
             ),
+            token_path=values.get("LIVE_TIMING_TOKEN_PATH", defaults.token_path),
+            token_ttl_hours=_environment_integer(
+                values,
+                "LIVE_TIMING_TOKEN_TTL_HOURS",
+                defaults.token_ttl_hours,
+            ),
         )
 
     @property
@@ -125,6 +139,10 @@ class LiveTimingSettings:
     @property
     def retention_sweep_interval(self) -> timedelta:
         return timedelta(seconds=self.retention_sweep_interval_seconds)
+
+    @property
+    def token_ttl(self) -> timedelta:
+        return timedelta(hours=self.token_ttl_hours)
 
 
 def calculate_reconnect_delay(

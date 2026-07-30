@@ -76,6 +76,40 @@ connection.
   400/450 thresholds. Those measure cache-miss HTTP sends against a
   FastF1-specific limit and have no meaning for a streaming connection.
 
+## F1 TV Access
+
+A live SignalR connection requires an F1 TV subscription. Authentication is
+delegated to the user's browser; this application never handles a password.
+
+The FastF1 companion extension establishes the pattern: it redirects to
+`account.formula1.com`, lets the browser sign in, then reads the `login-session`
+cookie for `livetiming.formula1.com` and posts it to a local port. Delegating to
+the browser keeps bot protection and multi-factor sign-in working, survives
+changes to the login flow, and confines the secret to a cookie that expires in
+days rather than a password that does not.
+
+- `POST /api/v1/live/auth` accepts `{login_session}` or the extension's
+  `{loginSession}`. The same contract is mounted at the application root as
+  `POST /auth`, so the existing extension can be pointed at this instance.
+- Pasting the cookie manually is the fallback when the extension is not used.
+- The token is stored as JSON in a dedicated volume, created with owner-only
+  permissions before any content is written.
+- Expiry comes from the token's own `exp` claim when it is a JWT with a sane
+  value, otherwise from a configurable TTL defaulting to 96 hours. A claim more
+  than fourteen days out is not trusted, so untrusted input cannot pin a token
+  open.
+- Only `authenticated`, `expired`, `expires_at`, `seconds_remaining` and
+  `expiry_source` are observable. The value is reachable only by the live
+  connection and never through HTTP.
+- The token field is validated in application code rather than with Pydantic
+  constraints, because Pydantic's validation errors include the offending
+  `input` and would reflect the credential back to the caller.
+
+The token is readable by anything that can read the volume: any process running
+as the same user, and anyone able to `docker exec` into the container. On a
+single-user local machine that is an acceptable risk, and it is the same risk
+FastF1 accepts, but it is not an absolute guarantee.
+
 ## Connection Lifecycle
 
 A live session is started on demand when a user opens the live view, rather

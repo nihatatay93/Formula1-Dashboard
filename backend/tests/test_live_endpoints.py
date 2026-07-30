@@ -31,7 +31,10 @@ class SingleFrameFeed:
 
 def build_service(tmp_path: Path, *, configured: bool = True) -> LiveService:
     return LiveService(
-        settings=LiveTimingSettings(log_directory=str(tmp_path)),
+        settings=LiveTimingSettings(
+            log_directory=str(tmp_path),
+            token_path=str(tmp_path / "auth" / "f1-token.json"),
+        ),
         feed_factory=SingleFrameFeed if configured else None,
         clock=lambda: NOW,
     )
@@ -170,6 +173,122 @@ def test_live_endpoints_do_not_touch_the_historical_contract(
     schema = client.get("/openapi.json").json()
     live_paths = [path for path in schema["paths"] if path.startswith("/api/v1/live")]
 
-    assert sorted(live_paths) == ["/api/v1/live/session"]
+    assert sorted(live_paths) == [
+        "/api/v1/live/auth",
+        "/api/v1/live/session",
+    ]
     # The historical session route is unchanged and still documented.
     assert "/api/v1/sessions/{session_id}" in schema["paths"]
+
+
+TOKEN = "abc123def456ghi789jkl012mno345"
+
+
+def test_auth_status_starts_unauthenticated(client: TestClient) -> None:
+    response = client.get("/api/v1/live/auth")
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.json() == {
+        "authenticated": False,
+        "expired": False,
+        "expires_at": None,
+        "seconds_remaining": 0,
+        "expiry_source": None,
+    }
+
+
+def test_storing_a_token_reports_authenticated(client: TestClient) -> None:
+    response = client.post("/api/v1/live/auth", json={"login_session": TOKEN})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["authenticated"] is True
+    assert body["expires_at"] is not None
+
+
+def test_the_extension_camel_case_key_is_accepted(client: TestClient) -> None:
+    response = client.post("/api/v1/live/auth", json={"loginSession": TOKEN})
+
+    assert response.status_code == 200
+    assert response.json()["authenticated"] is True
+
+
+def test_the_extension_posts_to_the_root_auth_path(client: TestClient) -> None:
+    # The FastF1 companion extension posts to http://localhost:{port}/auth.
+    response = client.post("/auth", json={"loginSession": TOKEN})
+
+    assert response.status_code == 200
+    assert response.json()["authenticated"] is True
+    assert client.get("/api/v1/live/auth").json()["authenticated"] is True
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"login_session": ""},
+        {"login_session": "short"},
+        {"login_session": "has space in it here"},
+        {"login_session": TOKEN, "unexpected": "field"},
+    ],
+)
+def test_invalid_tokens_are_rejected(
+    client: TestClient,
+    body: dict[str, object],
+) -> None:
+    response = client.post("/api/v1/live/auth", json=body)
+
+    assert response.status_code in (422,)
+    assert client.get("/api/v1/live/auth").json()["authenticated"] is False
+
+
+def test_signing_out_forgets_the_token(client: TestClient) -> None:
+    client.post("/api/v1/live/auth", json={"login_session": TOKEN})
+
+    response = client.delete("/api/v1/live/auth")
+
+    assert response.status_code == 200
+    assert response.json()["authenticated"] is False
+    assert client.get("/api/v1/live/auth").json()["authenticated"] is False
+
+
+def test_signing_out_when_never_authenticated_is_not_an_error(
+    client: TestClient,
+) -> None:
+    assert client.delete("/api/v1/live/auth").status_code == 200
+
+
+def test_the_token_value_is_never_returned_by_any_live_endpoint(
+    client: TestClient,
+) -> None:
+    client.post("/api/v1/live/auth", json={"login_session": TOKEN})
+
+    bodies = [
+        client.get("/api/v1/live/auth").text,
+        client.post("/api/v1/live/auth", json={"login_session": TOKEN}).text,
+        client.get("/api/v1/live/session").text,
+        client.delete("/api/v1/live/auth").text,
+    ]
+
+    for body in bodies:
+        assert TOKEN not in body
+
+
+def test_session_status_reports_authentication(client: TestClient) -> None:
+    before = client.get("/api/v1/live/session").json()
+    assert before["authentication"]["authenticated"] is False
+
+    client.post("/api/v1/live/auth", json={"login_session": TOKEN})
+
+    after = client.get("/api/v1/live/session").json()
+    assert after["authentication"]["authenticated"] is True
+
+
+def test_a_rejected_token_is_not_echoed_back(client: TestClient) -> None:
+    secret = "s" * 9000
+
+    response = client.post("/api/v1/live/auth", json={"login_session": secret})
+
+    assert response.status_code == 422
+    assert secret not in response.text

@@ -7,7 +7,9 @@ import {
   startLiveSession,
   stopLiveSession,
 } from "./api";
+import LiveAuthPanel from "./LiveAuthPanel";
 import type {
+  LiveAuthStatus,
   LiveStatus,
   LiveStreamMessage,
   LiveTopicState,
@@ -335,6 +337,17 @@ export default function LiveTiming() {
           <strong>Live timing unavailable</strong>
           <span>{statusError}</span>
         </div>
+      ) : null}
+
+      {status ? (
+        <LiveAuthPanel
+          auth={status.authentication}
+          onChanged={(authentication: LiveAuthStatus) =>
+            setStatus((current) =>
+              current === null ? current : { ...current, authentication },
+            )
+          }
+        />
       ) : null}
 
       {status && !status.feed_configured ? (

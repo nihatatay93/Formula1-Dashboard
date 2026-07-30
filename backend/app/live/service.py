@@ -19,6 +19,7 @@ from app.live.collector import (
     LiveFeedFactory,
     LiveSessionIdentity,
 )
+from app.live.f1_auth import F1TokenStore, StoredToken
 from app.live.policy import LiveTimingSettings
 from app.live.retention import (
     SweepResult,
@@ -52,6 +53,10 @@ class LiveService:
         self._settings = settings
         self._feed_factory = feed_factory
         self._clock = clock if clock is not None else lambda: datetime.now(tz=UTC)
+        self._tokens = F1TokenStore(
+            Path(settings.token_path),
+            default_ttl=settings.token_ttl,
+        )
         self._collector: LiveCollector | None = None
         self._task: asyncio.Task[None] | None = None
         self._retention_task: asyncio.Task[None] | None = None
@@ -68,6 +73,19 @@ class LiveService:
     @property
     def active(self) -> LiveCollector | None:
         return self._collector
+
+    @property
+    def tokens(self) -> F1TokenStore:
+        return self._tokens
+
+    def authentication_status(self) -> dict[str, object]:
+        return self._tokens.status(now=self._clock())
+
+    def save_token(self, login_session: object) -> StoredToken:
+        return self._tokens.save(login_session, now=self._clock())
+
+    def clear_token(self) -> bool:
+        return self._tokens.clear()
 
     @property
     def feed_configured(self) -> bool:
@@ -165,6 +183,7 @@ class LiveService:
             "retention_days": self._settings.retention_days,
             "log_directory_bytes": directory_size_bytes(self.log_directory),
             "max_directory_bytes": self._settings.max_directory_bytes,
+            "authentication": self.authentication_status(),
             "session": None if collector is None else collector.status(),
         }
 

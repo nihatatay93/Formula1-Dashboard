@@ -62,6 +62,13 @@ function status(overrides: Partial<LiveStatus> = {}): LiveStatus {
     retention_days: 7,
     log_directory_bytes: 2048,
     max_directory_bytes: 5_368_709_120,
+    authentication: {
+      authenticated: false,
+      expired: false,
+      expires_at: null,
+      seconds_remaining: 0,
+      expiry_source: null,
+    },
     session: null,
     ...overrides,
   };

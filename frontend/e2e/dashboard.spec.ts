@@ -43,6 +43,13 @@ async function installApiRoutes(page: Page) {
         retention_days: 7,
         log_directory_bytes: 0,
         max_directory_bytes: 5368709120,
+        authentication: {
+          authenticated: false,
+          expired: false,
+          expires_at: null,
+          seconds_remaining: 0,
+          expiry_source: null,
+        },
         session: null,
       });
     }
@@ -241,6 +248,19 @@ test("opens live timing as a separate view without archive state", async ({
   await expect(
     page.getByText("No live feed provider is configured"),
   ).toBeVisible();
+
+  // F1 TV access is a browser sign-in handing over a cookie, never a password.
+  await expect(page.getByRole("heading", { name: "Live feed access" })).toBeVisible();
+  await expect(
+    page.getByText(/Your password is never sent to this application/),
+  ).toBeVisible();
+  await expect(page.getByLabel(/login-session cookie/)).toHaveAttribute(
+    "type",
+    "password",
+  );
+  await expect(
+    page.getByRole("button", { name: /Connect account/ }),
+  ).toBeDisabled();
   await expect(
     page.getByRole("button", { name: /Connect to session/ }),
   ).toBeDisabled();

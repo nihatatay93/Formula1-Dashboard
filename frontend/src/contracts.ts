@@ -394,6 +394,15 @@ export interface LiveCollectorStatus {
   stats: LiveCollectorStats;
 }
 
+/** Observable F1 TV auth state. The token value is never sent to the client. */
+export interface LiveAuthStatus {
+  authenticated: boolean;
+  expired: boolean;
+  expires_at: string | null;
+  seconds_remaining: number;
+  expiry_source: string | null;
+}
+
 export interface LiveStatus {
   record_state: string;
   active: boolean;
@@ -401,6 +410,7 @@ export interface LiveStatus {
   retention_days: number;
   log_directory_bytes: number;
   max_directory_bytes: number;
+  authentication: LiveAuthStatus;
   session: LiveCollectorStatus | null;
 }
 

@@ -11,6 +11,7 @@ from app.db.schema import (
     DatabaseSchemaMismatchError,
     verify_database_schema,
 )
+from app.live.api import compat_router as live_compat_router
 from app.live.state import get_live_service
 
 
@@ -36,6 +37,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(api_v1_router)
+# Root-level /auth, for the FastF1 companion extension's fixed contract.
+app.include_router(live_compat_router)
 
 
 @app.get("/")

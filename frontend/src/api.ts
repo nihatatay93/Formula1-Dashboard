@@ -5,6 +5,7 @@ import type {
   FastF1RequestBudget,
   LapSummaryRequest,
   LapSummaryResponse,
+  LiveAuthStatus,
   LiveSessionRequest,
   LiveStatus,
   SeasonOverview,
@@ -150,6 +151,31 @@ export function startLiveSession(
 
 export function stopLiveSession(signal?: AbortSignal): Promise<LiveStatus> {
   return requestJson<LiveStatus>("/api/v1/live/session", {
+    method: "DELETE",
+    signal,
+  });
+}
+
+export function getLiveAuthStatus(
+  signal?: AbortSignal,
+): Promise<LiveAuthStatus> {
+  return requestJson<LiveAuthStatus>("/api/v1/live/auth", { signal });
+}
+
+export function storeLiveAuth(
+  loginSession: string,
+  signal?: AbortSignal,
+): Promise<LiveAuthStatus> {
+  return requestJson<LiveAuthStatus>("/api/v1/live/auth", {
+    body: JSON.stringify({ login_session: loginSession }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+    signal,
+  });
+}
+
+export function clearLiveAuth(signal?: AbortSignal): Promise<LiveAuthStatus> {
+  return requestJson<LiveAuthStatus>("/api/v1/live/auth", {
     method: "DELETE",
     signal,
   });

@@ -8,14 +8,23 @@ mistakes live data for the archive record.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.errors import ApiError
 from app.live.collector import LiveSessionIdentity
+from app.live.f1_auth import InvalidF1TokenError
 from app.live.service import (
     LiveFeedUnconfiguredError,
     LiveService,
@@ -24,6 +33,10 @@ from app.live.service import (
 from app.live.state import get_live_service
 
 router = APIRouter(prefix="/live", tags=["live"])
+
+#: Mounted at the application root as well as under /api/v1/live, because the
+#: FastF1 companion extension posts to http://localhost:{port}/auth.
+compat_router = APIRouter(tags=["live"])
 
 RECORD_STATE = "unconfirmed_live"
 
@@ -43,6 +56,63 @@ class LiveSessionRequest(BaseModel):
         )
 
 
+class AuthStatusResponse(BaseModel):
+    """Observable authentication state. Never carries the token value."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    authenticated: bool
+    expired: bool
+    expires_at: str | None = None
+    seconds_remaining: int = 0
+    expiry_source: str | None = None
+
+
+#: Accepted spellings for the token field. The companion extension sends
+#: camelCase; a manual paste may use either.
+LOGIN_SESSION_KEYS = ("login_session", "loginSession")
+
+
+async def read_login_session(request: Request) -> object:
+    """Extract the token field without letting a rejection echo its value.
+
+    The request body is parsed here rather than through a Pydantic model on
+    purpose. Pydantic's validation errors include the offending ``input``, which
+    for this endpoint is the credential itself, so a constraint failure would
+    reflect the token straight back to the caller and into any error log.
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        raise ApiError(
+            status_code=422,
+            code="invalid_request_body",
+            message="Expected a JSON object.",
+        ) from None
+    if not isinstance(body, Mapping):
+        raise ApiError(
+            status_code=422,
+            code="invalid_request_body",
+            message="Expected a JSON object.",
+        )
+    unexpected = sorted(set(body) - set(LOGIN_SESSION_KEYS))
+    if unexpected:
+        # Field names only; values are never included.
+        raise ApiError(
+            status_code=422,
+            code="unexpected_fields",
+            message=f"Unexpected fields: {', '.join(unexpected)}.",
+        )
+    for key in LOGIN_SESSION_KEYS:
+        if key in body:
+            return body[key]
+    raise ApiError(
+        status_code=422,
+        code="missing_login_session",
+        message="A login_session value is required.",
+    )
+
+
 class LiveStatusResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -52,6 +122,7 @@ class LiveStatusResponse(BaseModel):
     retention_days: int
     log_directory_bytes: int
     max_directory_bytes: int
+    authentication: AuthStatusResponse
     session: dict | None = None
 
 
@@ -112,6 +183,82 @@ async def stop_live_session(
     response.headers["Cache-Control"] = "no-store"
     await service.stop_session()
     return _status(service)
+
+
+def _save_token(service: LiveService, login_session: object) -> AuthStatusResponse:
+    try:
+        service.save_token(login_session)
+    except InvalidF1TokenError as error:
+        # The message never echoes the supplied value.
+        raise ApiError(
+            status_code=422,
+            code="invalid_login_session",
+            message=str(error),
+        ) from None
+    except OSError:
+        raise ApiError(
+            status_code=500,
+            code="token_store_unavailable",
+            message="The token could not be stored.",
+        ) from None
+    return AuthStatusResponse(**service.authentication_status())
+
+
+@router.get(
+    "/auth",
+    response_model=AuthStatusResponse,
+    summary="Read F1 TV authentication status",
+)
+def read_live_auth(
+    response: Response,
+    service: Annotated[LiveService, Depends(get_live_service)],
+) -> AuthStatusResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return AuthStatusResponse(**service.authentication_status())
+
+
+@router.post(
+    "/auth",
+    response_model=AuthStatusResponse,
+    summary="Store an F1 TV login-session token",
+)
+async def store_live_auth(
+    request: Request,
+    response: Response,
+    service: Annotated[LiveService, Depends(get_live_service)],
+) -> AuthStatusResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return _save_token(service, await read_login_session(request))
+
+
+@router.delete(
+    "/auth",
+    response_model=AuthStatusResponse,
+    summary="Forget the stored F1 TV token",
+)
+def clear_live_auth(
+    response: Response,
+    service: Annotated[LiveService, Depends(get_live_service)],
+) -> AuthStatusResponse:
+    response.headers["Cache-Control"] = "no-store"
+    service.clear_token()
+    return AuthStatusResponse(**service.authentication_status())
+
+
+@compat_router.post(
+    "/auth",
+    response_model=AuthStatusResponse,
+    include_in_schema=False,
+    summary="FastF1 companion extension compatibility endpoint",
+)
+async def store_live_auth_compat(
+    request: Request,
+    response: Response,
+    service: Annotated[LiveService, Depends(get_live_service)],
+) -> AuthStatusResponse:
+    """Same contract the companion extension already posts to."""
+    response.headers["Cache-Control"] = "no-store"
+    return _save_token(service, await read_login_session(request))
 
 
 @router.websocket("/stream")

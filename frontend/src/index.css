@@ -2528,6 +2528,98 @@ th,
   }
 }
 
+/* F1 TV account panel */
+
+.live-auth {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel-inset);
+}
+
+.live-auth__heading {
+  display: flex;
+  gap: var(--s3);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.live-auth__heading .section-kicker {
+  color: var(--data);
+}
+
+.live-auth__detail,
+.live-auth__note {
+  max-width: 74ch;
+  color: var(--muted);
+  font-size: var(--t-small);
+}
+
+.live-auth__note {
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line);
+  color: var(--muted-dark);
+  font-size: var(--t-micro);
+}
+
+.live-auth__steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding-left: var(--s5);
+  margin: 0;
+  color: var(--ink-dim);
+  font-size: var(--t-body);
+}
+
+.live-auth__steps a {
+  color: var(--data);
+  text-decoration: underline;
+}
+
+.live-auth__steps code {
+  padding: 0.05rem var(--s1);
+  border-radius: var(--r-xs);
+  background: var(--panel-raised);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+}
+
+.live-auth__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  color: var(--muted);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.live-auth__field input {
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-body);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.live-auth__field input:focus-visible {
+  border-color: var(--data);
+}
+
+.live-auth .primary-action,
+.live-auth .secondary-action {
+  align-self: flex-start;
+}
+
 /* --------------------------------------------------------------------------
    16. Alerts and empty states
    -------------------------------------------------------------------------- */

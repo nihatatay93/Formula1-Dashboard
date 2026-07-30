@@ -173,6 +173,7 @@ Formula1-Dashboard/
 │   │   │   ├── api.py
 │   │   │   ├── collector.py
 │   │   │   ├── current_view.py
+│   │   │   ├── f1_auth.py
 │   │   │   ├── frames.py
 │   │   │   ├── policy.py
 │   │   │   ├── replay_feed.py
@@ -202,6 +203,7 @@ Formula1-Dashboard/
 │   │   ├── test_live_collector.py
 │   │   ├── test_live_current_view.py
 │   │   ├── test_live_endpoints.py
+│   │   ├── test_live_f1_auth.py
 │   │   ├── test_live_frames.py
 │   │   ├── test_live_policy.py
 │   │   ├── test_live_replay_feed.py
@@ -507,6 +509,45 @@ Formula1-Dashboard/
   view, so replays after a reconnect are discarded by comparing a per-topic
   sequence rather than by persisting resume state.
 - Date: 2026-07-29
+- Status: implemented
+
+### F1 TV authentication by browser handoff
+
+- Decision: Obtain F1 TV access by accepting the `login-session` cookie the
+  user's own browser already holds, never by collecting a username and password.
+  `POST /api/v1/live/auth` accepts `{login_session}` or the extension's
+  `{loginSession}`, and the same contract is mounted at the application root as
+  `POST /auth` so the existing FastF1 companion extension can be pointed at this
+  instance unchanged. A manual paste of the cookie is the fallback.
+- Rationale: Reading the companion extension's source shows it performs no
+  programmatic login: it redirects to `account.formula1.com`, lets the browser
+  authenticate, then reads the `login-session` cookie for
+  `livetiming.formula1.com` and posts it to a local port. Delegating to the
+  browser means bot protection and multi-factor sign-in keep working, a login
+  API change cannot break this application, and no password is ever handled. The
+  cookie also expires in days, whereas a password does not.
+- Date: 2026-07-30
+- Status: implemented
+
+### Live token storage and confinement
+
+- Decision: Store the token as JSON in a dedicated `live_auth` volume, created
+  with owner-only permissions before any content is written. Track expiry from
+  the token's own claim when it is a JWT with a sane `exp`, otherwise from a
+  configurable TTL defaulting to 96 hours, and reject a claim further out than
+  fourteen days. Expose only `authenticated`, `expired`, `expires_at`,
+  `seconds_remaining` and `expiry_source`; the value itself is reachable only
+  by the live connection and never through HTTP. Validate the token in
+  application code rather than with Pydantic constraints.
+- Rationale: Pydantic's validation errors include the offending `input`, so a
+  constraint failure on this field would reflect the credential back to the
+  caller and into any error log. Parsing the body manually keeps the value out
+  of every error path. Trusting a token's own expiry is more accurate than a
+  fixed TTL, but an unbounded claim from untrusted input could pin a token open,
+  so distant claims fall back to the configured lifetime. The token lives in its
+  own volume rather than the disposable session-log volume so that clearing logs
+  does not sign the user out.
+- Date: 2026-07-30
 - Status: implemented
 
 ### Replay feed for the live path
@@ -1837,14 +1878,14 @@ migrated PostgreSQL database. The complete suite passed with 420 tests against
 an isolated PostgreSQL 17 database after the runtime schema-compatibility
 repair. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
 
-The live-timing path added 164 tests, for 584 collected. Without
-`TEST_DATABASE_URL` the suite reports 475 passed and 109 skipped; the skips are
+The live-timing path added 223 tests, for 643 collected. Without
+`TEST_DATABASE_URL` the suite reports 534 passed and 109 skipped; the skips are
 the database integration tests, which the live module does not use because it
 touches no database. Asynchronous tests require the `pytest-asyncio` dev
 dependency with `asyncio_mode = "strict"`.
 
-The frontend suite reports 29 Vitest tests and 8 Playwright tests across
-desktop and mobile Chromium, including the live view.
+The frontend suite reports 39 Vitest tests and 8 Playwright tests across
+desktop and mobile Chromium, including the live view and the F1 TV panel.
 
 The live endpoints were additionally exercised against the running stack:
 
