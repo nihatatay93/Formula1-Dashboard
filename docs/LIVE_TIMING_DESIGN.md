@@ -233,6 +233,28 @@ the start" decision intact. Temporary PostgreSQL tables are rejected because
 they would place disposable data back under Alembic and re-create the schema
 coupling this design exists to avoid.
 
+## Timing Board
+
+Clients receive a normalised board rather than raw topic payloads. The feed's
+shapes differ by session type and identity lives in a different topic from
+timing, so that join is done once in `app/live/board.py` and tested against a
+real recorded session:
+
+- `DriverList` supplies name, team and colour; `TimingData` supplies position,
+  gaps and sectors; `TimingAppData` supplies the current tyre and its age.
+- A race resolves `GapToLeader`, `IntervalToPositionAhead`, `BestLapTime`,
+  pit-stop and lap counts. Qualifying resolves `BestLapTimes` and `Stats` by the
+  current `SessionPart`, falling back to the last part that has a time so a
+  finished session still shows one.
+- Rows sort by position, falling back to display line so the order is stable
+  before timing begins.
+- Every field is derived defensively: a missing or unexpected value yields an
+  empty string rather than an error.
+
+Board updates are coalesced to at most one every 250ms. A recorded session
+averaged about 2.6 frames per second, so sending a board per delta would be
+wasted work.
+
 ## Serving Clients
 
 - A separate endpoint namespace, `/api/v1/live/...`, with its own WebSocket

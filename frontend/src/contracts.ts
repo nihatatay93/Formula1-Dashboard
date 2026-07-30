@@ -425,6 +425,65 @@ export interface LiveStatus {
  * topic and every later frame is a deep partial delta, so the backend publishes
  * accumulated merged state and counts snapshots and merged updates.
  */
+export interface LiveSectorCell {
+  value: string;
+  personal_best: boolean;
+  overall_best: boolean;
+}
+
+export interface LiveDriverRow {
+  racing_number: string;
+  tla: string;
+  full_name: string;
+  team_name: string;
+  team_colour: string;
+  position: number | null;
+  line: number;
+  gap_to_leader: string;
+  interval: string;
+  last_lap: string;
+  last_lap_personal_best: boolean;
+  last_lap_overall_best: boolean;
+  best_lap: string;
+  sectors: LiveSectorCell[];
+  compound: string;
+  tyre_age: number | null;
+  pit_stops: number | null;
+  laps: number | null;
+  in_pit: boolean;
+  pit_out: boolean;
+  retired: boolean;
+  stopped: boolean;
+  knocked_out: boolean;
+  status: string;
+}
+
+export interface LiveRaceControlMessage {
+  utc: string;
+  category: string;
+  message: string;
+  lap: number | null;
+  flag: string;
+}
+
+/** Display-ready board, normalised server-side from the raw feed topics. */
+export interface LiveBoard {
+  meeting_name: string;
+  session_name: string;
+  session_type: string;
+  session_status: string;
+  started: string;
+  track_status: string;
+  track_status_code: string;
+  current_lap: number | null;
+  total_laps: number | null;
+  remaining: string;
+  extrapolating: boolean;
+  weather: Record<string, string>;
+  drivers: LiveDriverRow[];
+  race_control: LiveRaceControlMessage[];
+}
+
 export interface LiveTopicState {
   received_at: string;
   feed_timestamp: string | null;
@@ -447,17 +506,9 @@ export interface LiveSessionRequest {
 
 export type LiveStreamMessage =
   | {
-      type: "snapshot";
+      type: "snapshot" | "board";
       record_state: string;
       session: LiveCollectorStatus | null;
-      state: LiveViewState;
-    }
-  | {
-      type: "update";
-      topic: string;
-      initial: boolean;
-      received_at: string;
-      /** Merged topic state, not the raw delta. */
-      payload: Record<string, unknown>;
+      board: LiveBoard;
     }
   | { type: "error"; code: string; message: string };

@@ -112,6 +112,58 @@ function socket(): FakeWebSocket {
   return instance;
 }
 
+
+function board(overrides: Record<string, unknown> = {}) {
+  return {
+    meeting_name: "Hungarian Grand Prix",
+    session_name: "Race",
+    session_type: "Race",
+    session_status: "Started",
+    started: "Started",
+    track_status: "AllClear",
+    track_status_code: "1",
+    current_lap: 12,
+    total_laps: 70,
+    remaining: "01:20:00",
+    extrapolating: true,
+    weather: { AirTemp: "31.3" },
+    drivers: [
+      {
+        racing_number: "1",
+        tla: "NOR",
+        full_name: "Lando NORRIS",
+        team_name: "McLaren",
+        team_colour: "F47600",
+        position: 1,
+        line: 1,
+        gap_to_leader: "",
+        interval: "",
+        last_lap: "1:23.625",
+        last_lap_personal_best: true,
+        last_lap_overall_best: false,
+        best_lap: "1:22.491",
+        sectors: [
+          { value: "27.446", personal_best: true, overall_best: false },
+        ],
+        compound: "SOFT",
+        tyre_age: 9,
+        pit_stops: 1,
+        laps: 12,
+        in_pit: false,
+        pit_out: false,
+        retired: false,
+        stopped: false,
+        knocked_out: false,
+        status: "On track",
+      },
+    ],
+    race_control: [
+      { utc: "2026-07-26T14:45:40", category: "Flag", message: "GREEN LIGHT", lap: 1, flag: "GREEN" },
+    ],
+    ...overrides,
+  };
+}
+
 describe("LiveTiming", () => {
   beforeEach(() => {
     getLiveStatus.mockReset();
@@ -205,7 +257,7 @@ describe("LiveTiming", () => {
     expect(screen.queryByText("Streaming")).not.toBeInTheDocument();
   });
 
-  it("opens a stream and renders the snapshot topics", async () => {
+  it("renders a live timing board from the snapshot", async () => {
     getLiveStatus.mockResolvedValue(activeStatus());
 
     render(<LiveTiming />);
@@ -216,27 +268,20 @@ describe("LiveTiming", () => {
       type: "snapshot",
       record_state: "unconfirmed_live",
       session: null,
-      state: {
-        latest_received_at: "2026-08-21T13:04:11Z",
-        applied_frames: 4,
-        topics: {
-          TimingData: {
-            received_at: "2026-08-21T13:04:11Z",
-            feed_timestamp: "2026-08-21T13:04:11Z",
-            snapshots: 1,
-            updates: 18,
-            payload: { Lines: { "1": { Position: "1" } }, SessionPart: 2 },
-          },
-        },
-      },
+      board: board(),
     });
 
-    expect(await screen.findByText("TimingData")).toBeVisible();
-    expect(screen.getByText("+18")).toBeInTheDocument();
+    // Real rows, not raw topic payloads.
+    expect(await screen.findByText("NOR")).toBeVisible();
+    expect(screen.getByText("McLaren")).toBeVisible();
+    expect(screen.getByText("1:23.625")).toBeVisible();
+    expect(screen.getByText("1:22.491")).toBeVisible();
+    expect(screen.getByText("GREEN LIGHT")).toBeVisible();
+    expect(screen.getByText("AllClear")).toBeVisible();
     expect(screen.getByText("Live")).toBeInTheDocument();
   });
 
-  it("merges an incremental update into the rendered topics", async () => {
+  it("shows race columns for a race and drops them for qualifying", async () => {
     getLiveStatus.mockResolvedValue(activeStatus());
 
     render(<LiveTiming />);
@@ -246,20 +291,50 @@ describe("LiveTiming", () => {
       type: "snapshot",
       record_state: "unconfirmed_live",
       session: null,
-      state: { latest_received_at: null, applied_frames: 0, topics: {} },
+      board: board(),
     });
+    expect(await screen.findByRole("columnheader", { name: "Int" })).toBeVisible();
+    expect(screen.getByRole("columnheader", { name: "Stops" })).toBeVisible();
+
     socket().emit({
-      type: "update",
-      topic: "TrackStatus",
-      initial: false,
-      received_at: "2026-08-21T13:05:00Z",
-      payload: { Status: "2", Message: "Yellow" },
+      type: "board",
+      record_state: "unconfirmed_live",
+      session: null,
+      board: board({ session_type: "Qualifying", session_name: "Qualifying" }),
     });
 
-    const card = (await screen.findByText("TrackStatus")).closest("article");
-    expect(card).not.toBeNull();
-    expect(within(card as HTMLElement).getByText("+1")).toBeInTheDocument();
-    expect(within(card as HTMLElement).getByText("Yellow")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("columnheader", { name: "Int" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("columnheader", { name: "Stops" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("replaces the board on each coalesced update", async () => {
+    getLiveStatus.mockResolvedValue(activeStatus());
+
+    render(<LiveTiming />);
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    socket().open();
+    socket().emit({
+      type: "snapshot",
+      record_state: "unconfirmed_live",
+      session: null,
+      board: board(),
+    });
+    await screen.findByText("NOR");
+
+    socket().emit({
+      type: "board",
+      record_state: "unconfirmed_live",
+      session: null,
+      board: board({ current_lap: 40 }),
+    });
+
+    expect(await screen.findByText("40")).toBeVisible();
   });
 
   it("ignores an unparseable stream frame instead of crashing", async () => {
@@ -270,14 +345,13 @@ describe("LiveTiming", () => {
     socket().open();
     socket().emitRaw("not json");
     socket().emit({
-      type: "update",
-      topic: "LapCount",
-      initial: false,
-      received_at: "2026-08-21T13:06:00Z",
-      payload: { CurrentLap: 12 },
+      type: "snapshot",
+      record_state: "unconfirmed_live",
+      session: null,
+      board: board(),
     });
 
-    expect(await screen.findByText("LapCount")).toBeVisible();
+    expect(await screen.findByText("NOR")).toBeVisible();
   });
 
   it("shows a stream error frame from the backend", async () => {

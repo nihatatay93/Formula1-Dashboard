@@ -8,6 +8,7 @@ mistakes live data for the archive record.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from datetime import date
 from typing import Annotated
@@ -23,6 +24,7 @@ from fastapi import (
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.errors import ApiError
+from app.live.board import board_to_dict, build_board
 from app.live.collector import LiveSessionIdentity
 from app.live.f1_auth import InvalidF1TokenError
 from app.live.service import (
@@ -40,6 +42,11 @@ router = APIRouter(prefix="/live", tags=["live"])
 compat_router = APIRouter(tags=["live"])
 
 RECORD_STATE = "unconfirmed_live"
+
+#: Deltas arrive faster than a reader can use. Updates are coalesced to at most
+#: one board per interval, which keeps the payload small during a live session
+#: without the client having to reconstruct state from raw deltas.
+BOARD_MIN_INTERVAL_SECONDS = 0.25
 
 
 class LiveSessionRequest(BaseModel):
@@ -327,17 +334,31 @@ async def stream_live_session(
         return
 
     queue = collector.subscribe()
+
+    def board_message(kind: str) -> dict[str, object]:
+        return {
+            "type": kind,
+            "record_state": RECORD_STATE,
+            "session": collector.status()["session"],
+            "board": board_to_dict(
+                build_board(
+                    {
+                        topic: state.payload
+                        for topic, state in collector.view.topics.items()
+                    }
+                )
+            ),
+        }
+
     try:
-        await websocket.send_json(
-            {
-                "type": "snapshot",
-                "record_state": RECORD_STATE,
-                "session": collector.status()["session"],
-                "state": collector.view.snapshot(),
-            }
-        )
+        await websocket.send_json(board_message("snapshot"))
         while True:
-            await websocket.send_json(dict(await queue.get()))
+            await queue.get()
+            # Drain whatever else arrived; one rebuilt board reflects them all.
+            while not queue.empty():
+                queue.get_nowait()
+            await websocket.send_json(board_message("board"))
+            await asyncio.sleep(BOARD_MIN_INTERVAL_SECONDS)
     except WebSocketDisconnect:
         pass
     finally:

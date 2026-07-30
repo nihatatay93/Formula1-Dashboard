@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ApiClientError,
@@ -8,12 +8,12 @@ import {
   stopLiveSession,
 } from "./api";
 import LiveAuthPanel from "./LiveAuthPanel";
+import LiveBoardView from "./LiveBoard";
 import type {
   LiveAuthStatus,
+  LiveBoard,
   LiveStatus,
   LiveStreamMessage,
-  LiveTopicState,
-  LiveViewState,
 } from "./contracts";
 
 const STATUS_POLL_INTERVAL_MS = 5_000;
@@ -87,62 +87,13 @@ function todayUtc(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/**
- * Renders one topic's latest payload without assuming its shape. The real feed's
- * payload schemas are confirmed alongside the SignalR provider, so a
- * purpose-built leaderboard would be a guess presented as fact.
- */
-function TopicCard({
-  name,
-  state,
-}: {
-  name: string;
-  state: LiveTopicState;
-}) {
-  const entries = Object.entries(state.payload);
-
-  return (
-    <article className="live-topic">
-      <header>
-        <strong>{name}</strong>
-        <span title="Merged deltas since the last full-state frame">
-          +{state.updates}
-        </span>
-      </header>
-      <p className="live-topic__time">{formatClock(state.received_at)}</p>
-      {entries.length === 0 ? (
-        <p className="live-topic__empty">Empty payload</p>
-      ) : (
-        <dl>
-          {entries.slice(0, 6).map(([key, value]) => (
-            <div key={key}>
-              <dt>{key}</dt>
-              <dd>
-                {typeof value === "object" && value !== null
-                  ? `${Object.keys(value as object).length} fields`
-                  : String(value)}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      )}
-      {entries.length > 6 ? (
-        <p className="live-topic__more">
-          +{entries.length - 6} more field
-          {entries.length - 6 === 1 ? "" : "s"}
-        </p>
-      ) : null}
-    </article>
-  );
-}
-
 export default function LiveTiming() {
   const [status, setStatus] = useState<LiveStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [commandPending, setCommandPending] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
-  const [viewState, setViewState] = useState<LiveViewState | null>(null);
+  const [board, setBoard] = useState<LiveBoard | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("idle");
   const [streamError, setStreamError] = useState<string | null>(null);
   const [sessionDate, setSessionDate] = useState(todayUtc);
@@ -206,7 +157,7 @@ export default function LiveTiming() {
       socketRef.current?.close();
       socketRef.current = null;
       setConnection("idle");
-      setViewState(null);
+      setBoard(null);
       return;
     }
 
@@ -226,40 +177,15 @@ export default function LiveTiming() {
       } catch {
         return;
       }
-      if (message.type === "snapshot") {
-        setViewState(message.state);
+      if (message.type === "snapshot" || message.type === "board") {
+        // The backend sends a fully normalised board, coalesced so a busy
+        // session does not push a render per delta.
+        setBoard(message.board);
         return;
       }
-      if (message.type === "update") {
-        setViewState((current) => {
-          const base: LiveViewState =
-            current ?? {
-              latest_received_at: null,
-              applied_frames: 0,
-              topics: {},
-            };
-          const previous = base.topics[message.topic];
-          // The payload is already merged server-side, so this replaces the
-          // topic rather than reapplying a delta on the client.
-          return {
-            latest_received_at: message.received_at,
-            applied_frames: base.applied_frames + 1,
-            topics: {
-              ...base.topics,
-              [message.topic]: {
-                received_at: message.received_at,
-                feed_timestamp: null,
-                snapshots:
-                  (previous?.snapshots ?? 0) + (message.initial ? 1 : 0),
-                updates: message.initial ? 0 : (previous?.updates ?? 0) + 1,
-                payload: message.payload,
-              },
-            },
-          };
-        });
-        return;
+      if (message.type === "error") {
+        setStreamError(message.message);
       }
-      setStreamError(message.message);
     };
 
     return () => {
@@ -298,10 +224,6 @@ export default function LiveTiming() {
     }
   }
 
-  const topics = useMemo(
-    () => Object.entries(viewState?.topics ?? {}),
-    [viewState],
-  );
   const startDisabled =
     commandPending ||
     !status?.feed_configured ||
@@ -458,8 +380,8 @@ export default function LiveTiming() {
             <strong>{status.session.stats.reconnects}</strong>
           </div>
           <div>
-            <span>Last frame</span>
-            <strong>{formatClock(viewState?.latest_received_at ?? null)}</strong>
+            <span>Drivers</span>
+            <strong>{board ? board.drivers.length : "—"}</strong>
           </div>
         </div>
       ) : null}
@@ -474,15 +396,9 @@ export default function LiveTiming() {
         </div>
       ) : null}
 
-      {active && topics.length > 0 ? (
-        <div className="live-topics">
-          {topics.map(([name, state]) => (
-            <TopicCard key={name} name={name} state={state} />
-          ))}
-        </div>
-      ) : null}
+      {active && board ? <LiveBoardView board={board} /> : null}
 
-      {active && topics.length === 0 ? (
+      {active && !board ? (
         <p className="session-explorer__hint">
           Connected. Waiting for the first frames from the feed.
         </p>

@@ -144,7 +144,7 @@ def test_invalid_start_requests_are_rejected(
     assert client.post("/api/v1/live/session", json=body).status_code == 422
 
 
-def test_stream_sends_a_snapshot_then_live_updates(client: TestClient) -> None:
+def test_stream_sends_a_display_ready_board(client: TestClient) -> None:
     client.post("/api/v1/live/session", json=SESSION_BODY)
 
     with client.websocket_connect("/api/v1/live/stream") as websocket:
@@ -152,7 +152,11 @@ def test_stream_sends_a_snapshot_then_live_updates(client: TestClient) -> None:
 
         assert snapshot["type"] == "snapshot"
         assert snapshot["record_state"] == "unconfirmed_live"
-        assert snapshot["state"]["topics"]["TimingData"]["snapshots"] == 1
+        # The client receives normalised rows, not raw topic payloads.
+        board = snapshot["board"]
+        assert board["drivers"][0]["racing_number"] == "1"
+        assert board["drivers"][0]["position"] == 1
+        assert "Lines" not in board
 
     client.delete("/api/v1/live/session")
 

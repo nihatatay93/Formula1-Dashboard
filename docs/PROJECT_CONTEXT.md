@@ -171,6 +171,7 @@ Formula1-Dashboard/
 │   │   │   └── season_backfill.py
 │   │   ├── live/
 │   │   │   ├── api.py
+│   │   │   ├── board.py
 │   │   │   ├── collector.py
 │   │   │   ├── current_view.py
 │   │   │   ├── f1_auth.py
@@ -201,6 +202,7 @@ Formula1-Dashboard/
 │   │   ├── test_freshness_policy.py
 │   │   ├── test_health.py
 │   │   ├── test_historical_session_contracts.py
+│   │   ├── test_live_board.py
 │   │   ├── test_live_collector.py
 │   │   ├── test_live_current_view.py
 │   │   ├── test_live_endpoints.py
@@ -583,6 +585,27 @@ Formula1-Dashboard/
   so distant claims fall back to the configured lifetime. The token lives in its
   own volume rather than the disposable session-log volume so that clearing logs
   does not sign the user out.
+- Date: 2026-07-30
+- Status: implemented
+
+### Live timing board
+
+- Decision: Normalise merged live topic state into a display-ready board in
+  `app/live/board.py`, and stream that over the WebSocket instead of raw topic
+  payloads. The board joins `DriverList` identity onto `TimingData` rows, adds
+  tyre and stint data from `TimingAppData`, resolves per-session-type fields,
+  orders by position with display line as the fallback, and carries session
+  header, track status, lap count, weather and the most recent race control
+  messages. Updates are coalesced to at most one board every 250ms.
+- Rationale: The feed's shapes differ by session type — a race carries
+  `GapToLeader`, `IntervalToPositionAhead` and one `BestLapTime`, while
+  qualifying carries a three-entry `BestLapTimes` and a `Stats` array indexed by
+  session part — and identity lives in a different topic from timing. Deriving
+  that in TypeScript without fixtures would repeat the guesswork the recording
+  exists to prevent, so it is done once in Python and tested against a real
+  recorded session. Coalescing matters because deltas arrive faster than a
+  reader can use: a recorded session averaged about 2.6 frames per second, and
+  sending a board per frame would be wasted work.
 - Date: 2026-07-30
 - Status: implemented
 
@@ -1960,13 +1983,13 @@ migrated PostgreSQL database. The complete suite passed with 420 tests against
 an isolated PostgreSQL 17 database after the runtime schema-compatibility
 repair. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
 
-The live-timing path added 245 tests, for 665 collected. Without
-`TEST_DATABASE_URL` the suite reports 556 passed and 109 skipped; the skips are
+The live-timing path added 276 tests, for 696 collected. Without
+`TEST_DATABASE_URL` the suite reports 587 passed and 109 skipped; the skips are
 the database integration tests, which the live module does not use because it
 touches no database. Asynchronous tests require the `pytest-asyncio` dev
 dependency with `asyncio_mode = "strict"`.
 
-The frontend suite reports 44 Vitest tests and 8 Playwright tests across
+The frontend suite reports 45 Vitest tests and 8 Playwright tests across
 desktop and mobile Chromium, including the live view and the F1 TV panel.
 
 The live endpoints were additionally exercised against the running stack:
