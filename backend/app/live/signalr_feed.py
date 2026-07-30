@@ -118,7 +118,14 @@ class SignalRFeed:
         )
 
     def _publish(self, frame: RawFrame) -> None:
-        """Hand a frame to the event loop from the connection thread."""
+        """Hand a frame to the event loop from the connection thread.
+
+        Scheduling onto the loop is what keeps the connection thread from ever
+        blocking. Note that the loop's own callback queue is unbounded, so
+        ``QUEUE_SIZE`` bounds what waits in the queue rather than total buffering
+        while the loop is behind; ``_offer`` is the guard for a consumer that has
+        genuinely stalled.
+        """
         loop, queue = self._loop, self._queue
         if loop is None or queue is None or loop.is_closed():
             return
@@ -129,7 +136,7 @@ class SignalRFeed:
         try:
             queue.put_nowait(item)
         except asyncio.QueueFull:
-            # A stalled consumer must not block the connection thread; the
+            # A stalled consumer must not grow the queue without bound; the
             # collector treats a dropped frame the same as a missed delta.
             logger.warning("live frame queue is full, dropping a frame")
 

@@ -214,6 +214,7 @@ Formula1-Dashboard/
 │   │   ├── test_live_service.py
 │   │   ├── test_live_session_log.py
 │   │   ├── test_live_signalr_contract.py
+│   │   ├── test_live_signalr_feed.py
 │   │   ├── test_runtime_policy.py
 │   │   ├── test_request_budget.py
 │   │   ├── test_season_endpoint.py
@@ -1925,10 +1926,8 @@ race-run classification remain intentionally unimplemented.
    state per topic, but sustained delta traffic, reconnects mid-session and the
    `TimingData` update rate have not been observed live. The next event is the
    Dutch Grand Prix on 2026-08-21.
-2. Add automated tests for `app/live/signalr_feed.py`. It is the only live
-   module without a test file: it was verified against the real endpoint but
-   nothing covers its message-shape handling, so a refactor could silently
-   break the completion-message and `[topic, payload, timestamp]` branches.
+2. Detect a live session from the schedule so the live view can say what is on
+   now instead of asking the reader to type an event name.
 3. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
 4. Before production, add authentication/authorization, secret management,
@@ -1983,8 +1982,8 @@ migrated PostgreSQL database. The complete suite passed with 420 tests against
 an isolated PostgreSQL 17 database after the runtime schema-compatibility
 repair. Revision 7 downgrade/re-upgrade and `alembic check` also passed.
 
-The live-timing path added 276 tests, for 696 collected. Without
-`TEST_DATABASE_URL` the suite reports 587 passed and 109 skipped; the skips are
+The live-timing path added 299 tests, for 719 collected. Without
+`TEST_DATABASE_URL` the suite reports 610 passed and 109 skipped; the skips are
 the database integration tests, which the live module does not use because it
 touches no database. Asynchronous tests require the `pytest-asyncio` dev
 dependency with `asyncio_mode = "strict"`.
