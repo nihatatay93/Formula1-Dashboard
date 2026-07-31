@@ -192,6 +192,23 @@ deltas, so an index-keyed mapping applied to a list target updates that array in
 place rather than retyping it. An out-of-range index is dropped rather than
 extending the array, so untrusted input cannot grow state without bound.
 
+**Micro-sector status codes are undocumented and were derived, not assumed.**
+Each sector carries a `Segments` array — 7, 9 and 6 entries for sectors 1–3 at
+the Hungaroring — whose `Status` values were mapped by correlating 2778
+`TimingData` frames in the recording against the parent sector's flags:
+
+| Code | Meaning | Evidence |
+| --- | --- | --- |
+| `0` | not yet reached | Set for every segment at each lap rollover. |
+| `2048` | slower | 67% of segments in sectors flagged neither personal nor overall best; falls to 17% in personal-best sectors. |
+| `2049` | personal best | 79% of segments in personal-best sectors, against 21% elsewhere. |
+| `2051` | overall fastest | 44% of segments in overall-best sectors, against 4% elsewhere. Reverts to `2049` 27 times — purple being revoked when another driver goes faster. |
+| `2064` | pit lane | Occurs only on five fixed track positions (sector 3 segments 4–6, sector 1 segments 1–2), with the driver in a pit-exit state for 151 of 160 occurrences. |
+
+The mapping lives in `app/live/board.py`, so a later recording that contradicts
+it has one place to correct. Any other code renders as `unknown` rather than
+being guessed at.
+
 **Deduplication falls out of the merge.** Applying the same delta twice yields
 the same state, so no sequence tracking is required: a re-applied frame reports
 no change and is counted as unchanged. A reconnect whose snapshot rewinds state

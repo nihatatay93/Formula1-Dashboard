@@ -1,4 +1,9 @@
-import type { LiveBoard as Board, LiveDriverRow } from "./contracts";
+import type {
+  LiveBoard as Board,
+  LiveDriverRow,
+  LiveSectorCell,
+  LiveSegmentStatus,
+} from "./contracts";
 
 /**
  * Live timing board.
@@ -15,11 +20,78 @@ function compoundClass(compound: string): string {
   return known.includes(normalized) ? normalized : "unknown";
 }
 
-function sectorClass(cell: { personal_best: boolean; overall_best: boolean }): string {
+function sectorClass(cell: LiveSectorCell): string {
   if (cell.overall_best) {
     return "live-sector live-sector--overall";
   }
   return cell.personal_best ? "live-sector live-sector--personal" : "live-sector";
+}
+
+const SEGMENT_LABELS: Record<LiveSegmentStatus, string> = {
+  pending: "not yet reached",
+  yellow: "slower",
+  green: "personal best",
+  purple: "overall fastest",
+  pit: "pit lane",
+  unknown: "unknown",
+};
+
+/** The strip is unreadable without a key; `unknown` is omitted until it occurs. */
+const LEGEND: LiveSegmentStatus[] = ["purple", "green", "yellow", "pit", "pending"];
+
+function SegmentLegend() {
+  return (
+    <p className="live-segments__legend">
+      <span>Micro-sectors</span>
+      {LEGEND.map((status) => (
+        <span key={status}>
+          <span
+            aria-hidden="true"
+            className={`live-segments__block live-segments__block--${status}`}
+          />
+          {SEGMENT_LABELS[status]}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+/**
+ * The micro-sector strip: one block per timing loop inside the sector, which is
+ * how a lap in progress is read before its sector time is published.
+ *
+ * It is detail layered on top of the sector time, so it is hidden from assistive
+ * technology and summarised in the sector's title instead — 22 rows of ~22
+ * blocks would otherwise flood a screen reader on every tick.
+ */
+function SegmentStrip({ segments }: { segments: LiveSegmentStatus[] }) {
+  if (segments.length === 0) {
+    return null;
+  }
+  return (
+    <span aria-hidden="true" className="live-segments">
+      {segments.map((status, index) => (
+        <span
+          className={`live-segments__block live-segments__block--${status}`}
+          key={index}
+        />
+      ))}
+    </span>
+  );
+}
+
+function sectorTitle(cell: LiveSectorCell, index: number): string {
+  const reached = cell.segments.filter((status) => status !== "pending").length;
+  const progress =
+    cell.segments.length > 0
+      ? `, ${reached}/${cell.segments.length} micro-sectors`
+      : "";
+  const tone = cell.overall_best
+    ? " (overall fastest)"
+    : cell.personal_best
+      ? " (personal best)"
+      : "";
+  return `Sector ${index + 1}: ${cell.value || "no time"}${tone}${progress}`;
 }
 
 function lapClass(row: LiveDriverRow): string {
@@ -90,8 +162,13 @@ function DriverRow({ row, isRace }: { row: LiveDriverRow; isRace: boolean }) {
         <div className="live-board__sectors">
           {row.sectors.length > 0
             ? row.sectors.map((cell, index) => (
-                <span className={sectorClass(cell)} key={index}>
-                  {cell.value || "—"}
+                <span
+                  className={sectorClass(cell)}
+                  key={index}
+                  title={sectorTitle(cell, index)}
+                >
+                  <span className="live-sector__value">{cell.value || "—"}</span>
+                  <SegmentStrip segments={cell.segments} />
                 </span>
               ))
             : "—"}
@@ -147,35 +224,40 @@ export default function LiveBoard({ board }: { board: Board }) {
       </div>
 
       {board.drivers.length > 0 ? (
-        <div className="live-board__table-wrap">
-          <table className="live-board__table">
-            <thead>
-              <tr>
-                <th scope="col">Pos</th>
-                <th scope="col">Driver</th>
-                <th scope="col">Tyre</th>
-                {isRace ? (
-                  <>
+        <>
+          <div className="live-board__table-wrap">
+            <table className="live-board__table">
+              <thead>
+                <tr>
+                  <th scope="col">Pos</th>
+                  <th scope="col">Driver</th>
+                  <th scope="col">Tyre</th>
+                  {isRace ? (
+                    <>
+                      <th scope="col">Gap</th>
+                      <th scope="col">Int</th>
+                    </>
+                  ) : (
                     <th scope="col">Gap</th>
-                    <th scope="col">Int</th>
-                  </>
-                ) : (
-                  <th scope="col">Gap</th>
-                )}
-                <th scope="col">Last lap</th>
-                <th scope="col">Best lap</th>
-                <th scope="col">Sectors</th>
-                {isRace ? <th scope="col">Stops</th> : null}
-                <th scope="col">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {board.drivers.map((row) => (
-                <DriverRow isRace={isRace} key={row.racing_number} row={row} />
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  )}
+                  <th scope="col">Last lap</th>
+                  <th scope="col">Best lap</th>
+                  <th scope="col">Sectors</th>
+                  {isRace ? <th scope="col">Stops</th> : null}
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {board.drivers.map((row) => (
+                  <DriverRow isRace={isRace} key={row.racing_number} row={row} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {/* Outside the scroll region, so the key stays readable while the
+              table is scrolled sideways. */}
+          <SegmentLegend />
+        </>
       ) : (
         <p className="session-explorer__hint">
           Connected. Waiting for the first timing data from the feed.

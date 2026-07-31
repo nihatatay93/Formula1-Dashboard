@@ -426,10 +426,24 @@ export interface LiveStatus {
  * topic and every later frame is a deep partial delta, so the backend publishes
  * accumulated merged state and counts snapshots and merged updates.
  */
+/**
+ * Micro-sector state, already resolved server-side from the feed's numeric
+ * status codes. The codes carry no documented meaning, so the mapping lives in
+ * one place — `app/live/board.py` — where it was derived from a recording.
+ */
+export type LiveSegmentStatus =
+  | "pending"
+  | "yellow"
+  | "green"
+  | "purple"
+  | "pit"
+  | "unknown";
+
 export interface LiveSectorCell {
   value: string;
   personal_best: boolean;
   overall_best: boolean;
+  segments: LiveSegmentStatus[];
 }
 
 export interface LiveDriverRow {

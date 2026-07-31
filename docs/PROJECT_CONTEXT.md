@@ -631,6 +631,31 @@ Formula1-Dashboard/
 - Date: 2026-07-30
 - Status: implemented
 
+### Mini-sector segment status codes
+
+- Decision: Resolve each sector's `Segments[].Status` into a named state —
+  `pending`, `yellow`, `green`, `purple`, `pit` — in `app/live/board.py`, and
+  render one block per micro-sector under the sector time in `LiveBoard.tsx`
+  with a legend. An unobserved code renders as `unknown` rather than being
+  guessed at. The strip is `aria-hidden`, and the sector's `title` carries a
+  text summary instead.
+- Rationale: The feed publishes no schema for these codes, so the mapping was
+  derived from the recorded qualifying session rather than assumed. Correlating
+  2778 `TimingData` frames against the parent sector's flags separates them
+  cleanly: sectors flagged neither personal nor overall best are 67% `2048`,
+  personal-best sectors are 79% `2049`, and overall-best sectors are 44% `2051`
+  against 4% elsewhere. `2051` also reverts to `2049` 27 times, which is a
+  purple segment being revoked when another driver goes faster. `2064` is not a
+  time at all: it occurs on five fixed track positions — sector 3's last three
+  micro-sectors and sector 1's first two — with the driver in a pit-exit state
+  for 151 of its 160 occurrences, so it marks the pit lane. Keeping the mapping
+  server-side leaves one place to correct if a later recording contradicts it.
+  The strip is hidden from assistive technology because 22 rows of ~22 blocks
+  would flood a screen reader on every 250ms update while adding nothing the
+  sector time does not already say.
+- Date: 2026-07-31
+- Status: implemented
+
 ### Live SignalR client
 
 - Decision: Implement the live feed with the `signalrcore` client against

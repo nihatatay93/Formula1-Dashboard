@@ -21,12 +21,40 @@ from typing import Any
 #: most recent messages rather than all of them.
 MAX_RACE_CONTROL_MESSAGES = 15
 
+#: Micro-sector status codes, derived from a recorded qualifying session rather
+#: than from documentation — the feed publishes no schema for them. Each sector
+#: carries a ``Segments`` array whose entries hold one of these codes, and the
+#: mapping was established by correlating them against the parent sector's
+#: ``PersonalFastest``/``OverallFastest`` flags across 2778 ``TimingData``
+#: frames:
+#:
+#: * sectors flagged neither personal nor overall best are 67% ``2048``;
+#: * sectors flagged personal best are 79% ``2049``;
+#: * sectors flagged overall best are 44% ``2051``, against 4% elsewhere.
+#:
+#: ``2051`` is also observed reverting to ``2049`` 27 times — a purple segment
+#: being revoked when another driver goes faster, which is exactly the purple
+#: semantics. ``2064`` occurred on five fixed track positions (sector 3's last
+#: three segments and sector 1's first two) with the driver in a pit-exit state
+#: for 151 of its 160 occurrences, so it marks the pit lane rather than a time.
+SEGMENT_STATUS = {
+    0: "pending",
+    2048: "yellow",
+    2049: "green",
+    2051: "purple",
+    2064: "pit",
+}
+
+#: A code outside the observed set is rendered neutrally rather than guessed at.
+UNKNOWN_SEGMENT_STATUS = "unknown"
+
 
 @dataclass(frozen=True, slots=True)
 class SectorCell:
     value: str
     personal_best: bool
     overall_best: bool
+    segments: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,20 +138,34 @@ def _whole(value: object) -> int | None:
     return None
 
 
+def _ordered(value: object) -> list[Any]:
+    """Feed arrays arrive as lists initially and as index-keyed maps in deltas."""
+    if isinstance(value, Mapping):
+        return [value[key] for key in sorted(value, key=lambda k: _whole(k) or 0)]
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes):
+        return list(value)
+    return []
+
+
+def _segments(value: object) -> tuple[str, ...]:
+    return tuple(
+        SEGMENT_STATUS.get(status, UNKNOWN_SEGMENT_STATUS)
+        if (status := _whole(_mapping(entry).get("Status"))) is not None
+        else UNKNOWN_SEGMENT_STATUS
+        for entry in _ordered(value)
+    )
+
+
 def _sectors(value: object) -> tuple[SectorCell, ...]:
-    if not isinstance(value, Sequence) or isinstance(value, str | bytes):
-        return ()
-    cells = []
-    for entry in value:
-        item = _mapping(entry)
-        cells.append(
-            SectorCell(
-                value=_text(item.get("Value")) or _text(item.get("PreviousValue")),
-                personal_best=_flag(item.get("PersonalFastest")),
-                overall_best=_flag(item.get("OverallFastest")),
-            )
+    return tuple(
+        SectorCell(
+            value=_text(item.get("Value")) or _text(item.get("PreviousValue")),
+            personal_best=_flag(item.get("PersonalFastest")),
+            overall_best=_flag(item.get("OverallFastest")),
+            segments=_segments(item.get("Segments")),
         )
-    return tuple(cells)
+        for item in (_mapping(entry) for entry in _ordered(value))
+    )
 
 
 def _best_lap(line: Mapping[str, Any], session_part: int | None) -> str:
@@ -171,15 +213,7 @@ def _driver_status(line: Mapping[str, Any]) -> str:
 
 
 def _tyre(stint_entry: object) -> tuple[str, int | None]:
-    stints = _mapping(stint_entry).get("Stints")
-    if isinstance(stints, Mapping):
-        # A delta can arrive keyed by index rather than as a list.
-        ordered = [stints[key] for key in sorted(stints, key=lambda k: _whole(k) or 0)]
-    elif isinstance(stints, Sequence) and not isinstance(stints, str | bytes):
-        ordered = list(stints)
-    else:
-        return "", None
-    for entry in reversed(ordered):
+    for entry in reversed(_ordered(_mapping(stint_entry).get("Stints"))):
         current = _mapping(entry)
         compound = _text(current.get("Compound"))
         if compound:
@@ -188,13 +222,6 @@ def _tyre(stint_entry: object) -> tuple[str, int | None]:
 
 
 def _race_control(payload: Mapping[str, Any]) -> tuple[RaceControlMessage, ...]:
-    messages = payload.get("Messages")
-    if isinstance(messages, Mapping):
-        entries = [messages[key] for key in sorted(messages, key=lambda k: _whole(k) or 0)]
-    elif isinstance(messages, Sequence) and not isinstance(messages, str | bytes):
-        entries = list(messages)
-    else:
-        return ()
     built = [
         RaceControlMessage(
             utc=_text(item.get("Utc")),
@@ -203,7 +230,7 @@ def _race_control(payload: Mapping[str, Any]) -> tuple[RaceControlMessage, ...]:
             lap=_whole(item.get("Lap")),
             flag=_text(item.get("Flag")),
         )
-        for item in (_mapping(entry) for entry in entries)
+        for item in (_mapping(entry) for entry in _ordered(payload.get("Messages")))
     ]
     # Newest first, because that is what a reader looks for.
     return tuple(reversed(built))[:MAX_RACE_CONTROL_MESSAGES]
@@ -330,6 +357,7 @@ def board_to_dict(board: LiveBoard) -> dict[str, Any]:
                         "value": cell.value,
                         "personal_best": cell.personal_best,
                         "overall_best": cell.overall_best,
+                        "segments": list(cell.segments),
                     }
                     for cell in row.sectors
                 ],

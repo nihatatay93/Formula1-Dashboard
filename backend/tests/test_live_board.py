@@ -8,6 +8,8 @@ import pytest
 
 from app.live.board import (
     MAX_RACE_CONTROL_MESSAGES,
+    SEGMENT_STATUS,
+    UNKNOWN_SEGMENT_STATUS,
     board_to_dict,
     build_board,
 )
@@ -89,6 +91,26 @@ class TestRecordedSession:
         cell = with_sectors[0].sectors[0]
         assert isinstance(cell.personal_best, bool)
         assert isinstance(cell.overall_best, bool)
+
+    def test_mini_sector_segments_are_exposed(self, recorded_topics) -> None:
+        board = build_board(recorded_topics)
+        segmented = [
+            cell
+            for row in board.drivers
+            for cell in row.sectors
+            if cell.segments
+        ]
+
+        assert segmented
+        # The recording's three sectors hold 7, 9 and 6 micro-sectors.
+        assert {len(cell.segments) for cell in segmented} == {7, 9, 6}
+        assert {name for cell in segmented for name in cell.segments} <= set(
+            SEGMENT_STATUS.values()
+        ) | {UNKNOWN_SEGMENT_STATUS}
+        # The recording contains pit-lane and overall-fastest micro-sectors.
+        rendered = {name for cell in segmented for name in cell.segments}
+        assert "pit" in rendered
+        assert "purple" in rendered
 
     def test_tyre_comes_from_the_latest_stint(self, recorded_topics) -> None:
         board = build_board(recorded_topics)
@@ -300,3 +322,67 @@ class TestDefensiveDerivation:
         )
 
         assert [item.message for item in board.race_control] == ["second", "first"]
+
+
+class TestMiniSectorSegments:
+    """Status codes were derived from the recording; see ``SEGMENT_STATUS``."""
+
+    def build(self, segments: object) -> tuple[str, ...]:
+        board = build_board(
+            {"TimingData": {"Lines": {"1": {"Sectors": [{"Segments": segments}]}}}}
+        )
+        return board.drivers[0].sectors[0].segments
+
+    @pytest.mark.parametrize(
+        ("code", "expected"),
+        [
+            (0, "pending"),
+            (2048, "yellow"),
+            (2049, "green"),
+            (2051, "purple"),
+            (2064, "pit"),
+        ],
+    )
+    def test_observed_codes_map_to_their_meaning(self, code: int, expected: str) -> None:
+        assert self.build([{"Status": code}]) == (expected,)
+
+    def test_order_is_preserved(self) -> None:
+        assert self.build(
+            [{"Status": 2064}, {"Status": 2049}, {"Status": 2051}, {"Status": 0}]
+        ) == ("pit", "green", "purple", "pending")
+
+    def test_segments_delivered_as_an_index_keyed_mapping_are_ordered(self) -> None:
+        # A delta patches the array by index, and "10" must sort after "2".
+        codes = {str(index): {"Status": 2049} for index in range(11)}
+        codes["2"] = {"Status": 2051}
+        codes["10"] = {"Status": 2048}
+        segments = self.build(codes)
+
+        assert len(segments) == 11
+        assert segments[2] == "purple"
+        assert segments[10] == "yellow"
+
+    @pytest.mark.parametrize(
+        "segments",
+        [None, "not-a-list", 7, [None], ["text"], [{}], [{"Status": None}]],
+    )
+    def test_unusable_segment_payloads_never_raise(self, segments: object) -> None:
+        # The feed is untrusted; an unreadable entry renders neutrally.
+        assert set(self.build(segments)) <= {UNKNOWN_SEGMENT_STATUS}
+
+    def test_an_unobserved_code_is_not_guessed_at(self) -> None:
+        assert 2050 not in SEGMENT_STATUS
+        assert self.build([{"Status": 2050}]) == (UNKNOWN_SEGMENT_STATUS,)
+
+    def test_segments_reach_the_serialised_board(self) -> None:
+        board = build_board(
+            {
+                "TimingData": {
+                    "Lines": {"1": {"Sectors": [{"Segments": [{"Status": 2051}]}]}}
+                }
+            }
+        )
+        rendered = board_to_dict(board)
+
+        assert rendered["drivers"][0]["sectors"][0]["segments"] == ["purple"]
+        json.dumps(rendered)

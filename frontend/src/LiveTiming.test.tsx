@@ -143,7 +143,18 @@ function board(overrides: Record<string, unknown> = {}) {
         last_lap_overall_best: false,
         best_lap: "1:22.491",
         sectors: [
-          { value: "27.446", personal_best: true, overall_best: false },
+          {
+            value: "27.446",
+            personal_best: true,
+            overall_best: false,
+            segments: ["green", "green", "purple", "pending"],
+          },
+          {
+            value: "",
+            personal_best: false,
+            overall_best: false,
+            segments: ["pit", "pending", "pending"],
+          },
         ],
         compound: "SOFT",
         tyre_age: 9,
@@ -270,6 +281,45 @@ describe("LiveTiming", () => {
     expect(screen.getByText("GREEN LIGHT")).toBeVisible();
     expect(screen.getByText("AllClear")).toBeVisible();
     expect(screen.getByText("Live")).toBeInTheDocument();
+  });
+
+  it("renders a micro-sector strip and its legend", async () => {
+    getLiveStatus.mockResolvedValue(activeStatus());
+
+    const { container } = render(<LiveTiming />);
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    socket().open();
+    socket().emit({
+      type: "snapshot",
+      record_state: "unconfirmed_live",
+      session: null,
+      board: board(),
+    });
+
+    await screen.findByText("NOR");
+
+    // One block per micro-sector, coloured by its status.
+    const row = container.querySelector(".live-board__sectors");
+    expect(row?.querySelectorAll(".live-segments__block")).toHaveLength(7);
+    expect(row?.querySelectorAll(".live-segments__block--green")).toHaveLength(2);
+    expect(row?.querySelectorAll(".live-segments__block--purple")).toHaveLength(1);
+    expect(row?.querySelectorAll(".live-segments__block--pit")).toHaveLength(1);
+    expect(row?.querySelectorAll(".live-segments__block--pending")).toHaveLength(3);
+
+    // The strip is decoration over the sector time, which still reads normally.
+    expect(screen.getByText("27.446")).toBeVisible();
+    expect(row?.querySelector(".live-segments")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(
+      container.querySelector(".live-sector[title]"),
+    ).toHaveAttribute("title", expect.stringContaining("3/4 micro-sectors"));
+
+    // Colours mean nothing without a key.
+    expect(screen.getByText("overall fastest")).toBeVisible();
+    expect(screen.getByText("pit lane")).toBeVisible();
   });
 
   it("shows race columns for a race and drops them for qualifying", async () => {

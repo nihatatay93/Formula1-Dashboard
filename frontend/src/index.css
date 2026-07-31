@@ -2869,6 +2869,9 @@ th,
 }
 
 .live-sector {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
   padding: 0.05rem var(--s1);
   border-radius: var(--r-xs);
   background: var(--panel);
@@ -2886,6 +2889,64 @@ th,
 .live-sector--overall {
   background: rgb(192 132 252 / 16%);
   color: #c084fc;
+}
+
+/* Micro-sector strip: one block per timing loop inside the sector. The blocks
+   are the live read of a lap in progress, so they sit under the sector time
+   rather than replacing it. */
+.live-segments {
+  display: flex;
+  gap: 1px;
+}
+
+.live-segments__block {
+  flex: 1 1 auto;
+  min-width: 3px;
+  height: 3px;
+  border-radius: 1px;
+  background: var(--line);
+}
+
+.live-segments__block--green {
+  background: var(--tyre-intermediate);
+}
+
+.live-segments__block--yellow {
+  background: #e8b931;
+}
+
+.live-segments__block--purple {
+  background: #c084fc;
+}
+
+.live-segments__block--pit {
+  background: var(--accent);
+}
+
+.live-segments__block--pending,
+.live-segments__block--unknown {
+  background: var(--line);
+}
+
+.live-segments__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s3);
+  margin: var(--s2) 0 0;
+  color: var(--muted);
+  font-size: var(--t-micro);
+}
+
+.live-segments__legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+}
+
+.live-segments__legend .live-segments__block {
+  width: 12px;
+  min-width: 12px;
+  flex: 0 0 auto;
 }
 
 .live-tyre {
