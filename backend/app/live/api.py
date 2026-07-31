@@ -25,9 +25,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.errors import ApiError
 from app.live.board import board_to_dict, build_board
 from app.live.f1_auth import InvalidF1TokenError
+from app.live.recordings import RecordingNotFoundError
 from app.live.service import (
     LiveFeedUnconfiguredError,
     LiveService,
+    LiveSessionBusyError,
     LiveUnauthenticatedError,
 )
 from app.live.state import get_live_service
@@ -44,6 +46,10 @@ RECORD_STATE = "unconfirmed_live"
 #: one board per interval, which keeps the payload small during a live session
 #: without the client having to reconstruct state from raw deltas.
 BOARD_MIN_INTERVAL_SECONDS = 0.25
+
+#: Upper bound on replay speed. Pacing is what keeps a replay from emitting a
+#: whole session in one burst, and the live path shares this event loop.
+MAX_REPLAY_SPEED = 120.0
 
 
 class AuthStatusResponse(BaseModel):
@@ -180,6 +186,84 @@ async def stop_live_session(
 ) -> LiveStatusResponse:
     response.headers["Cache-Control"] = "no-store"
     await service.stop_session()
+    return _status(service)
+
+
+class RecordingResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    event_name: str
+    session_key: str
+    session_date: str | None = None
+    size_bytes: int
+    modified_at: str
+
+
+class RecordingListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    record_state: str = RECORD_STATE
+    retention_days: int
+    items: list[RecordingResponse]
+
+
+class ReplayRequest(BaseModel):
+    """A recording to replay. The name is validated against the log directory."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    #: Bounded so a replay cannot be asked to emit a whole session in one tick,
+    #: which would starve the event loop the live path shares.
+    speed: float | None = Field(default=None, gt=0, le=MAX_REPLAY_SPEED)
+
+
+@router.get(
+    "/recordings",
+    response_model=RecordingListResponse,
+    summary="List recorded sessions available for replay",
+)
+def read_live_recordings(
+    response: Response,
+    service: Annotated[LiveService, Depends(get_live_service)],
+) -> RecordingListResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return RecordingListResponse(
+        retention_days=service.settings.retention_days,
+        items=[
+            RecordingResponse(**recording.as_dict())
+            for recording in service.recordings()
+        ],
+    )
+
+
+@router.post(
+    "/replay",
+    response_model=LiveStatusResponse,
+    summary="Replay a recorded session through the live pipeline",
+)
+async def start_live_replay(
+    payload: ReplayRequest,
+    response: Response,
+    service: Annotated[LiveService, Depends(get_live_service)],
+) -> LiveStatusResponse:
+    """Replay is read-only: it writes no session log and needs no F1 TV token."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        await service.start_replay(payload.name, speed=payload.speed)
+    except RecordingNotFoundError:
+        raise ApiError(
+            status_code=404,
+            code="recording_not_found",
+            message="No such recording is available for replay.",
+        ) from None
+    except LiveSessionBusyError:
+        raise ApiError(
+            status_code=409,
+            code="live_session_busy",
+            message="Stop the running session before starting a replay.",
+        ) from None
     return _status(service)
 
 

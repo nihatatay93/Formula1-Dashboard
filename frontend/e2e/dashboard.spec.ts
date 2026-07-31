@@ -55,6 +55,14 @@ async function installApiRoutes(page: Page) {
         session: null,
       });
     }
+    if (path === "/api/v1/live/recordings") {
+      // No session has been collected in this deployment, so nothing to replay.
+      return json(route, {
+        record_state: "unconfirmed_live",
+        retention_days: 7,
+        items: [],
+      });
+    }
     if (path === "/api/v1/seasons/2026" && request.method() === "GET") {
       return json(route, completedSeason);
     }
@@ -272,6 +280,12 @@ test("opens live timing as a separate view without archive state", async ({
   await expect(
     page.getByRole("button", { name: /Connect to live session/ }),
   ).toBeDisabled();
+
+  // Replay is offered alongside the live path, and says so when it is empty.
+  await expect(
+    page.getByRole("heading", { name: "Replay a session" }),
+  ).toBeVisible();
+  await expect(page.getByText(/No recorded sessions yet/)).toBeVisible();
 
   // The archive Session Workspace must not leak into the live view.
   await expect(page.locator("#session-explorer")).toBeHidden();

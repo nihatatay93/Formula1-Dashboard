@@ -37,6 +37,9 @@ class CollectorState(StrEnum):
     CONNECTING = "connecting"
     STREAMING = "streaming"
     STOPPED = "stopped"
+    #: A finite feed reached the end of its recording. Distinct from STOPPED,
+    #: which means a reader asked for the session to end.
+    FINISHED = "finished"
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,7 +104,12 @@ def _session_date(value: object, fallback: date) -> date:
 
 
 class LiveFeed(Protocol):
-    """One attempt at a live upstream connection."""
+    """One attempt at a live upstream connection.
+
+    A feed may declare ``finite = True`` to say its stream ending is the end of
+    the session rather than a dropped connection. A live upstream never does;
+    a replayed recording always does.
+    """
 
     def stream(self) -> AsyncIterator[RawFrame]:
         """Yield frames until the connection ends or raises."""
@@ -157,8 +165,15 @@ class LiveCollector:
         jitter: Callable[[], float] | None = None,
         sleep: Callable[[float], object] | None = None,
         logging_enabled: bool = True,
+        replay: bool = False,
     ) -> None:
-        self._logging_enabled = logging_enabled
+        # A replay must never write a session log. It derives the same identity
+        # as the recording it is reading, so it would resolve to that very file
+        # and append to it while the replay feed still holds it open for
+        # reading — the reader would keep finding new lines it had just written.
+        self._replay = replay
+        self._logging_enabled = logging_enabled and not replay
+        self._finished = False
         self._identity = identity
         self._feed_factory = feed_factory
         self._settings = settings
@@ -218,8 +233,24 @@ class LiveCollector:
         return self._log_path
 
     @property
+    def replay(self) -> bool:
+        """True when this session is a recording being replayed, not the feed."""
+        return self._replay
+
+    @property
+    def finished(self) -> bool:
+        """True once a finite feed reached the end of its recording."""
+        return self._finished
+
+    @property
     def log_degraded(self) -> bool:
-        """True when frames are not reaching the log, for any reason."""
+        """True when frames are not reaching the log unintentionally.
+
+        A replay writes no log by design, which is not a degradation and must
+        not be reported as one.
+        """
+        if self._replay:
+            return False
         if not self._logging_enabled:
             return True
         return self._log is not None and self._log.degraded
@@ -237,6 +268,8 @@ class LiveCollector:
                 }
             ),
             "topics_subscribed": sorted(CONSUMED_TOPICS),
+            "replay": self._replay,
+            "finished": self._finished,
             "log_degraded": self.log_degraded,
             "subscribers": len(self._subscribers),
             "stats": self._stats.as_dict(),
@@ -262,8 +295,12 @@ class LiveCollector:
                     self._stats.reconnects += 1
                 attempt += 1
                 feed = self._feed_factory()
+                exhausted = False
                 try:
                     await self._consume(feed)
+                    # A finite feed that ended without raising has delivered its
+                    # whole recording. Reconnecting would replay it from the top.
+                    exhausted = bool(getattr(feed, "finite", False))
                 except asyncio.CancelledError:
                     raise
                 except Exception:
@@ -273,6 +310,9 @@ class LiveCollector:
                 finally:
                     await _close_quietly(feed)
 
+                if exhausted:
+                    self._finished = True
+                    break
                 if self._stopping:
                     break
                 # A clean stream end is still a reconnect; the feed decides when
@@ -285,7 +325,9 @@ class LiveCollector:
                 self._state = CollectorState.DISCONNECTED
                 await self._sleep(delay.total_seconds())
         finally:
-            self._state = CollectorState.STOPPED
+            self._state = (
+                CollectorState.FINISHED if self._finished else CollectorState.STOPPED
+            )
             if self._log is not None:
                 self._log.close()
 
@@ -322,6 +364,9 @@ class LiveCollector:
 
     def _record(self, frame: LiveFrame) -> None:
         """Log a frame, buffering while the session is still unidentified."""
+        if self._replay:
+            # Nothing was dropped: a replay is not meant to be logged.
+            return
         if not self._logging_enabled:
             self._stats.dropped_by_log_cap += 1
             return
@@ -349,7 +394,10 @@ class LiveCollector:
         if identity is None:
             return
         self._identity = identity
-        self._log_path = self._build_log_path()
+        if not self._replay:
+            # A replay resolves the identity of the recording it is reading, so
+            # this path would name the source file as its own log.
+            self._log_path = self._build_log_path()
 
     def _open_log(self) -> None:
         """Open the log once the session is named, flushing anything buffered."""

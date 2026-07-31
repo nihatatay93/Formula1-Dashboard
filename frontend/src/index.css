@@ -2313,6 +2313,117 @@ th,
   font-size: var(--t-micro);
 }
 
+/* Recorded sessions offered for replay. Deliberately quieter than the live
+   controls above it: replay is the secondary path on this view. */
+.live-recordings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel-inset);
+}
+
+.live-recordings__speed {
+  display: flex;
+  gap: var(--s1);
+  align-items: center;
+  padding: 0;
+  border: 0;
+  margin: 0;
+}
+
+.live-recordings__speed legend {
+  padding: 0 var(--s2) 0 0;
+  color: var(--muted);
+  font-size: var(--t-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  float: left;
+}
+
+.live-recordings__speed label {
+  position: relative;
+  display: inline-flex;
+}
+
+.live-recordings__speed input {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.live-recordings__speed span {
+  padding: 0.15rem var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.live-recordings__speed input:checked + span {
+  border-color: var(--data);
+  background: var(--data-soft);
+  color: var(--data);
+}
+
+.live-recordings__speed input:focus-visible + span {
+  outline: 2px solid var(--data);
+  outline-offset: 2px;
+}
+
+.live-recordings__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.live-recordings__list li {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+}
+
+.live-recordings__list strong {
+  display: block;
+  color: var(--ink);
+  font-size: var(--t-body);
+}
+
+.live-recordings__list small {
+  display: block;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.live-recordings__note {
+  color: var(--muted-dark);
+  font-size: var(--t-micro);
+}
+
+@media (width <= 40rem) {
+  .live-recordings__list li {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 .live-badge {
   display: inline-flex;
   flex: none;
@@ -3105,6 +3216,17 @@ th,
 
 .inline-alert--warning strong {
   color: var(--warning);
+}
+
+/* Cyan is the system's "this is data, not an alarm" tone, which is what a
+   replay notice is: informational, never a fault. */
+.inline-alert--info {
+  border-left-color: var(--data);
+  background: var(--data-soft);
+}
+
+.inline-alert--info strong {
+  color: var(--data);
 }
 
 .empty-state {

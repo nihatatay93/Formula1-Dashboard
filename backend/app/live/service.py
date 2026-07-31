@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
 from app.live.collector import LiveCollector, LiveFeedFactory
 from app.live.f1_auth import F1TokenStore, StoredToken
 from app.live.policy import LiveTimingSettings
+from app.live.recordings import Recording, list_recordings, resolve_recording
+from app.live.replay_feed import build_replay_feed_factory
 from app.live.retention import (
     SweepResult,
     directory_size_bytes,
@@ -36,6 +38,10 @@ class LiveFeedUnconfiguredError(LiveServiceError):
 
 class LiveUnauthenticatedError(LiveServiceError):
     """Raised when the live feed needs an F1 TV token and none is valid."""
+
+
+class LiveSessionBusyError(LiveServiceError):
+    """Raised when a replay is requested while a session already occupies the slot."""
 
 
 class LiveService:
@@ -150,6 +156,48 @@ class LiveService:
                 log_directory=self.log_directory,
                 clock=self._clock,
                 logging_enabled=logging_enabled,
+            )
+            self._collector = collector
+            self._task = asyncio.create_task(collector.run())
+            return collector
+
+    def recordings(self) -> Sequence[Recording]:
+        """Session logs still inside the retention window."""
+        return list_recordings(self.log_directory)
+
+    async def start_replay(
+        self,
+        name: object,
+        *,
+        speed: float | None = None,
+    ) -> LiveCollector:
+        """Replay a recorded session log through the live pipeline.
+
+        No F1 TV token is involved: the frames are already on disk. Logging is
+        off, because a replay resolves the same identity as the recording it
+        reads and would otherwise append to that very file.
+        """
+        path = resolve_recording(self.log_directory, name)
+        resolved_speed = (
+            self._settings.replay_speed if speed is None else float(speed)
+        )
+        async with self._lock:
+            task = self._task
+            if (
+                self._collector is not None
+                and task is not None
+                and not task.done()
+            ):
+                raise LiveSessionBusyError(
+                    "a session is already running; stop it before starting a replay"
+                )
+            collector = LiveCollector(
+                feed_factory=build_replay_feed_factory(path, speed=resolved_speed),
+                settings=self._settings,
+                log_directory=self.log_directory,
+                clock=self._clock,
+                logging_enabled=False,
+                replay=True,
             )
             self._collector = collector
             self._task = asyncio.create_task(collector.run())

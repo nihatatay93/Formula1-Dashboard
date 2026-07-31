@@ -2,21 +2,26 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ApiClientError,
+  getLiveRecordings,
   getLiveStatus,
   liveStreamUrl,
+  startLiveReplay,
   startLiveSession,
   stopLiveSession,
 } from "./api";
 import LiveAuthPanel from "./LiveAuthPanel";
 import LiveBoardView from "./LiveBoard";
+import LiveRecordings from "./LiveRecordings";
 import type {
   LiveAuthStatus,
   LiveBoard,
+  LiveRecording,
   LiveStatus,
   LiveStreamMessage,
 } from "./contracts";
 
 const STATUS_POLL_INTERVAL_MS = 5_000;
+const DEFAULT_REPLAY_SPEED = 10;
 
 type ConnectionState = "idle" | "connecting" | "open" | "closed";
 
@@ -82,6 +87,8 @@ export default function LiveTiming() {
   const [board, setBoard] = useState<LiveBoard | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("idle");
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [recordings, setRecordings] = useState<LiveRecording[]>([]);
+  const [replaySpeed, setReplaySpeed] = useState(DEFAULT_REPLAY_SPEED);
   const socketRef = useRef<WebSocket | null>(null);
 
   const refreshStatus = useCallback(async (signal?: AbortSignal) => {
@@ -117,9 +124,31 @@ export default function LiveTiming() {
     };
   }, [refreshStatus]);
 
-  const active = status?.active ?? false;
+  const refreshRecordings = useCallback(async (signal?: AbortSignal) => {
+    try {
+      setRecordings((await getLiveRecordings(signal)).items);
+    } catch {
+      // Replay is an extra, not the point of this view: a listing that cannot
+      // be read leaves the live path untouched.
+    }
+  }, []);
+
   useEffect(() => {
-    if (!active) {
+    const controller = new AbortController();
+    void refreshRecordings(controller.signal);
+    return () => controller.abort();
+  }, [refreshRecordings]);
+
+  const active = status?.active ?? false;
+  const session = status?.session ?? null;
+  const isReplay = session?.replay ?? false;
+  const finished = session?.finished ?? false;
+
+  // The stream follows the session rather than `active`, so a finished replay
+  // keeps its final board on screen instead of blanking the moment it ends.
+  const hasSession = session !== null;
+  useEffect(() => {
+    if (!hasSession) {
       socketRef.current?.close();
       socketRef.current = null;
       setConnection("idle");
@@ -158,7 +187,19 @@ export default function LiveTiming() {
       socket.close();
       socketRef.current = null;
     };
-  }, [active]);
+  }, [hasSession]);
+
+  async function handleReplay(name: string) {
+    setCommandPending(true);
+    setCommandError(null);
+    try {
+      setStatus(await startLiveReplay(name, replaySpeed));
+    } catch (error) {
+      setCommandError(errorMessage(error));
+    } finally {
+      setCommandPending(false);
+    }
+  }
 
   async function handleStart() {
     setCommandPending(true);
@@ -177,6 +218,8 @@ export default function LiveTiming() {
     setCommandError(null);
     try {
       setStatus(await stopLiveSession());
+      // A finished live session leaves a new recording behind.
+      await refreshRecordings();
     } catch (error) {
       setCommandError(errorMessage(error));
     } finally {
@@ -247,18 +290,22 @@ export default function LiveTiming() {
       {status ? (
         <div className="live-controls">
           <p className="live-controls__hint">
-            {active
-              ? "Collecting the session the feed is currently broadcasting."
-              : "Connect while a session is running. The feed states which session it is."}
+            {isReplay
+              ? finished
+                ? "Replay complete. The final state of the recorded session is shown below."
+                : "Replaying a recorded session. Nothing is being collected from the feed."
+              : active
+                ? "Collecting the session the feed is currently broadcasting."
+                : "Connect while a session is running. The feed states which session it is."}
           </p>
-          {active ? (
+          {hasSession ? (
             <button
               className="secondary-action"
               disabled={commandPending}
               onClick={() => void handleStop()}
               type="button"
             >
-              Stop session
+              {isReplay ? (finished ? "Close replay" : "Stop replay") : "Stop session"}
             </button>
           ) : (
             <button
@@ -270,6 +317,19 @@ export default function LiveTiming() {
               {commandPending ? "Connecting…" : "Connect to live session"}
             </button>
           )}
+        </div>
+      ) : null}
+
+      {isReplay ? (
+        <div className="inline-alert inline-alert--info" role="status">
+          <strong>
+            {finished ? "Replay complete" : "Replaying a recorded session"}
+          </strong>
+          <span>
+            These frames come from a session log on disk, not the live feed.
+            Nothing is being recorded, and the durable record of this session
+            still comes from the FastF1 archive backfill.
+          </span>
         </div>
       ) : null}
 
@@ -324,19 +384,32 @@ export default function LiveTiming() {
         </div>
       ) : null}
 
-      {active && board ? <LiveBoardView board={board} /> : null}
+      {hasSession && board ? <LiveBoardView board={board} /> : null}
 
-      {active && !board ? (
+      {hasSession && !board ? (
         <p className="session-explorer__hint">
-          Connected. Waiting for the first frames from the feed.
+          {isReplay
+            ? "Replaying. Waiting for the first frames from the recording."
+            : "Connected. Waiting for the first frames from the feed."}
         </p>
       ) : null}
 
-      {status && !active && status.feed_configured ? (
+      {status && !hasSession && status.feed_configured ? (
         <p className="session-explorer__hint">
-          No live session is being collected. Enter the session details and
-          connect when a session is running.
+          No live session is being collected. Connect while a session is
+          running, or replay a recorded one below.
         </p>
+      ) : null}
+
+      {status && !hasSession ? (
+        <LiveRecordings
+          busy={commandPending}
+          onReplay={(name) => void handleReplay(name)}
+          onSpeedChange={setReplaySpeed}
+          recordings={recordings}
+          retentionDays={status.retention_days}
+          speed={replaySpeed}
+        />
       ) : null}
 
       {status ? (

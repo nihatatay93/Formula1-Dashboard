@@ -6,6 +6,7 @@ import type {
   LapSummaryRequest,
   LapSummaryResponse,
   LiveAuthStatus,
+  LiveRecordingList,
   LiveStatus,
   SeasonOverview,
   SessionDetail,
@@ -147,6 +148,27 @@ export function startLiveSession(signal?: AbortSignal): Promise<LiveStatus> {
 export function stopLiveSession(signal?: AbortSignal): Promise<LiveStatus> {
   return requestJson<LiveStatus>("/api/v1/live/session", {
     method: "DELETE",
+    signal,
+  });
+}
+
+/** Session logs from earlier sessions that retention has not yet deleted. */
+export function getLiveRecordings(
+  signal?: AbortSignal,
+): Promise<LiveRecordingList> {
+  return requestJson<LiveRecordingList>("/api/v1/live/recordings", { signal });
+}
+
+/** Replay a recording through the live pipeline. Needs no F1 TV token. */
+export function startLiveReplay(
+  name: string,
+  speed?: number,
+  signal?: AbortSignal,
+): Promise<LiveStatus> {
+  return requestJson<LiveStatus>("/api/v1/live/replay", {
+    body: JSON.stringify(speed === undefined ? { name } : { name, speed }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
     signal,
   });
 }

@@ -332,9 +332,20 @@ live-owned row.
 
 ## Replaying a Recorded Session
 
-The live path can be driven from a recorded session instead of a live upstream
-connection, which makes every stage exercisable without waiting for a session
-weekend:
+Every live session leaves a JSONL log behind, and those logs are replayable from
+the dashboard until retention deletes them. A replay drives the same collector,
+merge, board and WebSocket path as the live feed:
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/v1/live/recordings` | Session logs inside the retention window |
+| `POST /api/v1/live/replay` | Replay one, with an optional `speed` |
+
+A replay occupies the single session slot, so one is refused with `409
+live_session_busy` while a session is running. Stopping it releases the slot.
+
+The same path can also be pointed at an arbitrary recording for development,
+which needs no dashboard interaction:
 
 ```bash
 # Put a recording in ./recordings, then:
@@ -342,15 +353,40 @@ LIVE_TIMING_REPLAY_PATH=/recordings/<file>.jsonl \
 LIVE_TIMING_REPLAY_SPEED=2 docker compose up -d api
 ```
 
+**Two record shapes are accepted, because the two recordings disagree.** A
+session log writes `{received_at, topic, initial, feed_timestamp, payload}`; a
+capture tool writes `{topic, payload, timestamp, initial}`. The feed instant is
+resolved from either spelling, falling back to `received_at` — which matters
+because `initial` frames arrive with an empty feed timestamp, and reading only
+`timestamp` would emit an entire recorded session in a single burst.
+
+**A replay never writes a session log.** It derives the same identity as the
+recording it is reading, so with logging enabled it would resolve to that very
+file and append to it while the feed still holds it open — the reader would keep
+finding lines it had just written. The collector's `replay` flag forces logging
+off on its own, not only through what the service passes. Writing no log is
+deliberate here, so it is reported neither as `log_degraded` nor in
+`dropped_by_log_cap`.
+
+**A recording that runs out ends the session.** The replay feed declares
+`finite = True`, and the collector treats a finite feed's clean stream end as a
+`finished` session instead of a disconnect — otherwise it would reconnect and
+replay the file from the start, rewinding state on a loop. The finished session
+stays addressable so its final board remains readable.
+
+Other properties:
+
 - `initial` frames are emitted immediately, matching a real connect. Later frames
   are paced by their feed-timestamp difference divided by the speed.
 - Each scaled delay is capped at five seconds, because real sessions contain
   minutes of inactivity between runs and a replay should not stall on them.
-- A finished recording holds the connection open rather than ending. Ending it
-  would look like a disconnect, and the collector would reconnect and replay the
-  file from the start, rewinding state on a loop.
-- An unusable recording leaves the feed unconfigured rather than failing API
-  startup.
+- Speed is bounded at `120x` over HTTP: pacing is what stops a replay from
+  starving the event loop the live path shares.
+- Recording names are matched against `[A-Za-z0-9._-]+` and the resolved path is
+  required to sit directly inside the log directory, so neither a separator, a
+  `..` segment, nor a symlink can address a file elsewhere on the host.
+- An unusable `LIVE_TIMING_REPLAY_PATH` leaves the feed unconfigured rather than
+  failing API startup.
 - Recordings are not committed. `recordings/` is gitignored and bind-mounted
   read-only at `/recordings`. A trimmed 45-frame extract is committed as a test
   fixture only.

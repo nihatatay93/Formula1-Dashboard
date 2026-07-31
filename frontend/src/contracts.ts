@@ -390,9 +390,33 @@ export interface LiveCollectorStatus {
   /** Null until the feed's SessionInfo has named the session. */
   session: LiveSessionSummary | null;
   topics_subscribed: string[];
+  /** True when this is a recorded session being replayed, not the live feed. */
+  replay: boolean;
+  /** True once a replay reached the end of its recording. */
+  finished: boolean;
   log_degraded: boolean;
   subscribers: number;
   stats: LiveCollectorStats;
+}
+
+/**
+ * A session log left behind by an earlier live session, still inside the
+ * retention window. Identity is recovered from the file name, so a recording
+ * captured outside the naming convention reports a null date and empty session.
+ */
+export interface LiveRecording {
+  name: string;
+  event_name: string;
+  session_key: string;
+  session_date: string | null;
+  size_bytes: number;
+  modified_at: string;
+}
+
+export interface LiveRecordingList {
+  record_state: string;
+  retention_days: number;
+  items: LiveRecording[];
 }
 
 /** Observable F1 TV auth state. The token value is never sent to the client. */

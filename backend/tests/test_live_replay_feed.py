@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.live.collector import LiveCollector, LiveSessionIdentity
+from app.live.collector import CollectorState, LiveCollector, LiveSessionIdentity
 from app.live.policy import LiveTimingSettings
 from app.live.replay_feed import (
     MAX_SCALED_DELAY_SECONDS,
@@ -56,7 +56,7 @@ async def test_replays_records_in_order_with_their_flags(tmp_path: Path) -> None
     slept: list[float] = []
 
     frames = await drain(
-        ReplayFeed(path, hold_open=False, sleep=lambda s: _record(slept, s))
+        ReplayFeed(path, sleep=lambda s: _record(slept, s))
     )
 
     assert [frame.topic for frame in frames] == ["TrackStatus", "TrackStatus"]
@@ -76,7 +76,7 @@ async def test_initial_frames_are_not_paced(tmp_path: Path) -> None:
     )
     slept: list[float] = []
 
-    await drain(ReplayFeed(path, hold_open=False, sleep=lambda s: _record(slept, s)))
+    await drain(ReplayFeed(path, sleep=lambda s: _record(slept, s)))
 
     assert slept == []
 
@@ -103,7 +103,7 @@ async def test_pacing_divides_the_gap_by_the_speed(tmp_path: Path) -> None:
     slept: list[float] = []
 
     await drain(
-        ReplayFeed(path, speed=4.0, hold_open=False, sleep=lambda s: _record(slept, s))
+        ReplayFeed(path, speed=4.0, sleep=lambda s: _record(slept, s))
     )
 
     # The first timestamped frame has nothing to pace against.
@@ -132,7 +132,7 @@ async def test_a_long_gap_is_capped_so_replay_never_stalls(tmp_path: Path) -> No
     slept: list[float] = []
 
     await drain(
-        ReplayFeed(path, speed=1.0, hold_open=False, sleep=lambda s: _record(slept, s))
+        ReplayFeed(path, speed=1.0, sleep=lambda s: _record(slept, s))
     )
 
     assert slept == [MAX_SCALED_DELAY_SECONDS]
@@ -149,7 +149,7 @@ async def test_malformed_lines_are_skipped_and_counted(tmp_path: Path) -> None:
         '{"topic":"TrackStatus","payload":{"Status":"2"},"timestamp":"","initial":true}\n',
         encoding="utf-8",
     )
-    feed = ReplayFeed(path, hold_open=False)
+    feed = ReplayFeed(path)
 
     frames = await drain(feed)
 
@@ -174,14 +174,14 @@ async def test_an_unparseable_timestamp_does_not_stop_the_replay(
         ],
     )
 
-    frames = await drain(ReplayFeed(path, hold_open=False))
+    frames = await drain(ReplayFeed(path))
 
     assert len(frames) == 1
 
 
 @pytest.mark.asyncio
 async def test_a_missing_recording_raises_on_stream(tmp_path: Path) -> None:
-    feed = ReplayFeed(tmp_path / "absent.jsonl", hold_open=False)
+    feed = ReplayFeed(tmp_path / "absent.jsonl")
 
     with pytest.raises(ReplayFeedError, match="not found"):
         await drain(feed)
@@ -233,30 +233,27 @@ async def test_replaying_the_recorded_fixture_builds_real_merged_state(
     tmp_path: Path,
 ) -> None:
     """End-to-end: a real recording drives the collector, log and view."""
-    holder: dict[str, LiveCollector] = {}
 
-    async def stop_on_first_reconnect(_seconds: float) -> None:
-        # The recording is consumed in one pass; stopping at the first reconnect
-        # delay avoids replaying it from the beginning.
-        holder["collector"].request_stop()
+    async def never_sleeps(_seconds: float) -> None:
+        raise AssertionError("a finite feed must not schedule a reconnect delay")
 
     collector = LiveCollector(
         identity=IDENTITY,
         # A very high speed collapses pacing so the suite stays fast; pacing
         # itself is asserted separately above.
-        feed_factory=build_replay_feed_factory(
-            FIXTURE,
-            hold_open=False,
-            speed=1_000_000.0,
-        ),
+        feed_factory=build_replay_feed_factory(FIXTURE, speed=1_000_000.0),
         settings=LiveTimingSettings(log_directory=str(tmp_path)),
         log_directory=tmp_path,
         jitter=lambda: 0.0,
-        sleep=stop_on_first_reconnect,
+        sleep=never_sleeps,
     )
-    holder["collector"] = collector
 
+    # The recording ends the session on its own; nothing has to stop it.
     await collector.run()
+
+    assert collector.finished is True
+    assert collector.state is CollectorState.FINISHED
+    assert collector.stats.reconnects == 0
 
     view = collector.view
     assert view.topics["SessionInfo"].payload["Type"] == "Qualifying"

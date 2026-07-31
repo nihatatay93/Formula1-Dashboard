@@ -656,6 +656,37 @@ Formula1-Dashboard/
 - Date: 2026-07-31
 - Status: implemented
 
+### Post-session replay
+
+- Decision: Offer the session logs still inside the retention window as replay
+  sources through `GET /api/v1/live/recordings` and `POST /api/v1/live/replay`,
+  driving the same collector, merge, board and WebSocket path as the live feed.
+  A replay occupies the single session slot, so one is refused with `409
+  live_session_busy` while a session runs. The replay feed is `finite`: the end
+  of a recording ends the session in a new `finished` collector state rather
+  than triggering a reconnect. Recording names are matched against
+  `[A-Za-z0-9._-]+` and required to resolve directly inside the log directory.
+- Rationale: The replay path already existed as the `LIVE_TIMING_REPLAY_PATH`
+  development env var; this makes the recordings the application writes itself
+  usable without a restart or a shell. Three defects had to be closed first,
+  each of which would have shipped silently:
+  1. The two recordings do not share a shape. A session log writes
+     `{received_at, topic, initial, feed_timestamp, payload}`, while a capture
+     tool writes `{topic, payload, timestamp, initial}`. Reading only
+     `timestamp` yielded no pacing at all, so a whole session would have been
+     emitted in one burst.
+  2. A replay derives the same identity as the recording it reads, so with
+     logging on it resolves to *that very file* and appends to it while the feed
+     still holds it open for reading — the reader would keep finding lines it
+     had just written. `replay=True` forces logging off inside the collector,
+     independently of what the service passes.
+  3. Writing no log is deliberate for a replay, so it must not be reported as
+     `log_degraded` or counted in `dropped_by_log_cap`.
+  The dashboard streams on the presence of a session rather than on `active`, so
+  a finished replay keeps its final board on screen instead of blanking.
+- Date: 2026-07-31
+- Status: implemented
+
 ### Live SignalR client
 
 - Decision: Implement the live feed with the `signalrcore` client against

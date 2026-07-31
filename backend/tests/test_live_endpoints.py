@@ -195,6 +195,8 @@ def test_live_endpoints_do_not_touch_the_historical_contract(
 
     assert sorted(live_paths) == [
         "/api/v1/live/auth",
+        "/api/v1/live/recordings",
+        "/api/v1/live/replay",
         "/api/v1/live/session",
     ]
     # The historical session route is unchanged and still documented.
@@ -316,3 +318,121 @@ def test_a_rejected_token_is_not_echoed_back(client: TestClient) -> None:
 
     assert response.status_code == 422
     assert secret not in response.text
+
+
+def _write_recording(directory: Path, name: str) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text(
+        "\n".join(
+            [
+                (
+                    '{"received_at":"2026-08-21T13:00:00+00:00","topic":"SessionInfo",'
+                    '"initial":true,"feed_timestamp":null,"payload":'
+                    '{"Meeting":{"Name":"Dutch Grand Prix"},"Name":"Race",'
+                    '"Type":"Race","StartDate":"2026-08-21T14:00:00"}}'
+                ),
+                (
+                    '{"received_at":"2026-08-21T13:00:01+00:00","topic":"TimingData",'
+                    '"initial":true,"feed_timestamp":null,'
+                    '"payload":{"Lines":{"1":{"Position":"1"}}}}'
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_recordings_are_listed_with_their_identity(
+    client: TestClient, tmp_path: Path
+) -> None:
+    _write_recording(tmp_path, "2026-08-21__dutch-grand-prix__race.jsonl")
+
+    body = client.get("/api/v1/live/recordings").json()
+
+    assert body["record_state"] == "unconfirmed_live"
+    assert body["retention_days"] == 7
+    (item,) = body["items"]
+    assert item["name"] == "2026-08-21__dutch-grand-prix__race.jsonl"
+    assert item["event_name"] == "Dutch Grand Prix"
+    assert item["session_key"] == "Race"
+    assert item["session_date"] == "2026-08-21"
+    assert item["size_bytes"] > 0
+
+
+def test_recordings_are_empty_before_any_session(client: TestClient) -> None:
+    assert client.get("/api/v1/live/recordings").json()["items"] == []
+
+
+def test_a_recording_replays_without_authentication(
+    client: TestClient, tmp_path: Path
+) -> None:
+    _write_recording(tmp_path, "2026-08-21__dutch-grand-prix__race.jsonl")
+
+    response = client.post(
+        "/api/v1/live/replay",
+        json={"name": "2026-08-21__dutch-grand-prix__race.jsonl"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["record_state"] == "unconfirmed_live"
+    assert body["session"]["replay"] is True
+    # Replay writes no log, and that is deliberate rather than a degradation.
+    assert body["session"]["log_degraded"] is False
+    client.delete("/api/v1/live/session")
+
+
+def test_replaying_an_unknown_recording_is_a_404(client: TestClient) -> None:
+    response = client.post("/api/v1/live/replay", json={"name": "absent.jsonl"})
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "recording_not_found"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["../escape.jsonl", "nested/race.jsonl", "/etc/passwd.jsonl", "notes.txt"],
+)
+def test_a_replay_name_cannot_address_another_file(
+    client: TestClient, name: str
+) -> None:
+    response = client.post("/api/v1/live/replay", json={"name": name})
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "recording_not_found"
+
+
+def test_replaying_while_a_session_runs_is_a_conflict(
+    client: TestClient, tmp_path: Path
+) -> None:
+    _write_recording(tmp_path, "2026-08-21__dutch-grand-prix__race.jsonl")
+    client.post("/api/v1/live/session")
+
+    response = client.post(
+        "/api/v1/live/replay",
+        json={"name": "2026-08-21__dutch-grand-prix__race.jsonl"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "live_session_busy"
+    client.delete("/api/v1/live/session")
+
+
+@pytest.mark.parametrize("speed", [0, -1, 10_000])
+def test_an_out_of_range_replay_speed_is_rejected(
+    client: TestClient, tmp_path: Path, speed: float
+) -> None:
+    _write_recording(tmp_path, "2026-08-21__dutch-grand-prix__race.jsonl")
+
+    response = client.post(
+        "/api/v1/live/replay",
+        json={
+            "name": "2026-08-21__dutch-grand-prix__race.jsonl",
+            "speed": speed,
+        },
+    )
+
+    assert response.status_code == 422

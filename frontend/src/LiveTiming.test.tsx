@@ -13,12 +13,33 @@ vi.mock("./api", async (importOriginal) => {
     getLiveStatus: vi.fn(),
     startLiveSession: vi.fn(),
     stopLiveSession: vi.fn(),
+    getLiveRecordings: vi.fn(),
+    startLiveReplay: vi.fn(),
   };
 });
 
 const getLiveStatus = vi.mocked(api.getLiveStatus);
 const startLiveSession = vi.mocked(api.startLiveSession);
 const stopLiveSession = vi.mocked(api.stopLiveSession);
+const getLiveRecordings = vi.mocked(api.getLiveRecordings);
+const startLiveReplay = vi.mocked(api.startLiveReplay);
+
+const RECORDING = {
+  name: "2026-08-21__dutch-grand-prix__race.jsonl",
+  event_name: "Dutch Grand Prix",
+  session_key: "Race",
+  session_date: "2026-08-21",
+  size_bytes: 2_400_000,
+  modified_at: "2026-08-21T16:00:00+00:00",
+};
+
+function recordings(items = [RECORDING]) {
+  return { record_state: "unconfirmed_live", retention_days: 7, items };
+}
+
+function replayStatus(overrides: Record<string, unknown> = {}): LiveStatus {
+  return activeStatus({ replay: true, ...overrides });
+}
 
 /** Minimal WebSocket double that lets a test push server frames. */
 class FakeWebSocket {
@@ -89,6 +110,8 @@ function activeStatus(overrides: Record<string, unknown> = {}): LiveStatus {
         session_key: "qualifying",
       },
       topics_subscribed: ["TimingData"],
+      replay: false,
+      finished: false,
       log_degraded: false,
       subscribers: 1,
       stats: {
@@ -180,6 +203,9 @@ describe("LiveTiming", () => {
     getLiveStatus.mockReset();
     startLiveSession.mockReset();
     stopLiveSession.mockReset();
+    getLiveRecordings.mockReset();
+    getLiveRecordings.mockResolvedValue(recordings([]));
+    startLiveReplay.mockReset();
     FakeWebSocket.instances = [];
     vi.stubGlobal("WebSocket", FakeWebSocket);
   });
@@ -474,5 +500,135 @@ describe("LiveTiming", () => {
     await screen.findByRole("button", { name: /Connect to live session/ });
 
     expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+});
+
+describe("LiveTiming replay", () => {
+  beforeEach(() => {
+    getLiveStatus.mockReset();
+    startLiveSession.mockReset();
+    stopLiveSession.mockReset();
+    getLiveRecordings.mockReset();
+    startLiveReplay.mockReset();
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+  });
+
+  it("lists recorded sessions with their identity", async () => {
+    getLiveStatus.mockResolvedValue(status());
+    getLiveRecordings.mockResolvedValue(recordings());
+
+    render(<LiveTiming />);
+
+    expect(await screen.findByText("Dutch Grand Prix")).toBeVisible();
+    expect(screen.getByText(/Race · Aug 21, 2026 · 2\.3 MB/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Replay" })).toBeEnabled();
+  });
+
+  it("explains the empty list rather than showing nothing", async () => {
+    getLiveStatus.mockResolvedValue(status());
+    getLiveRecordings.mockResolvedValue(recordings([]));
+
+    render(<LiveTiming />);
+
+    expect(await screen.findByText(/No recorded sessions yet/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Replay" })).toBeNull();
+  });
+
+  it("starts a replay at the selected speed", async () => {
+    const user = userEvent.setup();
+    getLiveStatus.mockResolvedValue(status());
+    getLiveRecordings.mockResolvedValue(recordings());
+    startLiveReplay.mockResolvedValue(replayStatus());
+
+    render(<LiveTiming />);
+    await screen.findByText("Dutch Grand Prix");
+    await user.click(screen.getByRole("radio", { name: "5×" }));
+    await user.click(screen.getByRole("button", { name: "Replay" }));
+
+    expect(startLiveReplay).toHaveBeenCalledWith(RECORDING.name, 5);
+  });
+
+  it("says a replay is not the live feed and writes nothing", async () => {
+    getLiveStatus.mockResolvedValue(replayStatus());
+
+    render(<LiveTiming />);
+
+    expect(
+      await screen.findByText("Replaying a recorded session"),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/come from a session log on disk, not the live feed/),
+    ).toBeVisible();
+    // Writing no log is deliberate here, so the degraded warning must not show.
+    expect(screen.queryByText("Session log degraded")).toBeNull();
+  });
+
+  it("keeps the final board on screen once a replay finishes", async () => {
+    // The collector is no longer active, but the session is still addressable.
+    getLiveStatus.mockResolvedValue(
+      replayStatus({ state: "finished", finished: true }),
+    );
+
+    render(<LiveTiming />);
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    socket().open();
+    socket().emit({
+      type: "snapshot",
+      record_state: "unconfirmed_live",
+      session: null,
+      board: board(),
+    });
+
+    expect(await screen.findByText("Replay complete")).toBeVisible();
+    // The board survives the end of the recording rather than blanking.
+    expect(screen.getByText("NOR")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Close replay" }),
+    ).toBeEnabled();
+  });
+
+  it("hides the recording list while a session is running", async () => {
+    getLiveStatus.mockResolvedValue(activeStatus());
+    getLiveRecordings.mockResolvedValue(recordings());
+
+    render(<LiveTiming />);
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    expect(screen.queryByRole("button", { name: "Replay" })).toBeNull();
+  });
+
+  it("surfaces a rejected replay without claiming one started", async () => {
+    const user = userEvent.setup();
+    getLiveStatus.mockResolvedValue(status());
+    getLiveRecordings.mockResolvedValue(recordings());
+    startLiveReplay.mockRejectedValue(
+      new api.ApiClientError(
+        "Stop the running session first.",
+        "live_session_busy",
+        409,
+      ),
+    );
+
+    render(<LiveTiming />);
+    await screen.findByText("Dutch Grand Prix");
+    await user.click(screen.getByRole("button", { name: "Replay" }));
+
+    expect(await screen.findByText("Command failed")).toBeVisible();
+    expect(screen.getByText("Stop the running session first.")).toBeVisible();
+    expect(screen.queryByText("Replaying a recorded session")).toBeNull();
+  });
+
+  it("keeps working when the recording list cannot be read", async () => {
+    getLiveStatus.mockResolvedValue(status());
+    getLiveRecordings.mockRejectedValue(new Error("offline"));
+
+    render(<LiveTiming />);
+
+    // Replay is secondary; a failed listing must not break the live view.
+    expect(
+      await screen.findByRole("button", { name: /Connect to live session/ }),
+    ).toBeInTheDocument();
   });
 });
