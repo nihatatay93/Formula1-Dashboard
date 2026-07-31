@@ -147,10 +147,13 @@ test("opens a completed session and traverses bounded lap pages", async ({
 }) => {
   await page.goto("/");
 
+  // The landing page routes into the archive rather than opening on it.
   await expect(
-    page.getByRole("heading", { name: "2026 season control" }),
+    page.getByRole("heading", { name: "Formula One data platform" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: /Season sessions/ }).click();
+  await page
+    .getByRole("button", { name: "Browse season sessions" })
+    .click();
   await expect(
     page.getByRole("heading", { name: "2026 season sessions" }),
   ).toBeVisible();
@@ -226,21 +229,22 @@ test("changes season, starts synchronization, and displays job progress", async 
 }) => {
   await page.goto("/");
 
+  // Season controls belong to the archive, so they appear once inside it.
+  await page.getByRole("button", { name: /Season sessions/ }).click();
   // The season picker is a custom listbox, not a native select.
   await page
     .getByRole("combobox", { name: /Championship season/ })
     .click();
   await page.getByRole("option", { name: "2025" }).click();
   await expect(
-    page.getByRole("heading", { name: "2025 season control" }),
+    page.getByRole("heading", { name: "2025 season sessions" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: /Season sessions/ }).click();
   await expect(page.getByText("No calendar coverage yet")).toBeVisible();
 
   await page.getByRole("button", { name: /Check & sync season/ }).click();
 
   await expect(
-    page.getByRole("button", { name: /Overview/ }),
+    page.getByRole("button", { name: /Coverage/ }),
   ).toHaveAttribute("aria-current", "page");
   await expect(page.getByText("1 session queued for ingestion.")).toBeVisible();
   await expect(
@@ -253,11 +257,11 @@ test("changes season, starts synchronization, and displays job progress", async 
 test("keeps the primary dashboard within the viewport", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("navigation", { name: "Dashboard sections" })).toBeVisible();
+  await page.getByRole("button", { name: /Season sessions/ }).click();
   await expect(
     page.getByText("Future calendar awaiting exact timing"),
   ).toBeVisible();
   await expect(page.getByText(/starting with Dutch Grand Prix/)).toBeVisible();
-  await page.getByRole("button", { name: /Season sessions/ }).click();
   await expect(page.getByText("Australian Grand Prix")).toBeVisible();
 
   const dimensions = await page.evaluate(() => ({
@@ -266,6 +270,38 @@ test("keeps the primary dashboard within the viewport", async ({ page }) => {
   }));
 
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+});
+
+test("lands on a home page that separates the two paths", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(
+    page.getByRole("heading", { name: "Two ways into the data" }),
+  ).toBeVisible();
+
+  // Each path states what it is and what state it is in, so the choice is
+  // made from the facts rather than from two labels in a sidebar.
+  const archive = page.getByRole("article", { name: "Season archive" });
+  await expect(archive.getByText("1 / 1")).toBeVisible();
+  const live = page.getByRole("article", { name: "Live timing" });
+  await expect(live.getByText("No feed provider configured")).toBeVisible();
+  await expect(live.getByText("Not connected")).toBeVisible();
+
+  // The distinction that matters is stated, not implied.
+  await expect(archive.getByText(/This is the durable record/)).toBeVisible();
+  await expect(
+    live.getByText(/Nothing here is stored as sporting data/),
+  ).toBeVisible();
+
+  // Season controls belong to the archive and are not offered here.
+  await expect(
+    page.getByRole("combobox", { name: /Championship season/ }),
+  ).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Open live timing" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Live timing", level: 1 }),
+  ).toBeVisible();
 });
 
 test("opens live timing as a separate view without archive state", async ({

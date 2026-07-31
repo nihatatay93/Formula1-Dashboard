@@ -258,7 +258,7 @@ Formula1-Dashboard/
 - `backend/app/ingestion/`: Managed attempt state, schedule discovery and season planning, transactional backfill claiming/failure/aggregation transitions, single-concurrency worker execution, database-bound one-session orchestration, cache-backed loading, request-level accounting, pure upstream-to-domain normalization, atomic archive persistence, and runtime/freshness policy primitives.
 - `backend/alembic/`: Alembic environment and reviewed migration revisions.
 - `backend/tests/`: Backend tests.
-- `frontend/src/`: React dashboard source.
+- `frontend/src/`: React dashboard source, split by domain into `archive/`, `live/` and `shared/`, with `App.tsx` as the shell.
 - `docs/`: Architecture, decisions, and persistent project context.
 - `docs/BACKFILL_RUNTIME_POLICY.md`: Accepted retry, backoff, heartbeat, lease recovery, fencing, current-season freshness, parent aggregation, and worker execution policy.
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic conventions, migration phases, tables, constraints, indexes, and recovery behavior.
@@ -404,19 +404,41 @@ Formula1-Dashboard/
 
 ### Responsive dashboard workspace navigation
 
-- Decision: Present the dashboard as four mutually exclusive views—Overview,
-  Season Sessions, Session Workspace, and Live Timing—with a sticky desktop
-  control rail, compact mobile controls, and fixed mobile section navigation.
-  Automatically open Session Workspace when a calendar session is selected and
-  return to Season Sessions when it is closed. Live Timing renders independently
-  of season coverage: it never waits on the season request, never shows archive
-  errors or notices, and never reads archive state.
+- Decision: Present the dashboard as mutually exclusive views behind a home
+  page, with the rail grouped into Archive (Season sessions, Session workspace,
+  Coverage) and Live (Live timing). Home is the default view and routes into
+  each path with that path's current state on it. Season controls belong to the
+  archive group and are shown only on archive views. Automatically open Session
+  Workspace when a calendar session is selected and return to Season Sessions
+  when it is closed. Live Timing renders independently of season coverage: it
+  never waits on the season request, never shows archive errors or notices, and
+  never reads archive state.
 - Rationale: Prevent season metrics, synchronization state, full calendars, and
   detailed session analysis from forming one long page that requires repeated
-  scrolling to find the next task. Live Timing is a fourth view rather than a
-  panel inside an existing one because live data is a separate ephemeral path
-  and must never be mixed with the archive record.
-- Date: 2026-07-30
+  scrolling to find the next task. The archive and live timing are separate
+  products rather than peer sections of one, so they are grouped rather than
+  listed flat, and the reader meets that distinction on the way in instead of
+  inferring it from a sidebar. Offering a season selector while viewing live
+  timing implied the two shared a scope; they do not, so it is scoped to the
+  archive. A landing page also gives the two paths somewhere to state what they
+  are — the archive is the durable record, live frames are never stored as
+  sporting data — which is the one confusion that would actually mislead.
+- Date: 2026-07-31
+- Status: implemented (supersedes the earlier four-flat-views arrangement)
+
+### Frontend module structure
+
+- Decision: Organise the frontend by domain: `src/archive/`, `src/live/`,
+  `src/shared/`, with `App.tsx` reduced to shell and routing and each view
+  rendering itself. `api.ts` and `contracts.ts` stay at the root as the shared
+  edge against the backend.
+- Rationale: `App.tsx` had grown to 1238 lines holding the rail, three views,
+  seven presentational components and the whole archive data lifecycle, and a
+  flat `src/` said nothing about which parts belonged to which path. The layout
+  now states the same separation the UI does, so a change to live timing has an
+  obvious blast radius. The move was made as its own commit, with no behaviour
+  change, so the subsequent restructuring was reviewable on its own.
+- Date: 2026-07-31
 - Status: implemented
 
 ### Dashboard visual system
@@ -2346,20 +2368,32 @@ mounted writable at `/live-sessions`.
 - `backend/tests/test_historical_session_contracts.py`: Session-detail,
   result, lap-query, lap-page, serialization, ordering, availability, and
   analysis-field contract coverage.
-- `frontend/src/App.tsx`: Season selection, coverage metrics, request-budget
-  visualization, detailed execution/countdown progress, event-grouped session
-  states, backfill command, active-job polling, and the responsive four-view
-  workspace shell.
-- `frontend/src/SessionExplorer.tsx`: Session metadata and availability,
+- `frontend/src/App.tsx`: Shell and routing only — view selection, the archive
+  data lifecycle (season overview, backfill command, active-job polling,
+  request-budget polling), and the workspace header.
+- `frontend/src/Home.tsx`: Landing page routing into the archive and live
+  paths, carrying the current state of each.
+- `frontend/src/DashboardRail.tsx`: Grouped navigation and the archive-scoped
+  season controls.
+- `frontend/src/archive/ArchiveOverview.tsx`, `SeasonCalendar.tsx`,
+  `EventCard.tsx`, `BackfillPanels.tsx`: Coverage metrics, request-budget
+  visualization, detailed execution/countdown progress, and event-grouped
+  session states.
+- `frontend/src/archive/SessionExplorer.tsx`: Session metadata and availability,
   entry/result classification, participant selection, compound-colored
   loaded-lap pace profile, detailed lap table, snapshot-safe keyset pagination,
   and ephemeral two-participant selected-lap analysis.
-- `frontend/src/LiveTiming.tsx`: Separate live view reading only
-  `/api/v1/live` — status polling, on-demand connect/stop, WebSocket snapshot
-  and incremental updates, collector counters, generic topic rendering, and the
+- `frontend/src/archive/LapTelemetryPanel.tsx`, `LapTelemetryChart.tsx`,
+  `lapTelemetry.ts`: On-demand per-lap telemetry with bounded polling and
+  keyset paging, plotted as facets over a shared distance axis.
+- `frontend/src/live/LiveTiming.tsx`: Separate live view reading only
+  `/api/v1/live` — status polling, on-demand connect/stop, replay of recorded
+  sessions, WebSocket board snapshots and updates, collector counters, and the
   retention notice.
-- `frontend/src/lapAnalysis.ts`: Pure selected-lap eligibility, statistics,
-  ranking, and comparison calculations for two to four selections.
+- `frontend/src/shared/`: `StatusPill`, `MetricCard`, `ProgressTrack`,
+  `SeasonSelect`, and UTC formatting used by both paths.
+- `frontend/src/archive/lapAnalysis.ts`: Pure selected-lap eligibility,
+  statistics, ranking, and comparison calculations for two to four selections.
 - `frontend/src/api.ts`: Typed same-origin season, backfill, request-budget,
   session-detail, result, and lap API client with stable safe error handling.
 - `frontend/src/contracts.ts`: TypeScript representation of the implemented
@@ -2367,10 +2401,10 @@ mounted writable at `/live-sessions`.
 - `frontend/src/index.css`: Responsive editorial motorsport layout, surface,
   typography, persistent desktop rail, fixed mobile navigation, interaction,
   progress, event-card, result-table, lap-chart, and visual-state system.
-- `frontend/src/SessionExplorer.test.tsx`: Component coverage for historical
+- `frontend/src/archive/SessionExplorer.test.tsx`: Component coverage for historical
   session availability, errors, participant laps, pagination, and snapshot
   replacement.
-- `frontend/src/LiveTiming.test.tsx`: Component coverage for the unconfigured
+- `frontend/src/live/LiveTiming.test.tsx`: Component coverage for the unconfigured
   feed state, connect/stop commands, WebSocket snapshot and update merging,
   malformed frames, backend stream errors, and the degraded-log warning.
 - `frontend/e2e/dashboard.spec.ts`: Intercepted desktop/mobile Chromium
