@@ -548,6 +548,15 @@ export interface LiveDriverRow {
   team_colour: string;
   position: number | null;
   line: number;
+  /**
+   * Places gained since the collector first saw this driver; positive is a
+   * gain. The feed carries no grid position, so this means "since the session
+   * was connected", which `position_baseline` makes explicit.
+   */
+  places_gained: number | null;
+  position_baseline: number | null;
+  /** "up" or "down" while a place change is recent, otherwise empty. */
+  recent_move: string;
   gap_to_leader: string;
   interval: string;
   last_lap: string;

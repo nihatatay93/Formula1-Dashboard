@@ -29,6 +29,7 @@ from app.live.frames import (
     normalize_frame,
 )
 from app.live.policy import LiveTimingSettings, calculate_reconnect_delay
+from app.live.positions import PositionTracker
 from app.live.session_log import LiveSessionLog, build_log_path
 
 
@@ -200,6 +201,7 @@ class LiveCollector:
             else LiveCurrentView()
         )
         self._subscribers: set[asyncio.Queue[Mapping[str, object]]] = set()
+        self._positions = PositionTracker()
 
     def _build_log_path(self) -> Path:
         identity = self._identity
@@ -226,6 +228,11 @@ class LiveCollector:
     @property
     def view(self) -> LiveCurrentView:
         return self._view
+
+    @property
+    def positions(self) -> PositionTracker:
+        """Position history for this session, for the board to read."""
+        return self._positions
 
     @property
     def log_path(self) -> Path | None:
@@ -359,6 +366,11 @@ class LiveCollector:
 
         self._stats.accepted += 1
         self._resolve_identity(frame)
+        if frame.topic == "TimingData":
+            # Movement is a fact about history, so it is accumulated as frames
+            # arrive rather than derived from the merged view, which only ever
+            # holds what the feed last said.
+            self._positions.observe(frame.payload, received_at=frame.received_at)
         self._record(frame)
         self._publish(frame)
 

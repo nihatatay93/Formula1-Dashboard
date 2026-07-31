@@ -94,6 +94,39 @@ function sectorTitle(cell: LiveSectorCell, index: number): string {
   return `Sector ${index + 1}: ${cell.value || "no time"}${tone}${progress}`;
 }
 
+/**
+ * Places gained, and whether it just happened.
+ *
+ * The count is stated as a number rather than an arrow alone, because an arrow
+ * on its own says direction without saying how far — and colour is never the
+ * only carrier: the sign is written out.
+ */
+function PositionMove({ row }: { row: LiveDriverRow }) {
+  const gained = row.places_gained;
+  if (gained === null || gained === 0) {
+    // A driver who has not moved gets no mark rather than a "0".
+    return row.recent_move ? null : <span className="live-move" />;
+  }
+  const direction = gained > 0 ? "up" : "down";
+  const baseline =
+    row.position_baseline === null
+      ? ""
+      : ` (from P${row.position_baseline} when this session was connected)`;
+  return (
+    <span
+      className={`live-move live-move--${direction}${
+        row.recent_move ? " live-move--recent" : ""
+      }`}
+      title={`${
+        gained > 0 ? "Gained" : "Lost"
+      } ${Math.abs(gained)} place${Math.abs(gained) === 1 ? "" : "s"}${baseline}`}
+    >
+      <i aria-hidden="true" />
+      {gained > 0 ? `+${gained}` : gained}
+    </span>
+  );
+}
+
 function lapClass(row: LiveDriverRow): string {
   if (row.last_lap_overall_best) {
     return "live-board__lap live-board__lap--overall";
@@ -125,7 +158,10 @@ function DriverRow({ row, isRace }: { row: LiveDriverRow; isRace: boolean }) {
 
   return (
     <tr className={inactive ? "live-board__row--out" : undefined}>
-      <td className="live-board__position">{row.position ?? "—"}</td>
+      <td className="live-board__position">
+        <span>{row.position ?? "—"}</span>
+        <PositionMove row={row} />
+      </td>
       <td>
         <div className="live-board__driver">
           <span

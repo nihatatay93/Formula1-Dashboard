@@ -15,7 +15,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
+
+from app.live.positions import PositionTracker
 
 #: Race control history is unbounded over a session; the dashboard shows the
 #: most recent messages rather than all of them.
@@ -66,6 +69,14 @@ class DriverRow:
     team_colour: str
     position: int | None
     line: int
+    #: Places gained since the collector first saw this driver; positive is a
+    #: gain. None until a position has been observed.
+    places_gained: int | None
+    #: The position that count is measured from, so a reader can tell whether
+    #: it means "since the grid" or "since we connected".
+    position_baseline: int | None
+    #: "up", "down" or "" while a place change is recent enough to flag.
+    recent_move: str
     gap_to_leader: str
     interval: str
     last_lap: str
@@ -236,8 +247,19 @@ def _race_control(payload: Mapping[str, Any]) -> tuple[RaceControlMessage, ...]:
     return tuple(reversed(built))[:MAX_RACE_CONTROL_MESSAGES]
 
 
-def build_board(topics: Mapping[str, Any]) -> LiveBoard:
-    """Build the board from merged topic payloads keyed by topic name."""
+def build_board(
+    topics: Mapping[str, Any],
+    *,
+    positions: PositionTracker | None = None,
+    now: datetime | None = None,
+) -> LiveBoard:
+    """Build the board from merged topic payloads keyed by topic name.
+
+    ``positions`` carries session history the merged view cannot hold, because
+    the view only ever holds what the feed last said. Without it the board is
+    still complete; it simply reports no movement.
+    """
+    moment = now if now is not None else datetime.now(tz=UTC)
     session = _mapping(topics.get("SessionInfo"))
     meeting = _mapping(session.get("Meeting"))
     status = _mapping(topics.get("SessionStatus"))
@@ -260,6 +282,9 @@ def build_board(topics: Mapping[str, Any]) -> LiveBoard:
         compound, tyre_age = _tyre(app_data.get(number))
         last = _mapping(line.get("LastLapTime"))
         interval = _mapping(line.get("IntervalToPositionAhead"))
+        movement = (
+            None if positions is None else positions.movement(number, now=moment)
+        )
 
         rows.append(
             DriverRow(
@@ -270,6 +295,9 @@ def build_board(topics: Mapping[str, Any]) -> LiveBoard:
                 team_colour=_text(driver.get("TeamColour")),
                 position=_whole(line.get("Position")),
                 line=_whole(line.get("Line")) or _whole(driver.get("Line")) or 0,
+                places_gained=None if movement is None else movement.places_gained,
+                position_baseline=None if movement is None else movement.baseline,
+                recent_move="" if movement is None else (movement.recent or ""),
                 gap_to_leader=(
                     _text(line.get("GapToLeader"))
                     or _text(stats.get("TimeDiffToFastest"))
@@ -346,6 +374,9 @@ def board_to_dict(board: LiveBoard) -> dict[str, Any]:
                 "team_colour": row.team_colour,
                 "position": row.position,
                 "line": row.line,
+                "places_gained": row.places_gained,
+                "position_baseline": row.position_baseline,
+                "recent_move": row.recent_move,
                 "gap_to_leader": row.gap_to_leader,
                 "interval": row.interval,
                 "last_lap": row.last_lap,

@@ -687,6 +687,31 @@ Formula1-Dashboard/
 - Date: 2026-07-31
 - Status: implemented
 
+### Position movement on the live board
+
+- Decision: Track each driver's position history server-side in
+  `app/live/positions.py`, owned by the collector and updated as `TimingData`
+  frames arrive, and expose `places_gained`, `position_baseline` and a
+  transient `recent_move` on each board row. The dashboard shows the signed
+  count beside the position, with the baseline named in the cell's title.
+- Rationale: The feed carries no grid or starting position — confirmed against
+  the recording, where the only order fields are `Position` and a `Line` that
+  never once differed from it across 5424 frames. Movement can therefore only be
+  measured from the first position this collector saw, which equals the grid
+  only when collection began before the session started. That condition is
+  stated in the UI rather than left implied, and `position_baseline` travels
+  with the count so a reader can always see what it is measured from.
+  State lives in the collector rather than the merged view because the view
+  holds only what the feed last said, while movement is a fact about history;
+  and server-side rather than in the dashboard because the dashboard receives a
+  stateless board and would lose its baseline on every reconnect. A baseline is
+  set only the first time a driver is seen, so a reconnect's full-state frame
+  cannot silently rebaseline everyone and erase the session's movement.
+  The count is written out with its sign rather than shown as a bare arrow, so
+  neither colour nor arrow direction is the only carrier of the information.
+- Date: 2026-07-31
+- Status: implemented
+
 ### Live SignalR client
 
 - Decision: Implement the live feed with the `signalrcore` client against

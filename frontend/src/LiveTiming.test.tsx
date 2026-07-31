@@ -159,6 +159,9 @@ function board(overrides: Record<string, unknown> = {}) {
         team_colour: "F47600",
         position: 1,
         line: 1,
+        places_gained: 3,
+        position_baseline: 4,
+        recent_move: "up",
         gap_to_leader: "",
         interval: "",
         last_lap: "1:23.625",
@@ -630,5 +633,113 @@ describe("LiveTiming replay", () => {
     expect(
       await screen.findByRole("button", { name: /Connect to live session/ }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("LiveTiming position movement", () => {
+  beforeEach(() => {
+    getLiveStatus.mockReset();
+    startLiveSession.mockReset();
+    stopLiveSession.mockReset();
+    getLiveRecordings.mockReset();
+    getLiveRecordings.mockResolvedValue(recordings([]));
+    startLiveReplay.mockReset();
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+  });
+
+  async function boardWith(driver: Record<string, unknown>) {
+    getLiveStatus.mockResolvedValue(activeStatus());
+    const rendered = render(<LiveTiming />);
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    socket().open();
+    const base = board();
+    socket().emit({
+      type: "snapshot",
+      record_state: "unconfirmed_live",
+      session: null,
+      board: {
+        ...base,
+        drivers: [{ ...(base.drivers[0] as object), ...driver }],
+      },
+    });
+    await screen.findByText("NOR");
+    return rendered;
+  }
+
+  it("states how many places were gained, not only a direction", async () => {
+    const { container } = await boardWith({
+      places_gained: 3,
+      position_baseline: 4,
+      recent_move: "",
+    });
+
+    // An arrow alone says direction without saying how far.
+    expect(screen.getByText("+3")).toBeVisible();
+    expect(container.querySelector(".live-move--up")).not.toBeNull();
+  });
+
+  it("writes the sign out so colour is never the only carrier", async () => {
+    const { container } = await boardWith({
+      places_gained: -2,
+      position_baseline: 1,
+      recent_move: "",
+    });
+
+    expect(screen.getByText("-2")).toBeVisible();
+    expect(container.querySelector(".live-move--down")).not.toBeNull();
+  });
+
+  it("names the baseline, because it is not the grid", async () => {
+    // The feed carries no grid position, so the count is measured from the
+    // first position this session saw. Saying so is the honest part.
+    const { container } = await boardWith({
+      places_gained: 5,
+      position_baseline: 9,
+      recent_move: "",
+    });
+
+    expect(container.querySelector(".live-move")).toHaveAttribute(
+      "title",
+      "Gained 5 places (from P9 when this session was connected)",
+    );
+  });
+
+  it("marks a change that just happened", async () => {
+    const { container } = await boardWith({
+      places_gained: 1,
+      position_baseline: 2,
+      recent_move: "up",
+    });
+
+    expect(container.querySelector(".live-move--recent")).not.toBeNull();
+  });
+
+  it("leaves a driver who has not moved unmarked", async () => {
+    const { container } = await boardWith({
+      places_gained: 0,
+      position_baseline: 1,
+      recent_move: "",
+    });
+
+    expect(screen.queryByText("+0")).toBeNull();
+    expect(container.querySelector(".live-move--up")).toBeNull();
+    expect(container.querySelector(".live-move--down")).toBeNull();
+  });
+
+  it("shows nothing when the backend reports no history", async () => {
+    const { container } = await boardWith({
+      places_gained: null,
+      position_baseline: null,
+      recent_move: "",
+    });
+
+    expect(container.querySelector(".live-move--up")).toBeNull();
+    expect(container.querySelector(".live-move--down")).toBeNull();
+    // The position itself still reads normally.
+    expect(
+      container.querySelector(".live-board__position > span:first-child")
+        ?.textContent,
+    ).toBe("1");
   });
 });

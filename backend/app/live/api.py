@@ -405,7 +405,8 @@ async def stream_live_session(
                     {
                         topic: state.payload
                         for topic, state in collector.view.topics.items()
-                    }
+                    },
+                    positions=collector.positions,
                 )
             ),
         }

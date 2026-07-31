@@ -3152,6 +3152,85 @@ th,
   font-weight: 800;
 }
 
+.live-board__position > span:first-child {
+  display: inline-block;
+  min-width: 1.25rem;
+}
+
+/* Places gained since the session was connected. The count is always written
+   out, so direction never rests on colour or on the arrow alone. */
+.live-move {
+  display: inline-flex;
+  gap: 0.15rem;
+  align-items: center;
+  min-width: 2.1rem;
+  margin-left: var(--s1);
+  color: var(--muted-dark);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-move i {
+  width: 0;
+  height: 0;
+  border-right: 3px solid transparent;
+  border-left: 3px solid transparent;
+}
+
+.live-move--up {
+  color: var(--tyre-intermediate);
+}
+
+.live-move--up i {
+  border-bottom: 4px solid currentcolor;
+}
+
+.live-move--down {
+  color: var(--accent-bright);
+}
+
+.live-move--down i {
+  border-top: 4px solid currentcolor;
+}
+
+/* A change that just happened is briefly emphasised, then settles back to the
+   plain count. The chip keeps the direction hue as its background and switches
+   the text to the canvas, so the count stays legible rather than disappearing
+   into its own colour. */
+.live-move--recent {
+  padding: 0 0.25rem;
+  border-radius: var(--r-xs);
+  animation: live-move-settle 1.2s ease-out;
+}
+
+.live-move--up.live-move--recent {
+  background: var(--tyre-intermediate);
+  color: var(--canvas);
+}
+
+.live-move--down.live-move--recent {
+  background: var(--accent-bright);
+  color: var(--canvas);
+}
+
+@keyframes live-move-settle {
+  from {
+    opacity: 0.35;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-move--recent {
+    animation: none;
+  }
+}
+
 .live-board__driver {
   display: flex;
   gap: var(--s2);
