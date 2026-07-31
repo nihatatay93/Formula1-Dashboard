@@ -2,9 +2,11 @@ import type {
   ApiErrorResponse,
   BackfillJob,
   EnsureBackfillResponse,
+  EnsureLapTelemetryResponse,
   FastF1RequestBudget,
   LapSummaryRequest,
   LapSummaryResponse,
+  LapTelemetryResponse,
   LiveAuthStatus,
   LiveRecordingList,
   LiveStatus,
@@ -129,6 +131,56 @@ export function getSessionLaps(
   const queryString = encodedParameters ? `?${encodedParameters}` : "";
   return requestJson<LapSummaryResponse>(
     `/api/v1/sessions/${sessionId}/entries/${sessionEntryId}/laps${queryString}`,
+    { signal },
+  );
+}
+
+function telemetryPath(
+  sessionId: string,
+  sessionEntryId: string,
+  lapNumber: number,
+): string {
+  return (
+    `/api/v1/sessions/${sessionId}/entries/${sessionEntryId}` +
+    `/laps/${lapNumber}/telemetry`
+  );
+}
+
+/**
+ * Request a lap's telemetry. Returns `available` when it is already stored, and
+ * `queued`/`reused` when the worker has to fetch it from the upstream archive.
+ */
+export function ensureLapTelemetry(
+  sessionId: string,
+  sessionEntryId: string,
+  lapNumber: number,
+  signal?: AbortSignal,
+): Promise<EnsureLapTelemetryResponse> {
+  return requestJson<EnsureLapTelemetryResponse>(
+    telemetryPath(sessionId, sessionEntryId, lapNumber),
+    { method: "POST", signal },
+  );
+}
+
+/** One keyset page of samples. 409 until the lap has been requested. */
+export function getLapTelemetry(
+  sessionId: string,
+  sessionEntryId: string,
+  lapNumber: number,
+  query: { after_sample?: number; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<LapTelemetryResponse> {
+  const parameters = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) {
+      parameters.set(key, String(value));
+    }
+  }
+  const encoded = parameters.toString();
+  return requestJson<LapTelemetryResponse>(
+    `${telemetryPath(sessionId, sessionEntryId, lapNumber)}${
+      encoded ? `?${encoded}` : ""
+    }`,
     { signal },
   );
 }

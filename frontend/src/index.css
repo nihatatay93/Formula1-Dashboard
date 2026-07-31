@@ -56,6 +56,13 @@
   --neutral-soft: rgb(255 255 255 / 7%);
 
   /* Tyre compounds */
+  /* Chart marks, stepped darker than the UI tokens they echo so they sit in
+     the dark-mode lightness band. Checked against the panel surface for
+     contrast (>=3:1) and for colour-blind separation (deltaE 16.6 protan,
+     29.5 normal) rather than picked by eye. */
+  --chart-trace: #1d9bd1;
+  --chart-brake: #e8536b;
+
   --tyre-soft: #ff3b45;
   --tyre-medium: #ffd54a;
   --tyre-hard: #eef2f7;
@@ -2216,6 +2223,218 @@ th,
   border: 1px solid var(--line);
   border-radius: var(--r);
   background: var(--panel-raised);
+}
+
+/* Lap telemetry. Speed, throttle and gear are three scales, so they get three
+   stacked plots over one shared distance axis rather than one plot with three
+   y-axes. */
+.telemetry-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel-inset);
+}
+
+.telemetry-panel h4 {
+  font-size: var(--t-h3);
+}
+
+.telemetry-panel h4:focus-visible {
+  outline: 2px solid var(--data);
+  outline-offset: 3px;
+}
+
+.telemetry-chart {
+  margin: 0;
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel-raised);
+}
+
+.telemetry-chart__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  touch-action: none;
+}
+
+.telemetry-chart__grid {
+  stroke: rgb(255 255 255 / 10%);
+  stroke-width: 1;
+}
+
+.telemetry-chart__axis {
+  fill: var(--muted-dark);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.telemetry-chart__facet-label {
+  fill: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.telemetry-chart__trace {
+  stroke: var(--chart-trace);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Braking is an annotation spanning every facet, not a fourth series: one
+   vertical band reads as one event across all three measures. */
+.telemetry-chart__brake {
+  fill: var(--chart-brake);
+  opacity: 0.16;
+}
+
+.telemetry-chart__crosshair {
+  stroke: var(--ink-dim);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+
+.telemetry-chart__marker {
+  fill: var(--chart-trace);
+  stroke: var(--panel-raised);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.telemetry-chart__caption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s4);
+  align-items: center;
+  justify-content: space-between;
+  padding-top: var(--s2);
+  color: var(--muted);
+  font-size: var(--t-micro);
+}
+
+.telemetry-chart__key {
+  display: inline-flex;
+  gap: var(--s2);
+  align-items: center;
+}
+
+.telemetry-chart__key-brake {
+  width: 14px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--chart-brake);
+  opacity: 0.45;
+}
+
+.telemetry-chart__readout {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s3);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.telemetry-chart__readout b {
+  color: var(--ink-dim);
+  font-weight: 500;
+}
+
+.telemetry-chart__readout--idle {
+  font-family: var(--sans);
+  color: var(--muted-dark);
+}
+
+.telemetry-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s5);
+  margin: var(--s3) 0 0;
+}
+
+.telemetry-summary dt {
+  color: var(--muted);
+  font-size: var(--t-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.telemetry-summary dd {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-body);
+  font-variant-numeric: tabular-nums;
+}
+
+.telemetry-table {
+  margin-top: var(--s3);
+  color: var(--muted);
+  font-size: var(--t-micro);
+}
+
+.telemetry-table summary {
+  cursor: pointer;
+}
+
+.telemetry-table__wrap {
+  max-height: 18rem;
+  margin-top: var(--s2);
+  overflow: auto;
+}
+
+.telemetry-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.telemetry-table caption {
+  padding-bottom: var(--s2);
+  color: var(--muted-dark);
+  text-align: left;
+}
+
+.telemetry-table th,
+.telemetry-table td {
+  padding: 0.2rem var(--s2);
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+}
+
+.telemetry-table th:first-child,
+.telemetry-table td:first-child {
+  text-align: left;
+}
+
+.telemetry-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel-inset);
+  color: var(--muted);
+}
+
+.lap-table__telemetry {
+  padding: 0.15rem var(--s2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--ink-dim);
+  font-size: var(--t-micro);
+  cursor: pointer;
+}
+
+.lap-table__telemetry:hover {
+  border-color: var(--data);
+  color: var(--data);
 }
 
 .pace-trend__svg {

@@ -2,7 +2,9 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 import {
   completedSeason,
+  ensureLapTelemetryAvailable,
   firstLapPage,
+  lapTelemetry,
   missingSeason,
   piastriLapPage,
   queuedBackfill,
@@ -116,6 +118,12 @@ async function installApiRoutes(page: Page) {
     ) {
       return json(route, piastriLapPage);
     }
+    if (path.endsWith("/laps/1/telemetry")) {
+      // Already stored upstream, so the reader never waits on the worker.
+      return request.method() === "POST"
+        ? json(route, ensureLapTelemetryAvailable)
+        : json(route, lapTelemetry);
+    }
 
     return json(
       route,
@@ -189,6 +197,22 @@ test("opens a completed session and traverses bounded lap pages", async ({
       "Lando Norris is 0.750s faster on the selected average.",
     ),
   ).toBeVisible();
+
+  // Telemetry is fetched per lap, on request, and plots one facet per measure.
+  await norrisRow.getByRole("button", { name: "View laps" }).click();
+  await page
+    .getByRole("button", { name: "View telemetry for lap 1" })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: /Lando Norris · lap 1/ }),
+  ).toBeVisible();
+  await expect(page.locator(".telemetry-chart__trace")).toHaveCount(3);
+  // Scoped to the summary: the axis label carries the same figure.
+  await expect(
+    page.locator(".telemetry-summary").getByText("289 km/h"),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Close telemetry" }).click();
+  await expect(page.locator(".telemetry-chart")).toHaveCount(0);
 
   await page.getByRole("button", { name: /Close view/ }).click();
   await expect(page.locator("#session-explorer")).toBeHidden();

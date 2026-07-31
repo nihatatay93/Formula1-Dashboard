@@ -1,9 +1,11 @@
 import type {
   BackfillJob,
   EnsureBackfillResponse,
+  EnsureLapTelemetryResponse,
   FastF1RequestBudget,
   LapSummary,
   LapSummaryResponse,
+  LapTelemetryResponse,
   SeasonEvent,
   SeasonOverview,
   SeasonSession,
@@ -466,4 +468,58 @@ export const runningBackfill: BackfillJob = {
       last_error: null,
     },
   ],
+};
+
+/** One lap's telemetry: a braking zone into a corner, then acceleration. */
+export const lapTelemetry: LapTelemetryResponse = {
+  session_id: completedSession.id,
+  session_entry_id: resultEntries[0].session_entry_id,
+  lap_id: "401",
+  lap_number: 1,
+  data_available: true,
+  snapshot: {
+    compatible: true,
+    source_snapshot_completed_at: completedSnapshot.completed_at as string,
+    current_snapshot_completed_at: completedSnapshot.completed_at as string,
+  },
+  ingestion: {
+    status: "completed",
+    attempt_count: 1,
+    sample_count: 10,
+    requested_at: "2026-03-08T06:00:00Z",
+    heartbeat_at: null,
+    next_retry_at: null,
+    completed_at: "2026-03-08T06:01:00Z",
+    last_error: null,
+  },
+  page: { limit: 1000, has_more: false, next_after_sample: null },
+  items: Array.from({ length: 10 }, (_, index) => {
+    const braking = index > 3 && index < 7;
+    return {
+      sample_index: index,
+      lap_time_us: index * 50_000,
+      session_time_us: null,
+      distance_m: index * 120,
+      relative_distance: index / 10,
+      speed_kph: braking ? 295 - (index - 3) * 55 : 190 + index * 11,
+      rpm: 11_000,
+      gear: braking ? 3 : 7,
+      throttle_percent: braking ? 0 : 100,
+      brake: braking,
+      drs: 0,
+      x: null,
+      y: null,
+      z: null,
+    };
+  }),
+};
+
+export const ensureLapTelemetryAvailable: EnsureLapTelemetryResponse = {
+  session_id: completedSession.id,
+  session_entry_id: resultEntries[0].session_entry_id,
+  lap_id: "401",
+  lap_number: 1,
+  action: "available",
+  status: "completed",
+  source_snapshot_completed_at: completedSnapshot.completed_at as string,
 };

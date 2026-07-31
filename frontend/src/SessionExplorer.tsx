@@ -6,6 +6,7 @@ import {
   getSessionLaps,
   getSessionResults,
 } from "./api";
+import LapTelemetryPanel from "./LapTelemetryPanel";
 import type {
   LapSummary,
   LapSummaryResponse,
@@ -258,13 +259,17 @@ function ResultsTable({
 }
 
 function LapTable({
+  activeTelemetryLap,
   laps,
   onToggleLap,
+  onViewTelemetry,
   selectedLapNumbers,
   selectionDisabled,
 }: {
+  activeTelemetryLap: number | null;
   laps: LapSummary[];
   onToggleLap: (lap: LapSummary) => void;
+  onViewTelemetry: (lap: LapSummary) => void;
   selectedLapNumbers: ReadonlySet<number>;
   selectionDisabled: boolean;
 }) {
@@ -292,6 +297,7 @@ function LapTable({
             <th scope="col">S2</th>
             <th scope="col">S3</th>
             <th scope="col">Quality</th>
+            <th scope="col">Telemetry</th>
           </tr>
         </thead>
         <tbody>
@@ -348,6 +354,18 @@ function LapTable({
                   : lap.is_accurate
                     ? "Accurate"
                     : "Unverified"}
+              </td>
+              <td>
+                <button
+                  aria-label={`View telemetry for lap ${lap.lap_number}`}
+                  className="lap-table__telemetry"
+                  onClick={() => onViewTelemetry(lap)}
+                  type="button"
+                >
+                  {activeTelemetryLap === lap.lap_number
+                    ? "Viewing"
+                    : "Telemetry"}
+                </button>
               </td>
             </tr>
           ))}
@@ -770,6 +788,9 @@ export default function SessionExplorer({
   const [comparisonSlots, setComparisonSlots] = useState(
     DEFAULT_ANALYSIS_SLOTS,
   );
+  // One lap at a time: telemetry is the expensive upstream call, so it is
+  // fetched only for the lap a reader has explicitly opened.
+  const [telemetryLap, setTelemetryLap] = useState<number | null>(null);
   const lapSnapshotRef = useRef<string | null>(null);
   const analysisSelectionsRef = useRef<AnalysisSelection[]>([]);
 
@@ -903,6 +924,14 @@ export default function SessionExplorer({
     lapSnapshotRef.current = null;
     setLapError(null);
     setLapNotice(null);
+    // The open lap belongs to the entry being replaced.
+    setTelemetryLap(null);
+  }
+
+  function handleTelemetrySelection(lap: LapSummary) {
+    setTelemetryLap((current) =>
+      current === lap.lap_number ? null : lap.lap_number,
+    );
   }
 
   function handleLapSelection(lap: LapSummary) {
@@ -1139,8 +1168,10 @@ export default function SessionExplorer({
                   <LapPaceChart laps={laps.items} />
                   {laps.items.length > 0 ? (
                     <LapTable
+                      activeTelemetryLap={telemetryLap}
                       laps={laps.items}
                       onToggleLap={handleLapSelection}
+                      onViewTelemetry={handleTelemetrySelection}
                       selectedLapNumbers={selectedLapNumbers}
                       selectionDisabled={selectionParticipantLimitReached}
                     />
@@ -1149,6 +1180,18 @@ export default function SessionExplorer({
                       <strong>No lap summaries were stored for this entry.</strong>
                     </div>
                   )}
+                  {telemetryLap !== null ? (
+                    <LapTelemetryPanel
+                      driverName={selectedEntry.display_name}
+                      // Remounting per lap restarts the request cleanly rather
+                      // than racing the previous lap's poll.
+                      key={`${selectedEntry.session_entry_id}-${telemetryLap}`}
+                      lapNumber={telemetryLap}
+                      onClose={() => setTelemetryLap(null)}
+                      sessionEntryId={selectedEntry.session_entry_id}
+                      sessionId={session.id}
+                    />
+                  ) : null}
                   {laps.page.has_more ? (
                     <button
                       className="load-more-laps"

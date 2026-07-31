@@ -348,6 +348,76 @@ export interface LapSummaryResponse {
   items: LapSummary[];
 }
 
+/** One telemetry sample along a lap. Every channel is optional upstream. */
+export interface LapTelemetrySample {
+  sample_index: number;
+  lap_time_us: number;
+  session_time_us: number | null;
+  distance_m: number | null;
+  relative_distance: number | null;
+  speed_kph: number | null;
+  rpm: number | null;
+  gear: number | null;
+  throttle_percent: number | null;
+  brake: boolean | null;
+  drs: number | null;
+  x: number | null;
+  y: number | null;
+  z: number | null;
+}
+
+export type TelemetryIngestionStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed";
+
+export interface LapTelemetryIngestionState {
+  status: TelemetryIngestionStatus;
+  attempt_count: number;
+  sample_count: number;
+  requested_at: string;
+  heartbeat_at: string | null;
+  next_retry_at: string | null;
+  completed_at: string | null;
+  last_error: { code: string; message: string } | null;
+}
+
+export interface LapTelemetryResponse {
+  session_id: string;
+  session_entry_id: string;
+  lap_id: string;
+  lap_number: number;
+  /** False while ingestion is incomplete, empty, or from a superseded snapshot. */
+  data_available: boolean;
+  snapshot: {
+    /** False when the archive snapshot moved on after telemetry was stored. */
+    compatible: boolean;
+    source_snapshot_completed_at: string;
+    current_snapshot_completed_at: string;
+  };
+  ingestion: LapTelemetryIngestionState;
+  page: {
+    limit: number;
+    has_more: boolean;
+    next_after_sample: number | null;
+  };
+  items: LapTelemetrySample[];
+}
+
+/** `available` answers immediately; `queued` and `reused` need the worker. */
+export type TelemetryCommandAction = "queued" | "reused" | "available";
+
+export interface EnsureLapTelemetryResponse {
+  session_id: string;
+  session_entry_id: string;
+  lap_id: string;
+  lap_number: number;
+  action: TelemetryCommandAction;
+  status: TelemetryIngestionStatus;
+  source_snapshot_completed_at: string;
+}
+
 export interface LapSummaryRequest {
   after_lap?: number;
   limit?: number;

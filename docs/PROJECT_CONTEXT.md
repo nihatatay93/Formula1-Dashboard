@@ -1391,6 +1391,30 @@ Formula1-Dashboard/
 - Date: 2026-07-31
 - Status: implemented
 
+### Lap telemetry visualization
+
+- Decision: Show a requested lap as three stacked facets — speed, throttle and
+  gear — over one shared distance axis, with braking drawn as a translucent
+  band spanning all three, a crosshair readout, and a `<details>` table of the
+  downsampled trace. Requests are made one lap at a time from the lap table.
+  Both the poll for the worker and the keyset page walk are bounded.
+- Rationale: The three channels have three different scales, and putting them
+  on one frame with multiple y-axes makes crossings and gaps meaningless — the
+  reader cannot tell which line belongs to which axis. Faceting is also what a
+  real telemetry screen does. Braking is an annotation rather than a fourth
+  series because it is a state that applies across all three measures, which
+  also avoids a green/red pair: those two hues fail colour-blind separation
+  badly (ΔE 4.6 deutan, against a floor of 6). Colour therefore carries no
+  categorical load here — each facet holds one trace and its own heading names
+  it — so one hue is used for every trace, and the two chart colours were
+  checked against the panel surface for contrast and CVD separation
+  (`--chart-trace` / `--chart-brake`: ΔE 16.6 protan, 29.5 normal, both ≥3:1)
+  rather than chosen by eye. Telemetry is the expensive upstream call the
+  request budget exists to protect, so nothing is fetched until a reader opens a
+  specific lap.
+- Date: 2026-07-31
+- Status: implemented
+
 ### Automatic current-season planning
 
 - Decision: Run the existing season planner synchronously in the archive worker
