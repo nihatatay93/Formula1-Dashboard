@@ -2,12 +2,12 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import * as api from "./api";
-import type { LiveAuthStatus } from "./contracts";
+import * as api from "../api";
+import type { LiveAuthStatus } from "../contracts";
 import LiveAuthPanel from "./LiveAuthPanel";
 
-vi.mock("./api", async (importOriginal) => {
-  const original = await importOriginal<typeof import("./api")>();
+vi.mock("../api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../api")>();
   return {
     ...original,
     clearLiveAuth: vi.fn(),

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import * as api from "./api";
-import type { LapTelemetryResponse, LapTelemetrySample } from "./contracts";
+import * as api from "../api";
+import type { LapTelemetryResponse, LapTelemetrySample } from "../contracts";
 import {
   MAX_TELEMETRY_PAGES,
   MAX_TELEMETRY_POLLS,
@@ -9,8 +9,8 @@ import {
   loadLapTelemetry,
 } from "./lapTelemetry";
 
-vi.mock("./api", async (importOriginal) => {
-  const original = await importOriginal<typeof import("./api")>();
+vi.mock("../api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../api")>();
   return {
     ...original,
     ensureLapTelemetry: vi.fn(),

@@ -3,7 +3,7 @@ import type {
   LiveDriverRow,
   LiveSectorCell,
   LiveSegmentStatus,
-} from "./contracts";
+} from "../contracts";
 
 /**
  * Live timing board.

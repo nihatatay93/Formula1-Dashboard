@@ -19,8 +19,8 @@ import type {
   SeasonSession,
   SeasonStatus,
 } from "./contracts";
-import LiveTiming from "./LiveTiming";
-import SessionExplorer from "./SessionExplorer";
+import LiveTiming from "./live/LiveTiming";
+import SessionExplorer from "./archive/SessionExplorer";
 
 const FIRST_SUPPORTED_SEASON = 2018;
 const JOB_POLL_INTERVAL_MS = 2_000;

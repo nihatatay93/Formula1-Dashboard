@@ -1,7 +1,7 @@
 import { useState } from "react";
 
-import { ApiClientError, clearLiveAuth, storeLiveAuth } from "./api";
-import type { LiveAuthStatus } from "./contracts";
+import { ApiClientError, clearLiveAuth, storeLiveAuth } from "../api";
+import type { LiveAuthStatus } from "../contracts";
 
 /**
  * F1 TV connection panel.

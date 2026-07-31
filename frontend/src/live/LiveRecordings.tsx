@@ -1,4 +1,4 @@
-import type { LiveRecording } from "./contracts";
+import type { LiveRecording } from "../contracts";
 
 /**
  * Recorded sessions available to replay.

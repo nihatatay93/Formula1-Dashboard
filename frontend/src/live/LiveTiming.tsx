@@ -8,7 +8,7 @@ import {
   startLiveReplay,
   startLiveSession,
   stopLiveSession,
-} from "./api";
+} from "../api";
 import LiveAuthPanel from "./LiveAuthPanel";
 import LiveBoardView from "./LiveBoard";
 import LiveRecordings from "./LiveRecordings";
@@ -18,7 +18,7 @@ import type {
   LiveRecording,
   LiveStatus,
   LiveStreamMessage,
-} from "./contracts";
+} from "../contracts";
 
 const STATUS_POLL_INTERVAL_MS = 5_000;
 const DEFAULT_REPLAY_SPEED = 10;

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ApiClientError } from "./api";
+import { ApiClientError } from "../api";
 import LapTelemetryChart from "./LapTelemetryChart";
-import type { LapTelemetryResponse, LapTelemetrySample } from "./contracts";
+import type { LapTelemetryResponse, LapTelemetrySample } from "../contracts";
 import { TelemetryTimeoutError, loadLapTelemetry } from "./lapTelemetry";
 
 /**

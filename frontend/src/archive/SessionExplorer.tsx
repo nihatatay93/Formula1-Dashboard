@@ -5,7 +5,7 @@ import {
   getSessionDetail,
   getSessionLaps,
   getSessionResults,
-} from "./api";
+} from "../api";
 import LapTelemetryPanel from "./LapTelemetryPanel";
 import type {
   LapSummary,
@@ -15,7 +15,7 @@ import type {
   SessionDetail,
   SessionEntryResult,
   SessionResults,
-} from "./contracts";
+} from "../contracts";
 import {
   calculateLapSelectionStats,
   compareLapSelections,

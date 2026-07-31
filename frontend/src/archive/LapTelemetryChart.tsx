@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 
-import type { LapTelemetrySample } from "./contracts";
+import type { LapTelemetrySample } from "../contracts";
 
 /**
  * One lap's telemetry, as stacked facets over a shared distance axis.

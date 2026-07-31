@@ -1,12 +1,12 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import * as api from "./api";
+import * as api from "../api";
 import LapTelemetryPanel from "./LapTelemetryPanel";
-import type { LapTelemetryResponse, LapTelemetrySample } from "./contracts";
+import type { LapTelemetryResponse, LapTelemetrySample } from "../contracts";
 
-vi.mock("./api", async (importOriginal) => {
-  const original = await importOriginal<typeof import("./api")>();
+vi.mock("../api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../api")>();
   return {
     ...original,
     ensureLapTelemetry: vi.fn(),

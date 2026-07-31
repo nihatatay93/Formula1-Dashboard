@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import type { LapSummary } from "./contracts";
+import type { LapSummary } from "../contracts";
 import {
   calculateLapSelectionStats,
   compareLapSelections,
   isLapSelectable,
   rankLapSelections,
 } from "./lapAnalysis";
-import { firstLapPage } from "./test/fixtures";
+import { firstLapPage } from "../test/fixtures";
 
 function selectedLap(
   lapNumber: number,

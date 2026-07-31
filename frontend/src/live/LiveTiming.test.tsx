@@ -2,12 +2,12 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import * as api from "./api";
-import type { LiveStatus } from "./contracts";
+import * as api from "../api";
+import type { LiveStatus } from "../contracts";
 import LiveTiming from "./LiveTiming";
 
-vi.mock("./api", async (importOriginal) => {
-  const original = await importOriginal<typeof import("./api")>();
+vi.mock("../api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../api")>();
   return {
     ...original,
     getLiveStatus: vi.fn(),

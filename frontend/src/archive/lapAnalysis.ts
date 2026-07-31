@@ -1,4 +1,4 @@
-import type { LapSummary } from "./contracts";
+import type { LapSummary } from "../contracts";
 
 export interface LapSelectionQuality {
   deleted: number;

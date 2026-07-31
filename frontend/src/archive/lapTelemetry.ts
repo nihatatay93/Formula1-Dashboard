@@ -1,9 +1,9 @@
-import { ApiClientError, ensureLapTelemetry, getLapTelemetry } from "./api";
+import { ApiClientError, ensureLapTelemetry, getLapTelemetry } from "../api";
 import type {
   LapTelemetryResponse,
   LapTelemetrySample,
   TelemetryIngestionStatus,
-} from "./contracts";
+} from "../contracts";
 
 /**
  * Loading one lap's telemetry.
