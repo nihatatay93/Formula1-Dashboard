@@ -64,7 +64,13 @@ def normalize_fastf1_telemetry(
                     maximum=1.01,
                 ),
                 speed_kph=_float(source.get("Speed"), minimum=0),
-                rpm=_integer(source.get("RPM"), minimum=0),
+                # RPM is a continuous measurement, and FastF1 returns it already
+                # interpolated onto the merged car/position time base, so it is
+                # legitimately fractional and is rounded rather than rejected.
+                # Gear and DRS below stay strict: those are discrete states that
+                # the upstream carries forward rather than interpolating, so a
+                # fractional value there really would mean a corrupt snapshot.
+                rpm=_integer(source.get("RPM"), minimum=0, rounded=True),
                 gear=_integer(source.get("nGear"), minimum=0, maximum=20),
                 throttle_percent=_float(
                     source.get("Throttle"),
@@ -137,10 +143,19 @@ def _integer(
     *,
     minimum: int | None = None,
     maximum: int | None = None,
+    rounded: bool = False,
 ) -> int | None:
+    """Read an integer channel.
+
+    ``rounded`` marks a continuous measurement that the upstream may deliver
+    interpolated; without it a fractional value is treated as a corrupt
+    snapshot, which is the right answer only for genuinely discrete channels.
+    """
     normalized = _float(value, minimum=minimum, maximum=maximum)
     if normalized is None:
         return None
+    if rounded:
+        return round(normalized)
     integer = int(normalized)
     if normalized != integer:
         raise TelemetryNormalizationError(

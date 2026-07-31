@@ -1372,6 +1372,25 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: implemented
 
+### Interpolated RPM is rounded, not rejected
+
+- Decision: Round the `RPM` channel in `telemetry_normalization` instead of
+  requiring an integral value. `nGear` and `DRS` stay strict.
+- Rationale: This was a defect that made telemetry ingestion fail for every
+  lap. FastF1's `get_telemetry(frequency="original")` merges car data with
+  position data and interpolates onto the combined time base, so RPM arrives
+  fractional — 306 of 633 samples in the lap that first exposed it. `_integer`
+  treated any fractional value as a corrupt snapshot, so normalization raised
+  and each lap ended as `failed` with `telemetry_invalid_snapshot`. The
+  distinction that matters is the channel's nature, not its column type: RPM is
+  a continuous measurement the upstream may resample, while gear and DRS are
+  discrete states that FastF1 carries forward rather than interpolating, so a
+  fractional value there really does mean a corrupt snapshot and is still
+  refused. Verified after the fix: 776 samples for one Albert Park lap,
+  44.7–296.4 km/h across gears 1–8 over 5,248 m.
+- Date: 2026-07-31
+- Status: implemented
+
 ### Automatic current-season planning
 
 - Decision: Run the existing season planner synchronously in the archive worker

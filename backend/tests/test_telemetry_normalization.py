@@ -86,3 +86,46 @@ def test_rejects_malformed_or_out_of_range_telemetry(
 ) -> None:
     with pytest.raises(TelemetryNormalizationError, match=message):
         normalize_fastf1_telemetry(frame)
+
+
+def _frame(**overrides: object) -> pd.DataFrame:
+    columns: dict[str, object] = {
+        "Time": [timedelta(milliseconds=10), timedelta(milliseconds=250)],
+        "Speed": [75.5, 287.2],
+        "RPM": [5000, 12100],
+        "nGear": [1, 7],
+        "Throttle": [20.0, 100.0],
+        "Brake": [True, False],
+        "DRS": [0, 10],
+    }
+    columns.update(overrides)
+    return pd.DataFrame(columns)
+
+
+def test_interpolated_rpm_is_rounded_rather_than_rejected() -> None:
+    """FastF1 merges car and position data, so RPM arrives fractional.
+
+    Roughly half the samples in a real lap carry a fractional RPM, so rejecting
+    them rejected the lap — and with it every lap.
+    """
+    samples = normalize_fastf1_telemetry(
+        _frame(RPM=[10785.091675733334, 10972.558350933334])
+    )
+
+    assert [sample.rpm for sample in samples] == [10785, 10973]
+
+
+def test_a_fractional_gear_is_still_a_corrupt_snapshot() -> None:
+    # Gear is a discrete state the upstream carries forward, never interpolates.
+    with pytest.raises(TelemetryNormalizationError):
+        normalize_fastf1_telemetry(_frame(nGear=[1.5, 7]))
+
+
+def test_a_fractional_drs_is_still_a_corrupt_snapshot() -> None:
+    with pytest.raises(TelemetryNormalizationError):
+        normalize_fastf1_telemetry(_frame(DRS=[0.5, 10]))
+
+
+def test_a_negative_rpm_is_still_out_of_range() -> None:
+    with pytest.raises(TelemetryNormalizationError):
+        normalize_fastf1_telemetry(_frame(RPM=[-1.4, 12100]))
