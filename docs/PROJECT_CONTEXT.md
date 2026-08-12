@@ -289,6 +289,34 @@ Formula1-Dashboard/
 
 ## Technical Decisions
 
+### Dashboard access control
+
+- Decision: Gate the whole API behind a single password. `POST
+  /api/v1/auth/login` issues an HttpOnly session cookie for the browser and a
+  long-lived bearer token for native clients; ASGI middleware refuses every
+  other request, HTTP and WebSocket alike. Access is required unless
+  `DASHBOARD_AUTH_REQUIRED=false` is set explicitly, and the application
+  refuses to start when it is required but unconfigured. The password is stored
+  as a PBKDF2-SHA256 hash (600,000 iterations, salted) in
+  `DASHBOARD_PASSWORD_HASH`; tokens are HMAC-SHA256 signed with
+  `DASHBOARD_SECRET_KEY`.
+- Rationale: The deployment target became a publicly reachable PaaS, and until
+  now every route was open to anyone who could reach the port — including the
+  endpoints that store and clear the F1 TV credential. There is one operator,
+  so a user table would be ceremony; a single password is the smallest control
+  that actually closes it. It is middleware rather than a per-route dependency
+  so a new route is protected because it exists, not because someone remembered
+  to decorate it — only the four paths in `PUBLIC_PATHS` are open, and each is
+  justified there. Required-by-default matters more than convenience: a control
+  that silently disables itself when unconfigured is worse than none, because
+  it looks present. Tokens are signed rather than stored because there is no
+  session table to keep; the cost is that an individual token cannot be
+  revoked, and rotating the secret key is what invalidates all of them at once.
+  This is unrelated to `app.live.f1_auth`, which authenticates the dashboard to
+  Formula 1 rather than a reader to the dashboard; the two share no secret.
+- Date: 2026-07-31
+- Status: implemented
+
 ### Repository language
 
 - Decision: Source documentation and project communication will continue in English.
