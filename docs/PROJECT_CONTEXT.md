@@ -232,10 +232,19 @@ Formula1-Dashboard/
 │   ├── Dockerfile
 │   ├── pyproject.toml
 │   └── uv.lock
+├── deploy/
+│   ├── Caddyfile
+│   ├── compose.prod.yaml
+│   ├── web.Dockerfile
+│   └── .env.example
+├── scripts/
+│   ├── prepare-existing-volumes.sh
+│   └── secure-existing-postgres.sh
 ├── docs/
 │   ├── AUTOMATIC_CURRENT_SEASON_PLANNING.md
 │   ├── BACKFILL_RUNTIME_POLICY.md
 │   ├── DATABASE_DESIGN.md
+│   ├── DEPLOYMENT.md
 │   ├── FASTF1_INGESTION_CONTRACT.md
 │   ├── HISTORICAL_API_DESIGN.md
 │   ├── HISTORICAL_SESSION_API_DESIGN.md
@@ -259,7 +268,10 @@ Formula1-Dashboard/
 - `backend/alembic/`: Alembic environment and reviewed migration revisions.
 - `backend/tests/`: Backend tests.
 - `frontend/src/`: React dashboard source, split by domain into `archive/`, `live/` and `shared/`, with `App.tsx` as the shell.
+- `deploy/`: The deployed stack — production compose, the Caddy front door, and the web image that builds and serves the dashboard.
+- `scripts/`: One-time operational upgrades for installations that predate the non-root images and the PostgreSQL password.
 - `docs/`: Architecture, decisions, and persistent project context.
+- `docs/DEPLOYMENT.md`: The deployed shape — single VPS behind Cloudflare, one origin, no published ports — with first-deployment steps, measured sizing, and the one-time upgrade scripts.
 - `docs/BACKFILL_RUNTIME_POLICY.md`: Accepted retry, backoff, heartbeat, lease recovery, fencing, current-season freshness, parent aggregation, and worker execution policy.
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic conventions, migration phases, tables, constraints, indexes, and recovery behavior.
 - `docs/FASTF1_INGESTION_CONTRACT.md`: Accepted one-session validation, identity, atomic replacement, failure, and idempotency contract.
@@ -332,6 +344,26 @@ Formula1-Dashboard/
   outside `.rail-footnote` because that element is hidden below 63rem, which
   would have left a phone with no way to sign out — found by the mobile browser
   suite.
+- Date: 2026-07-31
+- Status: implemented
+
+### Deployment shape
+
+- Decision: One VPS running the whole stack under `deploy/compose.prod.yaml`,
+  with Caddy serving the built dashboard and proxying `/api` on a single
+  origin, and `cloudflared` providing the only ingress. Images run as uid
+  10001, carry the code rather than mounting it, and publish no ports. Every
+  secret is required with no default. Documented in `docs/DEPLOYMENT.md`.
+- Rationale: A single origin is what lets the session cookie stay `SameSite=Lax`
+  with no CORS layer; splitting the dashboard and API across hostnames would
+  force `SameSite=None` and credentialed CORS, which is where this class of bug
+  lives, and would buy nothing for a dashboard one person loads. An outbound
+  tunnel means no inbound ports and no certificate management on the host. The
+  earlier PaaS candidates were dropped because volumes there attach to a single
+  service, and both `api` and `worker` need the FastF1 cache — a constraint a
+  single box does not have. Sizing comes from measurement rather than
+  estimation: the worker peaks near 300 MiB loading telemetry, so 2 GB is the
+  floor and 1 GB is not viable.
 - Date: 2026-07-31
 - Status: implemented
 
@@ -2204,10 +2236,11 @@ race-run classification remain intentionally unimplemented.
    Dutch Grand Prix on 2026-08-21.
 2. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
-4. Before production, add authentication/authorization, secret management,
-   secure PostgreSQL configuration, observability, backups, CI, deployment,
-   and any demonstrated background-job infrastructure. Reconsider manual job
-   cancellation and Redis only when measurements justify them.
+3. Before relying on the deployment, add backups with a restore that has
+   actually been performed, CI running the suites, and error reporting.
+   Authentication, secret handling, PostgreSQL passwords, non-root images and
+   the deployment itself are done; see `docs/DEPLOYMENT.md`. Reconsider manual
+   job cancellation and Redis only when measurements justify them.
 
 ## Run and Test Commands
 
