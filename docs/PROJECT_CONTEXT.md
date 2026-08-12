@@ -317,6 +317,24 @@ Formula1-Dashboard/
 - Date: 2026-07-31
 - Status: implemented
 
+### Dashboard sign-in surface
+
+- Decision: Gate the whole dashboard behind `AuthGate`, which asks
+  `/api/v1/auth/session` before rendering anything and shows `SignInScreen`
+  when a session is needed. The API client notifies a single listener on any
+  401, so a session that lapses mid-use returns the reader to sign-in rather
+  than filling the page with failed requests. Sign-out lives in the rail
+  outside the footnote, and the password is never written to storage.
+- Rationale: The state has to come from the backend because the session lives
+  in an HttpOnly cookie the page cannot read, which is also what keeps script
+  away from it. Handling 401 once in the client rather than at each of the
+  several dozen call sites means a new call site cannot forget. Sign-out sits
+  outside `.rail-footnote` because that element is hidden below 63rem, which
+  would have left a phone with no way to sign out — found by the mobile browser
+  suite.
+- Date: 2026-07-31
+- Status: implemented
+
 ### Repository language
 
 - Decision: Source documentation and project communication will continue in English.

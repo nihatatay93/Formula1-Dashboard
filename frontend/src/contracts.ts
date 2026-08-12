@@ -427,6 +427,26 @@ export interface LapSummaryRequest {
   include_deleted?: boolean;
 }
 
+/**
+ * Whether this deployment requires a sign-in, and whether the caller has one.
+ *
+ * `required: false` is a deployment that was deliberately left open — a local
+ * stack bound to loopback — and the dashboard renders straight through.
+ */
+export interface AuthSession {
+  authenticated: boolean;
+  required: boolean;
+  kind: string | null;
+  expires_at: string | null;
+}
+
+export interface LoginResult {
+  authenticated: boolean;
+  /** For native clients. The browser is authenticated by the cookie instead. */
+  token: string;
+  expires_at: string;
+}
+
 export interface ApiErrorResponse {
   detail?: {
     code?: string;

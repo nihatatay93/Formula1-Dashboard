@@ -33,6 +33,16 @@ async function installApiRoutes(page: Page) {
     if (path === "/api/health/ready") {
       return json(route, { status: "ready", database: "ready" });
     }
+    if (path === "/api/v1/auth/session") {
+      // These workflows run against a deployment left open on purpose, which
+      // reports itself authenticated; sign-in has its own spec.
+      return json(route, {
+        authenticated: true,
+        required: false,
+        kind: null,
+        expires_at: null,
+      });
+    }
     if (path === "/api/v1/upstreams/fastf1/usage") {
       return json(route, requestBudget);
     }

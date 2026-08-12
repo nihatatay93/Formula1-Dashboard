@@ -3,9 +3,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   checkApiReadiness,
   ensureSeasonBackfill,
+  getAuthSession,
   getBackfillJob,
   getFastF1RequestBudget,
   getSeasonOverview,
+  signOut,
 } from "./api";
 import type {
   BackfillJob,
@@ -82,6 +84,9 @@ function App() {
     null,
   );
   const [activeView, setActiveView] = useState<DashboardView>("home");
+  // Only true when access control is on and a session exists, so the rail
+  // offers "Sign out" on a deployment where it means something.
+  const [signedIn, setSignedIn] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
   const supportedYears = useMemo(
@@ -132,6 +137,24 @@ function App() {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getAuthSession(controller.signal)
+      .then((session) => setSignedIn(session.required && session.authenticated))
+      .catch(() => setSignedIn(false));
+    return () => controller.abort();
+  }, []);
+
+  async function handleSignOut() {
+    try {
+      await signOut();
+    } finally {
+      // AuthGate listens for the 401 that the next request will produce, but
+      // a reload is the honest way to drop every poller and cached view.
+      window.location.reload();
+    }
+  }
 
   useEffect(() => {
     if (apiState !== "ready") {
@@ -332,9 +355,11 @@ function App() {
         onRefresh={() => void handleRefresh()}
         onSelectView={setActiveView}
         onSelectYear={setSelectedYear}
+        onSignOut={() => void handleSignOut()}
         season={season}
         seasonLoading={seasonLoading}
         sessionOpen={selectedSession !== null}
+        signedIn={signedIn}
         supportedYears={supportedYears}
         view={activeView}
         year={selectedYear}

@@ -555,6 +555,93 @@ th,
   font-variant-numeric: tabular-nums;
 }
 
+/* Sign-in. Deliberately unlike the dashboard: one card on an empty canvas, so
+   there is nothing to read and nothing to do but sign in. */
+.sign-in {
+  display: flex;
+  min-height: 100dvh;
+  padding: var(--s5);
+  align-items: center;
+  justify-content: center;
+  background: var(--canvas);
+}
+
+.sign-in__card {
+  display: flex;
+  width: min(26rem, 100%);
+  flex-direction: column;
+  gap: var(--s4);
+  padding: var(--s6);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel);
+}
+
+.sign-in__brand {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+}
+
+.sign-in__brand h1 {
+  font-size: var(--t-h2);
+}
+
+.sign-in__blurb {
+  color: var(--ink-dim);
+  font-size: var(--t-body);
+  line-height: 1.6;
+}
+
+.sign-in__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  color: var(--muted);
+  font-size: var(--t-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.sign-in__field input {
+  padding: var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--panel-inset);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-base);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.sign-in__field input:focus-visible {
+  border-color: var(--data);
+  outline: 2px solid var(--data);
+  outline-offset: 1px;
+}
+
+.sign-in__card .primary-action {
+  justify-content: center;
+}
+
+.sign-in__footnote {
+  color: var(--muted-dark);
+  font-size: var(--t-micro);
+  line-height: 1.6;
+}
+
+/* Survives the mobile collapse that hides the rail's other readouts: signing
+   out has to stay reachable on a phone. */
+.rail-account {
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line);
+}
+
+.rail-account .text-action {
+  text-align: left;
+}
+
 /* Landing page. Two cards, one per path, each carrying the state of its own
    side so the choice is made with the facts rather than the labels. */
 .home {
