@@ -29,6 +29,16 @@ PBKDF2_ITERATIONS = 600_000
 PBKDF2_SALT_BYTES = 16
 HASH_PREFIX = "pbkdf2_sha256"
 
+#: Fields are separated with "." rather than the conventional "$".
+#:
+#: The hash is carried in an environment variable, and "$" is a substitution
+#: character almost everywhere it would be written: Docker Compose interpolates
+#: it inside an env file, and so do most shells. A "$"-separated hash pasted
+#: into deploy/.env silently loses everything after the first field, and the
+#: only symptom is that the correct password stops being accepted. Base64url
+#: uses "-" and "_" but never ".", so "." separates the fields unambiguously.
+FIELD_SEPARATOR = "."
+
 #: A browser session. Short enough that a stolen cookie expires, long enough
 #: that a race weekend does not need a re-login.
 DEFAULT_SESSION_TTL_HOURS = 24 * 7
@@ -112,8 +122,8 @@ def hash_password(password: str) -> str:
     digest = hashlib.pbkdf2_hmac(
         "sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS
     )
-    return (
-        f"{HASH_PREFIX}${PBKDF2_ITERATIONS}${_encode(salt)}${_encode(digest)}"
+    return FIELD_SEPARATOR.join(
+        (HASH_PREFIX, str(PBKDF2_ITERATIONS), _encode(salt), _encode(digest))
     )
 
 
@@ -127,7 +137,11 @@ def verify_password(password: object, encoded: str | None) -> bool:
     if not isinstance(password, str) or not encoded:
         return False
     try:
-        prefix, iterations, salt, digest = encoded.split("$")
+        # "$" is still read, so a hash generated before the separator changed
+        # keeps working rather than failing as a wrong password.
+        prefix, iterations, salt, digest = encoded.replace("$", FIELD_SEPARATOR).split(
+            FIELD_SEPARATOR
+        )
         if prefix != HASH_PREFIX:
             return False
         candidate = hashlib.pbkdf2_hmac(

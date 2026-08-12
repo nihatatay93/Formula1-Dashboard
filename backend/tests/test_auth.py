@@ -110,6 +110,26 @@ class TestPasswordHashing:
     def test_a_malformed_stored_hash_never_grants_access(self, stored: object) -> None:
         assert verify_password(PASSWORD, stored) is False  # type: ignore[arg-type]
 
+    def test_the_hash_survives_an_env_file(self) -> None:
+        """It is carried in an environment variable, so it must be inert there.
+
+        The conventional "$" separator is a substitution character in Docker
+        Compose env files and in most shells: a "$"-separated hash pasted into
+        deploy/.env silently loses everything after the first field, and the
+        only symptom is that the correct password stops working.
+        """
+        encoded = hash_password(PASSWORD)
+
+        assert "$" not in encoded
+        assert "`" not in encoded and '"' not in encoded and "'" not in encoded
+
+    def test_a_hash_using_the_old_separator_still_verifies(self) -> None:
+        # Anyone who generated one before the separator changed keeps working.
+        encoded = hash_password(PASSWORD)
+        legacy = encoded.replace(".", "$", 3)
+
+        assert verify_password(PASSWORD, legacy) is True
+
     def test_a_short_password_cannot_be_set(self) -> None:
         with pytest.raises(AuthConfigurationError):
             hash_password("short")
