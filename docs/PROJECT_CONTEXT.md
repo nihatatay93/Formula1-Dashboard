@@ -431,13 +431,19 @@ Formula1-Dashboard/
 - Decision: Organise the frontend by domain: `src/archive/`, `src/live/`,
   `src/shared/`, with `App.tsx` reduced to shell and routing and each view
   rendering itself. `api.ts` and `contracts.ts` stay at the root as the shared
-  edge against the backend.
+  edge against the backend. Container components own data lifecycle and state;
+  everything they render is presentational and takes props. `noUnusedLocals`
+  and `noUnusedParameters` are enabled so dead symbols fail the build.
 - Rationale: `App.tsx` had grown to 1238 lines holding the rail, three views,
-  seven presentational components and the whole archive data lifecycle, and a
-  flat `src/` said nothing about which parts belonged to which path. The layout
-  now states the same separation the UI does, so a change to live timing has an
-  obvious blast radius. The move was made as its own commit, with no behaviour
-  change, so the subsequent restructuring was reviewable on its own.
+  seven presentational components and the whole archive data lifecycle, and
+  `SessionExplorer.tsx` to 1229 holding seven more plus the session lifecycle.
+  A flat `src/` said nothing about which parts belonged to which path. The
+  layout now states the same separation the UI does, so a change to live timing
+  has an obvious blast radius. The file moves were made as their own commit,
+  with no behaviour change, so the restructuring that followed was reviewable
+  on its own. The unused-symbol checks were turned on after the split surfaced
+  dead imports that `strict` alone did not catch, including a formatter in the
+  live view that nothing had called for some time.
 - Date: 2026-07-31
 - Status: implemented
 
@@ -2379,10 +2385,16 @@ mounted writable at `/live-sessions`.
   `EventCard.tsx`, `BackfillPanels.tsx`: Coverage metrics, request-budget
   visualization, detailed execution/countdown progress, and event-grouped
   session states.
-- `frontend/src/archive/SessionExplorer.tsx`: Session metadata and availability,
-  entry/result classification, participant selection, compound-colored
-  loaded-lap pace profile, detailed lap table, snapshot-safe keyset pagination,
-  and ephemeral two-participant selected-lap analysis.
+- `frontend/src/archive/SessionExplorer.tsx`: Container for one session — data
+  lifecycle, participant and lap selection, snapshot-safe keyset pagination.
+- `frontend/src/archive/SessionSummary.tsx`, `ResultsTable.tsx`,
+  `LapPaceChart.tsx`, `LapTable.tsx`: Session metadata and availability,
+  entry/result classification, compound-coloured loaded-lap pace profile, and
+  the detailed lap table.
+- `frontend/src/archive/PaceAnalysisPanel.tsx`, `PaceTrendChart.tsx`: Ephemeral
+  two-to-four-participant selected-lap analysis and its lap-time trend.
+- `frontend/src/archive/sessionFormat.ts`: Lap, sector, delta and compound
+  formatting for the session workspace.
 - `frontend/src/archive/LapTelemetryPanel.tsx`, `LapTelemetryChart.tsx`,
   `lapTelemetry.ts`: On-demand per-lap telemetry with bounded polling and
   keyset paging, plotted as facets over a shared distance axis.

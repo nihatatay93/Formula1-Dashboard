@@ -32,24 +32,6 @@ const CONNECTION_LABELS: Record<ConnectionState, string> = {
   closed: "Disconnected",
 };
 
-const timeFormatter = new Intl.DateTimeFormat("en", {
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  timeZone: "UTC",
-});
-
-function formatClock(value: string | null): string {
-  if (!value) {
-    return "—";
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return "—";
-  }
-  return `${timeFormatter.format(parsed)} UTC`;
-}
-
 function humanize(value: string): string {
   return value
     .split("_")

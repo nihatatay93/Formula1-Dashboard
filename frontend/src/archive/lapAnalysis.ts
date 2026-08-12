@@ -1,4 +1,18 @@
-import type { LapSummary } from "../contracts";
+import type { LapSummary, SessionEntryResult } from "../contracts";
+
+/**
+ * One participant's selected laps.
+ *
+ * The session and snapshot are carried with the selection so a comparison can
+ * be discarded the moment either moves: laps chosen against one archive
+ * snapshot are not comparable with laps from another.
+ */
+export interface AnalysisSelection {
+  entry: SessionEntryResult;
+  laps: LapSummary[];
+  sessionId: string;
+  snapshotCompletedAt: string;
+}
 
 export interface LapSelectionQuality {
   deleted: number;
