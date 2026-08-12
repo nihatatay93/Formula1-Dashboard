@@ -335,6 +335,30 @@ Formula1-Dashboard/
 - Date: 2026-07-31
 - Status: implemented
 
+### The companion route exists only where it can work
+
+- Decision: Mount the root `/auth` route the FastF1 companion extension posts
+  to only when `LIVE_TIMING_COMPANION_ENABLED` is set, which defaults to off
+  and is enabled by the local compose file. The gate receives its OPTIONS
+  exemption from the caller, so it is empty unless that route is mounted, and
+  `companion_url` is null wherever the route is absent.
+- Rationale: The extension posts to `http://localhost:<port>/auth` on the
+  reader's own machine. A deployed instance is not that machine, so the round
+  trip can never complete there — the route could only ever publish a
+  token-accepting endpoint with wildcard CORS for no benefit. Off by default
+  follows the same rule as access control: the permissive thing is opted into
+  where it is justified, not out of where it is dangerous. The wildcard origin
+  remains on a local instance because extension origins are per-install
+  identifiers that cannot be pinned, exactly as FastF1's own local auth server
+  does; it never carries `Access-Control-Allow-Credentials`, which is what
+  would turn a permissive route into a session-stealing one, and it needs no
+  cookie because the extension carries the token in its body. Withholding
+  `companion_url` matters as much as withholding the route: the dashboard would
+  otherwise offer a one-click sign-in that silently goes nowhere, when the
+  manual paste beside it does work.
+- Date: 2026-07-31
+- Status: implemented
+
 ### Repository language
 
 - Decision: Source documentation and project communication will continue in English.

@@ -37,10 +37,11 @@ PUBLIC_PATHS = frozenset(
     }
 )
 
-#: The only path that answers a CORS preflight, for the FastF1 companion
+#: The only path that can answer a CORS preflight, for the FastF1 companion
 #: extension. Exempting OPTIONS everywhere would leave the gate open on any
-#: route that later grows an OPTIONS handler, so the exemption is named.
-PREFLIGHT_PATHS = frozenset({"/auth"})
+#: route that later grows an OPTIONS handler, so the exemption is named — and
+#: the caller passes it only when that route is actually mounted.
+COMPANION_PREFLIGHT_PATHS = frozenset({"/auth"})
 
 #: A single password is guessable given enough attempts, so attempts are
 #: bounded. State is per process and resets on restart, which is acceptable
@@ -282,9 +283,18 @@ class AuthenticationMiddleware:
     deliberately open is named in ``PUBLIC_PATHS``.
     """
 
-    def __init__(self, app: ASGIApp, *, settings: AuthSettings) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        settings: AuthSettings,
+        preflight_paths: frozenset[str] = frozenset(),
+    ) -> None:
         self._app = app
         self._settings = settings
+        # Empty unless a route that needs a CORS preflight is mounted, so an
+        # unauthenticated OPTIONS has nowhere to land by default.
+        self._preflight_paths = preflight_paths
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket") or not self._settings.required:
@@ -293,7 +303,7 @@ class AuthenticationMiddleware:
 
         path = scope.get("path", "")
         if path in PUBLIC_PATHS or (
-            path in PREFLIGHT_PATHS
+            path in self._preflight_paths
             and scope["type"] == "http"
             and scope.get("method") == "OPTIONS"
         ):

@@ -42,6 +42,13 @@ class LiveTimingSettings:
     token_ttl_hours: int = 96
     #: Port the companion extension is told to post the token back to.
     auth_callback_port: int = 8000
+    #: Whether to expose the root ``/auth`` route the FastF1 companion
+    #: extension posts to. Off by default: the extension posts to
+    #: ``http://localhost:<port>`` on the reader's own machine, so the route is
+    #: only reachable — and only meaningful — when the API runs there. On a
+    #: deployed instance it can never be used, and exposing it would publish a
+    #: token-accepting endpoint with permissive CORS for no benefit.
+    companion_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.log_directory, str) or not self.log_directory.strip():
@@ -129,6 +136,11 @@ class LiveTimingSettings:
                 "LIVE_TIMING_REPLAY_SPEED",
                 defaults.replay_speed,
             ),
+            companion_enabled=_environment_flag(
+                values,
+                "LIVE_TIMING_COMPANION_ENABLED",
+                defaults.companion_enabled,
+            ),
             token_path=values.get("LIVE_TIMING_TOKEN_PATH", defaults.token_path),
             token_ttl_hours=_environment_integer(
                 values,
@@ -195,6 +207,17 @@ def calculate_reconnect_delay(
 def _positive_integer(value: object, field: str) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise LiveTimingPolicyError(f"{field} must be a positive integer")
+
+
+def _environment_flag(
+    values: Mapping[str, str],
+    key: str,
+    default: bool,
+) -> bool:
+    raw = values.get(key)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _environment_integer(

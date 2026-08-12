@@ -52,6 +52,11 @@ services:
       FASTF1_CACHE_PATH: /cache/fastf1
       LIVE_TIMING_LOG_DIRECTORY: /live-sessions
       LIVE_TIMING_TOKEN_PATH: /live-auth/f1-token.json
+      # The FastF1 companion extension posts to http://localhost:8000/auth on
+      # your own machine, so the route it needs only works when the API runs
+      # there. Enabled here, off by default, and deliberately left off on a
+      # deployed instance where it could never complete the round trip.
+      LIVE_TIMING_COMPANION_ENABLED: ${LIVE_TIMING_COMPANION_ENABLED:-true}
       # Access control is required by default. This local stack is bound to
       # loopback, so it opts out explicitly rather than carrying a password.
       # A deployed instance must leave this unset and set DASHBOARD_PASSWORD_HASH

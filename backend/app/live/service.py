@@ -86,9 +86,18 @@ class LiveService:
         return self._tokens
 
     @property
-    def companion_auth_url(self) -> str:
+    def companion_auth_url(self) -> str | None:
         """Primes the companion extension with this API's port, then sends the
-        browser to formula1.com to sign in."""
+        browser to formula1.com to sign in.
+
+        None where the companion route is not mounted. The extension posts the
+        token to ``http://localhost:<port>`` on the reader's own machine, so on
+        a deployed instance the round trip cannot complete — offering the link
+        anyway would send someone through a sign-in that silently goes nowhere.
+        The dashboard falls back to the manual paste, which does work.
+        """
+        if not self._settings.companion_enabled:
+            return None
         return (
             "https://f1login.fastf1.dev"
             f"?port={self._settings.auth_callback_port}"
