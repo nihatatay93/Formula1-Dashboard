@@ -335,6 +335,27 @@ Formula1-Dashboard/
 - Date: 2026-07-31
 - Status: implemented
 
+### PostgreSQL requires a password
+
+- Decision: Drop `POSTGRES_HOST_AUTH_METHOD: trust`, set `POSTGRES_PASSWORD`
+  and initialise clusters with `--auth-host=scram-sha-256`, carrying the
+  credential in every `DATABASE_URL`. The local compose default is a stated
+  development credential; a deployed instance supplies its own.
+  `scripts/secure-existing-postgres.sh` closes the same gap on a volume that
+  was already initialised.
+- Rationale: `trust` accepts any connection without a credential, so anything
+  that could reach the port could read and write the whole archive. Loopback
+  binding was the only control. The upgrade script exists because the fix is
+  not complete without it: `POSTGRES_PASSWORD` is honoured only when a cluster
+  is first created, so an existing volume keeps the `host all all all trust`
+  line it was initialised with and stays open no matter what compose says —
+  verified on the development volume, which still accepted a passwordless
+  connection after the compose change alone. The script sets the role password,
+  rewrites `pg_hba.conf`, reloads, and then proves both halves: that a
+  passwordless connection is refused and that the password is accepted.
+- Date: 2026-07-31
+- Status: implemented
+
 ### The companion route exists only where it can work
 
 - Decision: Mount the root `/auth` route the FastF1 companion extension posts
