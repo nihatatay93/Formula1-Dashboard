@@ -1471,10 +1471,13 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: implemented
 
-### Interpolated RPM is rounded, not rejected
+### Real telemetry sits slightly outside its nominal range
 
 - Decision: Round the `RPM` channel in `telemetry_normalization` instead of
-  requiring an integral value. `nGear` and `DRS` stay strict.
+  requiring an integral value, and clamp `Distance`, `RelativeDistance` and
+  `Throttle` into range when they exceed it by less than a stated tolerance.
+  `nGear` and `DRS` stay strict, and an excursion beyond the tolerance is still
+  refused as a corrupt snapshot.
 - Rationale: This was a defect that made telemetry ingestion fail for every
   lap. FastF1's `get_telemetry(frequency="original")` merges car data with
   position data and interpolates onto the combined time base, so RPM arrives
@@ -1487,6 +1490,15 @@ Formula1-Dashboard/
   fractional value there really does mean a corrupt snapshot and is still
   refused. Verified after the fix: 776 samples for one Albert Park lap,
   44.7–296.4 km/h across gears 1–8 over 5,248 m.
+  The range checks were the same mistake in a second form, found later while
+  measuring resource use for deployment: three of four laps on that same
+  session still failed, because `Distance` starts a few millimetres negative
+  (FastF1 integrates it from speed, so the lap boundary undershoots) and the
+  ECU reports throttle a little over full — observed at -0.0049 m and 104%.
+  One such sample discarded the entire lap. `relative_distance` already carried
+  a 1.01 maximum for exactly this reason, so the tolerance generalises an
+  allowance the schema had already accepted rather than inventing one. After
+  the change all four laps normalise, 633–776 samples each.
 - Date: 2026-07-31
 - Status: implemented
 

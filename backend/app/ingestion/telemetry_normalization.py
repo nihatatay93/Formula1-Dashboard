@@ -8,6 +8,14 @@ from typing import Any
 import pandas as pd
 from pandas import DataFrame
 
+#: Allowances for channels the upstream reports slightly outside their nominal
+#: range. Each is generous next to the excursions actually observed — distance
+#: at -0.005 m and throttle at 104% — and far too small to let a corrupt
+#: snapshot through as plausible data.
+DISTANCE_TOLERANCE_M = 1.0
+RELATIVE_DISTANCE_TOLERANCE = 0.01
+THROTTLE_TOLERANCE_PERCENT = 5.0
+
 
 class TelemetryNormalizationError(ValueError):
     """Raised when a FastF1 telemetry frame cannot be persisted safely."""
@@ -57,11 +65,16 @@ def normalize_fastf1_telemetry(
                 sample_index=sample_index,
                 lap_time_us=lap_time_us,
                 session_time_us=_duration_us(source.get("SessionTime")),
-                distance_m=_float(source.get("Distance"), minimum=0),
+                # A lap's first samples can be a few millimetres negative,
+                # because distance is integrated from speed at the lap boundary.
+                distance_m=_float(
+                    source.get("Distance"), minimum=0, tolerance=DISTANCE_TOLERANCE_M
+                ),
                 relative_distance=_float(
                     source.get("RelativeDistance"),
                     minimum=0,
                     maximum=1.01,
+                    tolerance=RELATIVE_DISTANCE_TOLERANCE,
                 ),
                 speed_kph=_float(source.get("Speed"), minimum=0),
                 # RPM is a continuous measurement, and FastF1 returns it already
@@ -72,10 +85,12 @@ def normalize_fastf1_telemetry(
                 # fractional value there really would mean a corrupt snapshot.
                 rpm=_integer(source.get("RPM"), minimum=0, rounded=True),
                 gear=_integer(source.get("nGear"), minimum=0, maximum=20),
+                # The ECU reports a little over full throttle; observed at 104.
                 throttle_percent=_float(
                     source.get("Throttle"),
                     minimum=0,
                     maximum=100,
+                    tolerance=THROTTLE_TOLERANCE_PERCENT,
                 ),
                 brake=_boolean(source.get("Brake")),
                 drs=_integer(source.get("DRS"), minimum=0, maximum=20),
@@ -116,7 +131,20 @@ def _float(
     *,
     minimum: float | None = None,
     maximum: float | None = None,
+    tolerance: float = 0.0,
 ) -> float | None:
+    """Read a continuous channel, optionally clamping a small excursion.
+
+    Real telemetry sits slightly outside its nominal range: throttle is
+    reported a little over 100%, and distance — which FastF1 derives by
+    integrating speed — starts a few millimetres negative. Those are artifacts
+    of measurement and derivation, not corrupt data, and rejecting the sample
+    discarded the whole lap. Within ``tolerance`` the value is clamped to the
+    bound; beyond it the snapshot really is wrong and is still refused.
+
+    ``relative_distance`` already carried a 1.01 maximum for exactly this
+    reason; this generalises that allowance rather than introducing it.
+    """
     if value is None or _missing(value):
         return None
     if isinstance(value, bool):
@@ -132,9 +160,13 @@ def _float(
             "telemetry channel must be finite"
         )
     if minimum is not None and normalized < minimum:
-        raise TelemetryNormalizationError("telemetry channel is below range")
+        if normalized < minimum - tolerance:
+            raise TelemetryNormalizationError("telemetry channel is below range")
+        normalized = minimum
     if maximum is not None and normalized > maximum:
-        raise TelemetryNormalizationError("telemetry channel is above range")
+        if normalized > maximum + tolerance:
+            raise TelemetryNormalizationError("telemetry channel is above range")
+        normalized = maximum
     return normalized
 
 
