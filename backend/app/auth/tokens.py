@@ -65,6 +65,13 @@ def read_token(
     """Verify a token and return its claims, or raise ``InvalidTokenError``."""
     if not isinstance(token, str) or not token or len(token) > MAX_TOKEN_LENGTH:
         raise InvalidTokenError("token is missing or unusable")
+    # A base64url token is ASCII by construction. Headers arrive latin-1
+    # decoded from the wire, so without this an unauthenticated caller could
+    # put raw high bytes in Authorization or the cookie and reach either
+    # str.encode("ascii") or hmac.compare_digest, both of which raise outside
+    # InvalidTokenError and would surface as a 500 rather than a refusal.
+    if not token.isascii():
+        raise InvalidTokenError("token contains non-ASCII characters")
     encoded, separator, signature = token.partition(".")
     if not separator or not encoded or not signature:
         raise InvalidTokenError("token is malformed")
@@ -84,7 +91,9 @@ def read_token(
     try:
         issued_at = datetime.fromtimestamp(int(payload["iat"]), tz=UTC)
         expires_at = datetime.fromtimestamp(int(payload["exp"]), tz=UTC)
-    except (KeyError, TypeError, ValueError, OSError) as error:
+    except (KeyError, TypeError, ValueError, OSError, OverflowError) as error:
+        # OverflowError included: a timestamp past the platform's time_t range
+        # is malformed input, not an internal fault.
         raise InvalidTokenError("token timestamps are malformed") from error
 
     moment = now if now is not None else datetime.now(tz=UTC)

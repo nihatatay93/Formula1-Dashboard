@@ -160,3 +160,24 @@ test("the right password opens the dashboard", async ({ page }) => {
   // A gated deployment offers a way back out.
   await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
 });
+
+test("a sign-out that never reached the backend says so", async ({ page }) => {
+  await installGatedApi(page);
+  // The logout call fails after the session is already established.
+  await page.route("**/api/v1/auth/logout", (route) => route.abort("failed"));
+  await page.goto("/");
+
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(
+    page.getByRole("navigation", { name: "Dashboard sections" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Sign out" }).click();
+
+  // Reloading regardless would look like success while the cookie is valid.
+  await expect(page.getByText("Still signed in")).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Dashboard sections" }),
+  ).toBeVisible();
+});

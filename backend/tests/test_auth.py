@@ -4,14 +4,22 @@ Every test here builds an app with the gate switched on, because the rest of
 the suite runs with it off.
 """
 
+import hmac
+import json
+from base64 import urlsafe_b64encode
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app.auth.api import SESSION_COOKIE, reset_attempt_limiter
+from app.auth.api import (
+    SESSION_COOKIE,
+    AuthenticationMiddleware,
+    reset_attempt_limiter,
+)
 from app.auth.policy import (
     AuthConfigurationError,
     AuthSettings,
@@ -23,6 +31,10 @@ from app.main import create_app
 
 PASSWORD = "a-long-enough-password"
 SECRET = "s" * 48
+
+
+def _encode(raw: bytes) -> str:
+    return urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
 def settings(**overrides: object) -> AuthSettings:
@@ -148,6 +160,30 @@ class TestTokens:
         with pytest.raises(InvalidTokenError):
             read_token(token, secret_key=SECRET)
 
+    @pytest.mark.parametrize("token", ["\xff\xff.sig", "abc.\xff\xff", "\xff"])
+    def test_non_ascii_tokens_are_refused_not_crashed_on(self, token: str) -> None:
+        """Headers arrive latin-1 decoded, so high bytes reach this function.
+
+        Without the ASCII guard these hit str.encode("ascii") or
+        hmac.compare_digest, which raise UnicodeEncodeError and TypeError —
+        neither an InvalidTokenError, so the gate would 500 rather than refuse.
+        """
+        with pytest.raises(InvalidTokenError):
+            read_token(token, secret_key=SECRET)
+
+    @pytest.mark.parametrize("exp", [10**20, -(10**20)])
+    def test_an_out_of_range_expiry_is_refused(self, exp: int) -> None:
+        # datetime.fromtimestamp raises OverflowError past the platform range.
+        payload = _encode(
+            json.dumps({"kind": "session", "iat": 1, "exp": exp}).encode("utf-8")
+        )
+        signature = _encode(
+            hmac.new(SECRET.encode(), payload.encode("ascii"), sha256).digest()
+        )
+
+        with pytest.raises(InvalidTokenError):
+            read_token(f"{payload}.{signature}", secret_key=SECRET)
+
 
 class TestTheGate:
     def test_an_unauthenticated_request_is_refused(self, client: TestClient) -> None:
@@ -256,14 +292,30 @@ class TestTheGate:
         assert "surprise" in response.text
         assert "leak-me" not in response.text
 
-    def test_repeated_failures_lock_sign_in(self, client: TestClient) -> None:
+    def test_repeated_failures_lock_out_further_guesses(
+        self, client: TestClient
+    ) -> None:
         for _ in range(8):
+            client.post("/api/v1/auth/login", json={"password": "wrong-password"})
+
+        response = client.post("/api/v1/auth/login", json={"password": "another-wrong"})
+
+        assert response.status_code == 429
+        assert response.json()["detail"]["code"] == "too_many_attempts"
+
+    def test_a_lockout_cannot_shut_the_owner_out(self, client: TestClient) -> None:
+        """The lockout must refuse guesses, not the operator.
+
+        Evaluating it before the password would let anyone deny the owner
+        access indefinitely by guessing wrongly every few minutes.
+        """
+        for _ in range(20):
             client.post("/api/v1/auth/login", json={"password": "wrong-password"})
 
         response = client.post("/api/v1/auth/login", json={"password": PASSWORD})
 
-        assert response.status_code == 429
-        assert response.json()["detail"]["code"] == "too_many_attempts"
+        assert response.status_code == 200
+        assert response.json()["authenticated"] is True
 
     def test_signing_out_clears_the_session(self, client: TestClient) -> None:
         client.post("/api/v1/auth/login", json={"password": PASSWORD})
@@ -338,3 +390,59 @@ class TestWithoutAccessControl:
                 "kind": None,
                 "expires_at": None,
             }
+
+
+@pytest.mark.asyncio
+class TestHostileHeadersAtTheWire:
+    """Driven at ASGI level, because an HTTP client will not send these.
+
+    Header bytes are latin-1 decoded by the server, so a hand-written client
+    can put raw high bytes in Authorization. httpx refuses to, which is why
+    these cannot be expressed through TestClient.
+    """
+
+    async def gate_status(self, raw_header: bytes) -> int:
+        settings_with_gate = settings()
+
+        async def downstream(scope, receive, send) -> None:  # noqa: ANN001
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = AuthenticationMiddleware(
+            downstream, settings=settings_with_gate
+        )
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/v1/live/session",
+            "headers": [(b"authorization", raw_header)],
+        }
+        sent: list[dict] = []
+
+        async def send(message: dict) -> None:
+            sent.append(message)
+
+        async def receive() -> dict:
+            return {"type": "http.request"}
+
+        await middleware(scope, receive, send)
+        return next(
+            message["status"]
+            for message in sent
+            if message["type"] == "http.response.start"
+        )
+
+    @pytest.mark.parametrize(
+        "raw_header",
+        [
+            b"Bearer abc.def",
+            b"Bearer \xff\xff.sig",
+            b"Bearer abc.\xff\xff",
+            b"Bearer \xc3\x28",
+            b"Basic abc",
+        ],
+    )
+    async def test_raw_bytes_are_refused_not_a_server_error(
+        self, raw_header: bytes
+    ) -> None:
+        assert await self.gate_status(raw_header) == 401

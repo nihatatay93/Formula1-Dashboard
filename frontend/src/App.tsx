@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   checkApiReadiness,
   ensureSeasonBackfill,
-  getAuthSession,
   getBackfillJob,
   getFastF1RequestBudget,
   getSeasonOverview,
@@ -14,6 +13,7 @@ import type {
   FastF1RequestBudget,
   SeasonOverview,
 } from "./contracts";
+import { useAccessControlled } from "./AuthGate";
 import DashboardRail, { isArchiveView } from "./DashboardRail";
 import type { DashboardView } from "./DashboardRail";
 import Home from "./Home";
@@ -84,9 +84,10 @@ function App() {
     null,
   );
   const [activeView, setActiveView] = useState<DashboardView>("home");
-  // Only true when access control is on and a session exists, so the rail
-  // offers "Sign out" on a deployment where it means something.
-  const [signedIn, setSignedIn] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+  // Read from the gate rather than asked for again: it already established
+  // this, and a second answer could disagree with the one that let us render.
+  const signedIn = useAccessControlled();
   const [now, setNow] = useState(() => Date.now());
 
   const supportedYears = useMemo(
@@ -138,22 +139,21 @@ function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    getAuthSession(controller.signal)
-      .then((session) => setSignedIn(session.required && session.authenticated))
-      .catch(() => setSignedIn(false));
-    return () => controller.abort();
-  }, []);
-
   async function handleSignOut() {
+    setSignOutError(null);
     try {
       await signOut();
-    } finally {
-      // AuthGate listens for the 401 that the next request will produce, but
-      // a reload is the honest way to drop every poller and cached view.
-      window.location.reload();
+    } catch {
+      // Reloading regardless would look like a successful sign-out while the
+      // cookie is still valid, and the reader would believe they had left.
+      setSignOutError(
+        "Sign-out did not reach the backend, so this session is still active. Check your connection and try again.",
+      );
+      return;
     }
+    // Only once the session is really gone: a reload is the honest way to drop
+    // every poller and cached view.
+    window.location.reload();
   }
 
   useEffect(() => {
@@ -385,6 +385,13 @@ function App() {
         </header>
 
         <main className="workspace-content" aria-labelledby="dashboard-title">
+          {signOutError ? (
+            <div className="inline-alert inline-alert--danger" role="alert">
+              <strong>Still signed in</strong>
+              <span>{signOutError}</span>
+            </div>
+          ) : null}
+
           {activeView === "home" ? (
             <Home
               onNavigate={setActiveView}

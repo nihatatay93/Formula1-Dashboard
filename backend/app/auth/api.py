@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Annotated
 
@@ -36,6 +36,11 @@ PUBLIC_PATHS = frozenset(
         "/api/v1/auth/session",
     }
 )
+
+#: The only path that answers a CORS preflight, for the FastF1 companion
+#: extension. Exempting OPTIONS everywhere would leave the gate open on any
+#: route that later grows an OPTIONS handler, so the exemption is named.
+PREFLIGHT_PATHS = frozenset({"/auth"})
 
 #: A single password is guessable given enough attempts, so attempts are
 #: bounded. State is per process and resets on restart, which is acceptable
@@ -158,26 +163,33 @@ async def login(
             code="auth_not_required",
             message="This deployment does not require sign-in.",
         )
-    if _limiter.locked():
-        raise ApiError(
-            status_code=429,
-            code="too_many_attempts",
-            message=(
-                "Too many failed sign-in attempts. Try again in "
-                f"{_limiter.seconds_remaining()} seconds."
-            ),
-        )
-
     password = await read_password(request)
-    if not verify_password(password, settings.password_hash):
+
+    # The password is checked even while locked out, so the lockout can only
+    # ever refuse a wrong password. Checking it first instead would let anyone
+    # keep the operator permanently locked out of their own dashboard by
+    # guessing wrongly every few minutes — a denial of service that costs the
+    # attacker nothing. Guessing is still bounded: each attempt pays for a
+    # 600,000-iteration hash, and a wrong one is refused outright while locked.
+    if verify_password(password, settings.password_hash):
+        _limiter.record_success()
+    else:
         _limiter.record_failure()
+        if _limiter.locked():
+            raise ApiError(
+                status_code=429,
+                code="too_many_attempts",
+                message=(
+                    "Too many failed sign-in attempts. Try again in "
+                    f"{_limiter.seconds_remaining()} seconds."
+                ),
+            )
         # Deliberately identical for a wrong password and a malformed one.
         raise ApiError(
             status_code=401,
             code="invalid_credentials",
             message="That password was not accepted.",
         )
-    _limiter.record_success()
 
     assert settings.secret_key is not None
     session = issue_token(
@@ -281,7 +293,9 @@ class AuthenticationMiddleware:
 
         path = scope.get("path", "")
         if path in PUBLIC_PATHS or (
-            scope["type"] == "http" and scope.get("method") == "OPTIONS"
+            path in PREFLIGHT_PATHS
+            and scope["type"] == "http"
+            and scope.get("method") == "OPTIONS"
         ):
             await self._app(scope, receive, send)
             return
@@ -320,5 +334,3 @@ def reset_attempt_limiter() -> None:
     """Clear the process-wide lockout. Intended for tests."""
     _limiter.record_success()
 
-
-AuthDependency = Callable[[Request], Awaitable[None]]

@@ -1,8 +1,22 @@
-import { useCallback, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 
 import { getAuthSession, onUnauthorized } from "./api";
 import SignInScreen from "./SignInScreen";
 import type { AuthSession } from "./contracts";
+
+/**
+ * Whether this deployment gates access, and whether we are through the gate.
+ *
+ * Published from here so the rest of the application reads the answer the gate
+ * already has, rather than asking the backend the same question again and
+ * risking a second, disagreeing copy of it.
+ */
+const AuthContext = createContext<{ required: boolean }>({ required: false });
+
+/** True only when access control is on — so a sign-out is meaningful. */
+export function useAccessControlled(): boolean {
+  return useContext(AuthContext).required;
+}
 
 /**
  * Decides whether the dashboard is reachable.
@@ -18,6 +32,7 @@ type Phase = "checking" | "unreachable" | "signed-out" | "signed-in";
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [phase, setPhase] = useState<Phase>("checking");
+  const [required, setRequired] = useState(false);
 
   const check = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -26,6 +41,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         return;
       }
       // A deployment that requires no sign-in reports itself authenticated.
+      setRequired(session.required);
       setPhase(session.authenticated ? "signed-in" : "signed-out");
     } catch {
       if (!signal?.aborted) {
@@ -86,5 +102,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     return <SignInScreen onSignedIn={() => void check()} />;
   }
 
-  return <>{children}</>;
+  return (
+    <AuthContext.Provider value={{ required }}>{children}</AuthContext.Provider>
+  );
 }
