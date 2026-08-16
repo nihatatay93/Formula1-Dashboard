@@ -347,6 +347,30 @@ Formula1-Dashboard/
 - Date: 2026-07-31
 - Status: implemented
 
+### Championship standings
+
+- Decision: Compute driver and constructor standings in SQL from stored
+  `session_results`, exposed at `/api/v1/seasons/{year}/standings/{drivers,
+  constructors}`. Points are summed from every session rather than from a
+  scoring table of our own, and no session type is hard-coded as scoring.
+  Only sessions whose ingestion completed are counted, and the response
+  reports how many it used.
+- Rationale: `session_results.points` is what the upstream reported for that
+  session, so summing it is correct across every era — the 2010 change from
+  10-8-6 to 25-18-15, and the years sprints paid differently. A points table
+  here would silently disagree with history. Practice and qualifying carry no
+  points, so summing everything yields the championship without an era-specific
+  list of which sessions counted; the data already encodes the answer, verified
+  against the archive where only `race` and `sprint` rows are non-zero.
+  A driver is classified when `classified_position` is numeric rather than when
+  the status text looks like a finish, because a retirement past ninety per
+  cent of the distance is still classified — of 46 rows reading "Retired" in
+  the archive, six carry one. Wins and podiums count races only, so a sprint
+  victory is not a grand prix win; poles come from qualifying rather than the
+  race grid, which is what survives penalties and is a different thing.
+- Date: 2026-08-16
+- Status: implemented
+
 ### Backups and continuous integration
 
 - Decision: A GitHub Actions workflow runs lint, both suites, the production

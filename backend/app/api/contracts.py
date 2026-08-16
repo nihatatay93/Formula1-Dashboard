@@ -752,3 +752,70 @@ class FastF1RequestBudgetResponse(ApiModel):
         ):
             raise ValueError("request-budget thresholds are inconsistent")
         return self
+
+
+class StandingsRound(ApiModel):
+    """One scoring session of a season, in championship order."""
+
+    round_number: int = Field(ge=1)
+    event_name: str
+    session_key: str
+    session_id: DecimalIdentifier
+
+
+class StandingsRoundPoints(ApiModel):
+    round_number: int = Field(ge=1)
+    session_key: str
+    points: Decimal = Field(ge=0)
+    #: Finishing position in that session, absent when the driver did not take
+    #: part or was not classified.
+    position: int | None = Field(default=None, ge=1)
+
+
+class DriverStanding(ApiModel):
+    position: int = Field(ge=1)
+    driver_id: DecimalIdentifier
+    display_name: str
+    abbreviation: str | None = None
+    #: The most recent team of the season; a driver may change mid-season.
+    team_name: str | None = None
+    team_color: str | None = None
+    points: Decimal = Field(ge=0)
+    wins: int = Field(ge=0)
+    podiums: int = Field(ge=0)
+    poles: int = Field(ge=0)
+    starts: int = Field(ge=0)
+    #: Races entered but not classified. A retirement past ninety per cent of
+    #: the distance is still classified, and is not counted here.
+    dnfs: int = Field(ge=0)
+    best_finish: int | None = Field(default=None, ge=1)
+    rounds: tuple[StandingsRoundPoints, ...] = ()
+
+
+class ConstructorStanding(ApiModel):
+    position: int = Field(ge=1)
+    team_name: str
+    team_color: str | None = None
+    points: Decimal = Field(ge=0)
+    wins: int = Field(ge=0)
+    podiums: int = Field(ge=0)
+    poles: int = Field(ge=0)
+    best_finish: int | None = Field(default=None, ge=1)
+    drivers: tuple[str, ...] = ()
+    rounds: tuple[StandingsRoundPoints, ...] = ()
+
+
+class DriverStandingsResponse(ApiModel):
+    season_year: int = Field(ge=1950)
+    #: Sessions counted. A standing is only as complete as the archive behind
+    #: it, so the caller can see what it was computed from.
+    scoring_sessions: int = Field(ge=0)
+    rounds: tuple[StandingsRound, ...] = ()
+    items: tuple[DriverStanding, ...] = ()
+
+
+class ConstructorStandingsResponse(ApiModel):
+    season_year: int = Field(ge=1950)
+    scoring_sessions: int = Field(ge=0)
+    rounds: tuple[StandingsRound, ...] = ()
+    items: tuple[ConstructorStanding, ...] = ()

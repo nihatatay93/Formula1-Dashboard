@@ -184,3 +184,26 @@ def test_openapi_documents_season_response_and_stable_errors() -> None:
     assert operation["responses"]["503"]["content"]["application/json"][
         "schema"
     ] == {"$ref": "#/components/schemas/ErrorResponse"}
+
+
+def test_standings_routes_are_documented() -> None:
+    """Both standings routes exist and are part of the versioned contract."""
+    with TestClient(app) as client:
+        paths = client.get("/openapi.json").json()["paths"]
+
+    assert "/api/v1/seasons/{season_year}/standings/drivers" in paths
+    assert "/api/v1/seasons/{season_year}/standings/constructors" in paths
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["standings/drivers", "standings/constructors"],
+)
+def test_standings_reject_an_unsupported_season(path: str) -> None:
+    # Same supported-year guard as the rest of the season surface, which
+    # answers 422 rather than 400.
+    with TestClient(app) as client:
+        response = client.get(f"/api/v1/seasons/1900/{path}")
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "season_year_out_of_range"

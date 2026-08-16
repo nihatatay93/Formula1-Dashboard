@@ -10,6 +10,8 @@ from app.api.contracts import (
     ActiveJobSummary,
     BackfillAction,
     BackfillCoverage,
+    ConstructorStandingsResponse,
+    DriverStandingsResponse,
     EnsureBackfillResponse,
     ErrorResponse,
     SeasonOverviewResponse,
@@ -21,6 +23,10 @@ from app.api.dependencies import (
 )
 from app.api.errors import ApiError
 from app.api.season_overview import read_season_overview
+from app.api.standings import (
+    read_constructor_standings,
+    read_driver_standings,
+)
 from app.ingestion.fastf1_loader import FastF1LoaderConfigurationError
 from app.ingestion.fastf1_schedule import (
     FastF1ScheduleLoaderProtocol,
@@ -250,3 +256,60 @@ def _backfill_response(plan: SeasonBackfillPlan) -> EnsureBackfillResponse:
             for event in plan.deferred_future_events
         ),
     )
+
+
+@router.get(
+    "/{season_year}/standings/drivers",
+    response_model=DriverStandingsResponse,
+    responses={422: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    summary="Read the drivers' championship for a season",
+)
+def read_season_driver_standings(
+    response: Response,
+    season_year: Annotated[int, Depends(require_supported_season_year)],
+    session_factory: Annotated[
+        sessionmaker[Session],
+        Depends(get_database_session_factory),
+    ],
+) -> DriverStandingsResponse:
+    """Aggregated from stored results; a season with none returns an empty table."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return read_driver_standings(
+            season_year=season_year,
+            session_factory=session_factory,
+        )
+    except SQLAlchemyError:
+        raise ApiError(
+            status_code=503,
+            code="database_unavailable",
+            message="The database is temporarily unavailable.",
+        ) from None
+
+
+@router.get(
+    "/{season_year}/standings/constructors",
+    response_model=ConstructorStandingsResponse,
+    responses={422: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    summary="Read the constructors' championship for a season",
+)
+def read_season_constructor_standings(
+    response: Response,
+    season_year: Annotated[int, Depends(require_supported_season_year)],
+    session_factory: Annotated[
+        sessionmaker[Session],
+        Depends(get_database_session_factory),
+    ],
+) -> ConstructorStandingsResponse:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return read_constructor_standings(
+            season_year=season_year,
+            session_factory=session_factory,
+        )
+    except SQLAlchemyError:
+        raise ApiError(
+            status_code=503,
+            code="database_unavailable",
+            message="The database is temporarily unavailable.",
+        ) from None
