@@ -59,7 +59,8 @@ def target() -> Iterator[RacePaceTarget]:
             text(
                 """
                 SELECT candidate
-                FROM generate_series(32000, 32999) AS candidate
+                -- `seasons.year` is a smallint, so the band stops at 32767.
+                FROM generate_series(32000, 32700) AS candidate
                 WHERE NOT EXISTS (
                     SELECT 1 FROM seasons WHERE year = candidate
                 )

@@ -1,4 +1,15 @@
+"""Schema constraints and idempotent upsert keys, against a real database.
+
+Nothing here is committed: the fixture rolls back, so the rows exist only for
+the length of the test and no teardown is needed. What the rollback cannot do
+is hide rows that are already committed, and a unique constraint sees those
+from inside an open transaction. So every identifier this test inserts has to
+be one the archive cannot already hold -- a real database has seasons 2018 and
+2026 in it, and drivers keyed `max_verstappen` and `norris`.
+"""
+
 import os
+import uuid
 from collections.abc import Iterator
 
 import psycopg
@@ -13,6 +24,13 @@ pytestmark = pytest.mark.skipif(
     reason="TEST_DATABASE_URL is required for database integration tests",
 )
 
+# Years no real season can occupy. Sibling modules reserve their own bands --
+# 25000-26999, 28000-29999, 30000-31999 and 32000-32999 are taken -- and this
+# is the free one between them.
+#
+# `seasons.year` is a smallint, so nothing above 32767 can be inserted at all.
+SYNTHETIC_YEAR_RANGE = (27000, 27999)
+
 
 @pytest.fixture
 def connection() -> Iterator[Connection[tuple]]:
@@ -21,7 +39,32 @@ def connection() -> Iterator[Connection[tuple]]:
         try:
             yield database_connection
         finally:
+            # Every row this test writes disappears here. The constraints it
+            # exercises are checked at statement time, so none of them need
+            # the transaction to commit.
             database_connection.rollback()
+
+
+def reserve_years(connection: Connection[tuple], *, count: int) -> list[int]:
+    """Pick unused synthetic season years, so a populated archive cannot clash."""
+
+    rows = connection.execute(
+        """
+        SELECT candidate
+        -- Casts are required: generate_series is overloaded, and an untyped
+        -- parameter leaves Postgres unable to pick between them.
+        FROM generate_series(%s::int, %s::int) AS candidate
+        WHERE NOT EXISTS (
+            SELECT 1 FROM seasons WHERE year = candidate
+        )
+        ORDER BY candidate
+        LIMIT %s
+        """,
+        (*SYNTHETIC_YEAR_RANGE, count),
+    ).fetchall()
+    years = [row[0] for row in rows]
+    assert len(years) == count, "no free synthetic season year is available"
+    return years
 
 
 def create_race_session(
@@ -62,15 +105,23 @@ def create_race_session(
 def test_sporting_data_constraints_and_idempotent_keys(
     connection: Connection[tuple],
 ) -> None:
-    session_2024 = create_race_session(
+    first_year, second_year = reserve_years(connection, count=2)
+    # `drivers.jolpica_driver_id` is unique across every season, so a real
+    # archive already holds `max_verstappen`. The suffix is what keeps this
+    # test from depending on an empty database.
+    suffix = uuid.uuid4().hex
+    verstappen_key = f"max_verstappen-{suffix}"
+    norris_key = f"norris-{suffix}"
+
+    first_session = create_race_session(
         connection,
-        year=2024,
-        event_name="2024 Schema Test Grand Prix",
+        year=first_year,
+        event_name=f"{first_year} Schema Test Grand Prix",
     )
-    session_2026 = create_race_session(
+    second_session = create_race_session(
         connection,
-        year=2026,
-        event_name="2026 Schema Test Grand Prix",
+        year=second_year,
+        event_name=f"{second_year} Schema Test Grand Prix",
     )
 
     verstappen_id = connection.execute(
@@ -84,15 +135,16 @@ def test_sporting_data_constraints_and_idempotent_keys(
             country_code
         )
         VALUES (
-            'max_verstappen',
-            'max_verstappen',
+            %s,
+            %s,
             'Max',
             'Verstappen',
             'Max Verstappen',
             'NED'
         )
         RETURNING id
-        """
+        """,
+        (verstappen_key, verstappen_key),
     ).fetchone()[0]
     norris_id = connection.execute(
         """
@@ -105,15 +157,16 @@ def test_sporting_data_constraints_and_idempotent_keys(
             country_code
         )
         VALUES (
-            'norris',
-            'norris',
+            %s,
+            %s,
             'Lando',
             'Norris',
             'Lando Norris',
             'GBR'
         )
         RETURNING id
-        """
+        """,
+        (norris_key, norris_key),
     ).fetchone()[0]
 
     with pytest.raises(UniqueViolation):
@@ -121,8 +174,9 @@ def test_sporting_data_constraints_and_idempotent_keys(
             connection.execute(
                 """
                 INSERT INTO drivers (jolpica_driver_id, full_name)
-                VALUES ('max_verstappen', 'Duplicate Driver')
-                """
+                VALUES (%s, 'Duplicate Driver')
+                """,
+                (verstappen_key,),
             )
 
     reingested_verstappen_id = connection.execute(
@@ -133,14 +187,15 @@ def test_sporting_data_constraints_and_idempotent_keys(
             full_name
         )
         VALUES (
-            'max_verstappen',
-            'max_verstappen',
+            %s,
+            %s,
             'Max Verstappen'
         )
         ON CONFLICT (jolpica_driver_id)
         DO UPDATE SET full_name = EXCLUDED.full_name
         RETURNING id
-        """
+        """,
+        (verstappen_key, verstappen_key),
     ).fetchone()[0]
     assert reingested_verstappen_id == verstappen_id
 
@@ -176,7 +231,7 @@ def test_sporting_data_constraints_and_idempotent_keys(
         )
         RETURNING id
         """,
-        (session_2024, verstappen_id),
+        (first_session, verstappen_id),
     ).fetchone()[0]
     reingested_verstappen_entry = connection.execute(
         """
@@ -202,7 +257,7 @@ def test_sporting_data_constraints_and_idempotent_keys(
         DO UPDATE SET display_name = EXCLUDED.display_name
         RETURNING id
         """,
-        (session_2024, verstappen_id),
+        (first_session, verstappen_id),
     ).fetchone()[0]
     assert reingested_verstappen_entry == verstappen_entry
 
@@ -228,7 +283,7 @@ def test_sporting_data_constraints_and_idempotent_keys(
         )
         RETURNING id
         """,
-        (session_2024,),
+        (first_session,),
     ).fetchone()[0]
 
     norris_entry = connection.execute(
@@ -255,7 +310,7 @@ def test_sporting_data_constraints_and_idempotent_keys(
         )
         RETURNING id
         """,
-        (session_2026, norris_id),
+        (second_session, norris_id),
     ).fetchone()[0]
 
     assert unresolved_entry is not None
@@ -282,7 +337,7 @@ def test_sporting_data_constraints_and_idempotent_keys(
                     'finalized'
                 )
                 """,
-                (session_2024,),
+                (first_session,),
             )
 
     with pytest.raises(UniqueViolation):
@@ -308,7 +363,7 @@ def test_sporting_data_constraints_and_idempotent_keys(
                     'finalized'
                 )
                 """,
-                (session_2024, verstappen_id),
+                (first_session, verstappen_id),
             )
 
     with pytest.raises(UniqueViolation):
@@ -332,7 +387,7 @@ def test_sporting_data_constraints_and_idempotent_keys(
                     'finalized'
                 )
                 """,
-                (session_2024,),
+                (first_session,),
             )
 
     with pytest.raises(CheckViolation):
