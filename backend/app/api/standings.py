@@ -32,6 +32,12 @@ from app.api.contracts import (
     StandingsRound,
     StandingsRoundPoints,
 )
+from app.api.season_rules import (
+    CLASSIFIED,
+    COMPLETED,
+    IS_QUALIFYING,
+    IS_RACE,
+)
 from app.db.models import (
     Driver,
     Event,
@@ -43,25 +49,11 @@ from app.db.models import (
 
 SessionFactory = Callable[[], Session]
 
-#: A session counts once its ingestion has completed. This is the same rule the
-#: season overview uses for ``data_available``; the two must not drift.
-_COMPLETED = SessionIngestion.completed_at.is_not(None)
-
-#: Only a numeric classified position means the driver was classified. A
-#: retirement past ninety per cent of the race distance still is, which is why
-#: this is read from the data rather than inferred from the status text — of 46
-#: rows reading "Retired" in the archive, six carry a classified position.
-#:
-#: Wrapped in coalesce because the column is NULL for the clearest
-#: non-finishes, and in SQL "NOT NULL" is NULL rather than true: without this
-#: a driver who did not finish at all was counted as neither classified nor
-#: retired, and vanished from the DNF tally entirely.
-_CLASSIFIED = func.coalesce(
-    SessionResult.classified_position.op("~")("^[0-9]+$"), False
-)
-
-_IS_RACE = RaceSession.session_key == "race"
-_IS_QUALIFYING = RaceSession.session_key == "qualifying"
+# The sporting rules live in one place; see app/api/season_rules.py.
+_COMPLETED = COMPLETED
+_CLASSIFIED = CLASSIFIED
+_IS_RACE = IS_RACE
+_IS_QUALIFYING = IS_QUALIFYING
 
 
 def _points() -> object:

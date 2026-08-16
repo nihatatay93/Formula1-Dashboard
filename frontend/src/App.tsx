@@ -19,6 +19,7 @@ import type { DashboardView } from "./DashboardRail";
 import Home from "./Home";
 import ArchiveOverview from "./archive/ArchiveOverview";
 import SeasonCalendar from "./archive/SeasonCalendar";
+import HeadToHeadView from "./archive/HeadToHeadView";
 import RacePaceView from "./archive/RacePaceView";
 import StandingsView from "./archive/StandingsView";
 import SessionExplorer from "./archive/SessionExplorer";
@@ -58,6 +59,11 @@ const VIEW_HEADINGS: Record<
     description:
       "Open any event and session without leaving the season archive.",
     title: (year) => `${year} season sessions`,
+  },
+  "head-to-head": {
+    description:
+      "Two drivers over one season, and the field ranked by how repeatable its race pace was.",
+    title: (year) => `${year} drivers compared`,
   },
   standings: {
     description:
@@ -472,6 +478,10 @@ function App() {
                   now={now}
                   season={season}
                 />
+              ) : null}
+
+              {activeView === "head-to-head" ? (
+                <HeadToHeadView year={selectedYear} />
               ) : null}
 
               {activeView === "standings" ? (

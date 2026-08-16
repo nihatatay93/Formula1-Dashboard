@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from math import ceil
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -10,10 +10,12 @@ from app.api.contracts import (
     ActiveJobSummary,
     BackfillAction,
     BackfillCoverage,
+    ConsistencyResponse,
     ConstructorStandingsResponse,
     DriverStandingsResponse,
     EnsureBackfillResponse,
     ErrorResponse,
+    HeadToHeadResponse,
     SeasonOverviewResponse,
 )
 from app.api.dependencies import (
@@ -22,6 +24,12 @@ from app.api.dependencies import (
     require_supported_season_year,
 )
 from app.api.errors import ApiError
+from app.api.head_to_head import (
+    DriverNotFoundError,
+    HeadToHeadReadError,
+    read_consistency,
+    read_head_to_head,
+)
 from app.api.season_overview import read_season_overview
 from app.api.standings import (
     read_constructor_standings,
@@ -304,6 +312,83 @@ def read_season_constructor_standings(
     response.headers["Cache-Control"] = "no-store"
     try:
         return read_constructor_standings(
+            season_year=season_year,
+            session_factory=session_factory,
+        )
+    except SQLAlchemyError:
+        raise ApiError(
+            status_code=503,
+            code="database_unavailable",
+            message="The database is temporarily unavailable.",
+        ) from None
+
+
+@router.get(
+    "/{season_year}/head-to-head",
+    response_model=HeadToHeadResponse,
+    responses={
+        404: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+    summary="Compare two drivers over one season",
+)
+def read_season_head_to_head(
+    response: Response,
+    season_year: Annotated[int, Depends(require_supported_season_year)],
+    driver_a: Annotated[int, Query(ge=1)],
+    driver_b: Annotated[int, Query(ge=1)],
+    session_factory: Annotated[
+        sessionmaker[Session],
+        Depends(get_database_session_factory),
+    ],
+) -> HeadToHeadResponse:
+    """Scoped to one season on purpose; regulations change between them."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return read_head_to_head(
+            season_year=season_year,
+            driver_a=driver_a,
+            driver_b=driver_b,
+            session_factory=session_factory,
+        )
+    except DriverNotFoundError:
+        raise ApiError(
+            status_code=404,
+            code="driver_not_found",
+            message="A requested driver did not take part in this season.",
+        ) from None
+    except HeadToHeadReadError:
+        raise ApiError(
+            status_code=422,
+            code="invalid_comparison",
+            message="A driver cannot be compared with themselves.",
+        ) from None
+    except SQLAlchemyError:
+        raise ApiError(
+            status_code=503,
+            code="database_unavailable",
+            message="The database is temporarily unavailable.",
+        ) from None
+
+
+@router.get(
+    "/{season_year}/consistency",
+    response_model=ConsistencyResponse,
+    responses={422: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    summary="Read how repeatable each driver's race pace was",
+)
+def read_season_consistency(
+    response: Response,
+    season_year: Annotated[int, Depends(require_supported_season_year)],
+    session_factory: Annotated[
+        sessionmaker[Session],
+        Depends(get_database_session_factory),
+    ],
+) -> ConsistencyResponse:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return read_consistency(
             season_year=season_year,
             session_factory=session_factory,
         )

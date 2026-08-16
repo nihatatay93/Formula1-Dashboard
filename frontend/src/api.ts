@@ -2,11 +2,13 @@ import type {
   ApiErrorResponse,
   AuthSession,
   BackfillJob,
+  ConsistencyResponse,
   ConstructorStandingsResponse,
   DriverStandingsResponse,
   EnsureBackfillResponse,
   EnsureLapTelemetryResponse,
   FastF1RequestBudget,
+  HeadToHeadResponse,
   LapSummaryRequest,
   LapSummaryResponse,
   LapTelemetryResponse,
@@ -227,6 +229,32 @@ export function getRacePace(
   return requestJson<RacePaceResponse>(
     `/api/v1/sessions/${sessionId}/laps${query}`,
     { signal: options.signal },
+  );
+}
+
+export function getHeadToHead(
+  seasonYear: number,
+  driverA: string,
+  driverB: string,
+  signal?: AbortSignal,
+): Promise<HeadToHeadResponse> {
+  // Scoped to one season by the backend on purpose: regulations change between
+  // them, so a record spanning two compares machinery rather than drivers.
+  return requestJson<HeadToHeadResponse>(
+    `/api/v1/seasons/${seasonYear}/head-to-head?driver_a=${encodeURIComponent(
+      driverA,
+    )}&driver_b=${encodeURIComponent(driverB)}`,
+    { signal },
+  );
+}
+
+export function getConsistency(
+  seasonYear: number,
+  signal?: AbortSignal,
+): Promise<ConsistencyResponse> {
+  return requestJson<ConsistencyResponse>(
+    `/api/v1/seasons/${seasonYear}/consistency`,
+    { signal },
   );
 }
 

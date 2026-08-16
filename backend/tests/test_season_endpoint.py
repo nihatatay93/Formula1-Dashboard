@@ -207,3 +207,50 @@ def test_standings_reject_an_unsupported_season(path: str) -> None:
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "season_year_out_of_range"
+
+
+def test_comparison_routes_are_documented() -> None:
+    """Head to head and consistency are part of the versioned contract."""
+    with TestClient(app) as client:
+        paths = client.get("/openapi.json").json()["paths"]
+
+    head_to_head = paths["/api/v1/seasons/{season_year}/head-to-head"]["get"]
+    assert "/api/v1/seasons/{season_year}/consistency" in paths
+
+    parameters = {
+        parameter["name"]: parameter for parameter in head_to_head["parameters"]
+    }
+    # Both drivers are required: a one-sided comparison is not a comparison.
+    assert parameters["driver_a"]["required"] is True
+    assert parameters["driver_b"]["required"] is True
+
+
+@pytest.mark.parametrize("path", ["head-to-head?driver_a=1&driver_b=2", "consistency"])
+def test_comparisons_reject_an_unsupported_season(path: str) -> None:
+    with TestClient(app) as client:
+        response = client.get(f"/api/v1/seasons/1900/{path}")
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "season_year_out_of_range"
+
+
+def test_head_to_head_requires_both_drivers(client: TestClient) -> None:
+    # The session factory is overridden because it resolves before FastAPI
+    # reports the missing parameter, and would answer 500 first.
+    app.dependency_overrides[get_database_session_factory] = lambda: object()
+
+    response = client.get("/api/v1/seasons/2026/head-to-head?driver_a=1")
+
+    assert response.status_code == 422
+
+
+def test_head_to_head_refuses_to_compare_a_driver_with_themselves(
+    client: TestClient,
+) -> None:
+    app.dependency_overrides[get_database_session_factory] = lambda: object()
+
+    response = client.get("/api/v1/seasons/2026/head-to-head?driver_a=7&driver_b=7")
+
+    # Caught before any query runs, so no database is involved.
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_comparison"

@@ -2,8 +2,10 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 import {
   completedSeason,
+  consistency,
   constructorStandings,
   driverStandings,
+  headToHead,
   racePace,
   ensureLapTelemetryAvailable,
   firstLapPage,
@@ -83,6 +85,12 @@ async function installApiRoutes(page: Page) {
     }
     if (path === "/api/v1/seasons/2026/standings/constructors") {
       return json(route, constructorStandings);
+    }
+    if (path.endsWith("/head-to-head")) {
+      return json(route, headToHead);
+    }
+    if (path.endsWith("/consistency")) {
+      return json(route, consistency);
     }
     if (/^\/api\/v1\/sessions\/\d+\/laps$/.test(path)) {
       return json(route, racePace);
@@ -418,4 +426,26 @@ test("race pace compares the field and never bridges a gap in the laps", async (
 
   await page.getByRole("checkbox", { name: /clean laps only/i }).check();
   await expect(page.getByText(/4 laps from 2 drivers/)).toBeVisible();
+});
+
+test("head to head reports the record, the share and what was excluded", async ({
+  page,
+}) => {
+  await installApiRoutes(page);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Head to head", exact: true }).click();
+
+  // Identity is carried by the driver code as well as by colour: these two
+  // share a team, so the bars alone cannot tell them apart.
+  await expect(page.getByText("1–0").first()).toBeVisible();
+  await expect(page.getByText(/NOR 100%/).first()).toBeVisible();
+
+  await page.getByRole("tab", { name: "Consistency" }).click();
+
+  await expect(page.getByText(/percentage of the best clean lap/)).toBeVisible();
+  await expect(page.locator(".consistency__name strong")).toHaveText([
+    "Lando Norris",
+    "Oscar Piastri",
+  ]);
 });

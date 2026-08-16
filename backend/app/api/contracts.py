@@ -874,3 +874,77 @@ class ConstructorStandingsResponse(ApiModel):
     scoring_sessions: int = Field(ge=0)
     rounds: tuple[StandingsRound, ...] = ()
     items: tuple[ConstructorStanding, ...] = ()
+
+
+class ComparedDriver(ApiModel):
+    driver_id: DecimalIdentifier
+    display_name: str
+    abbreviation: str | None
+    team_name: str | None
+    team_color_hex: str | None
+
+
+class HeadToHeadRecord(ApiModel):
+    """One driver against another over the sessions where both were ranked."""
+
+    basis: str
+    a_ahead: int = Field(ge=0)
+    b_ahead: int = Field(ge=0)
+    compared: int = Field(ge=0)
+    #: Sessions both entered but where at least one carries no position, so the
+    #: pair cannot be ordered. Reported rather than silently dropped.
+    excluded: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_totals(self) -> Self:
+        if self.a_ahead + self.b_ahead != self.compared:
+            raise ValueError("every compared session must be won by one driver")
+        return self
+
+
+class SeasonTotals(ApiModel):
+    points: NonnegativeDecimalString
+    wins: int = Field(ge=0)
+    podiums: int = Field(ge=0)
+    poles: int = Field(ge=0)
+    starts: int = Field(ge=0)
+    dnfs: int = Field(ge=0)
+    best_finish: int | None = Field(ge=1)
+
+
+class HeadToHeadResponse(ApiModel):
+    season_year: int
+    driver_a: ComparedDriver
+    driver_b: ComparedDriver
+    qualifying: HeadToHeadRecord
+    race: HeadToHeadRecord
+    totals_a: SeasonTotals
+    totals_b: SeasonTotals
+    #: True when the pair shared no ranked session at all. The records are all
+    #: zero rather than absent, so a caller renders an explanation, not an error.
+    never_met: bool
+
+
+class ConsistencyRow(ApiModel):
+    driver_id: DecimalIdentifier
+    display_name: str
+    abbreviation: str | None
+    team_name: str | None
+    team_color_hex: str | None
+    clean_laps: int = Field(ge=0)
+    #: Every figure below is a percentage of the best clean lap of the same
+    #: session, so a season that mixes Monaco and Monza stays comparable.
+    median_percent: float | None = Field(ge=100.0)
+    std_dev_percent: float | None = Field(ge=0.0)
+    iqr_percent: float | None = Field(ge=0.0)
+    races_started: int = Field(ge=0)
+    races_classified: int = Field(ge=0)
+    finish_rate: float | None = Field(ge=0.0, le=1.0)
+
+
+class ConsistencyResponse(ApiModel):
+    season_year: int
+    clean_lap_definition: str
+    #: What the percentages are relative to, and which sessions were measured.
+    basis: str
+    items: tuple[ConsistencyRow, ...]

@@ -19,6 +19,7 @@ export type DashboardView =
   | "standings"
   | "session"
   | "race-pace"
+  | "head-to-head"
   | "live";
 
 /** Which group a view belongs to, so the season controls know when to show. */
@@ -28,7 +29,8 @@ export function isArchiveView(view: DashboardView): boolean {
     view === "calendar" ||
     view === "standings" ||
     view === "session" ||
-    view === "race-pace"
+    view === "race-pace" ||
+    view === "head-to-head"
   );
 }
 
@@ -147,6 +149,11 @@ export default function DashboardRail({
             disabled={!sessionOpen}
             label="Session workspace"
             onSelect={() => onSelectView("session")}
+          />
+          <RailButton
+            active={view === "head-to-head"}
+            label="Head to head"
+            onSelect={() => onSelectView("head-to-head")}
           />
           <RailButton
             active={view === "race-pace"}

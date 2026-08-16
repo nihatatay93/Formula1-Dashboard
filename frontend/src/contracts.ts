@@ -748,3 +748,63 @@ export interface RacePaceResponse {
   outlier_cutoff_lap_time_us: number | null;
   items: RacePaceEntry[];
 }
+
+
+export interface ComparedDriver {
+  driver_id: string;
+  display_name: string;
+  abbreviation: string | null;
+  team_name: string | null;
+  team_color_hex: string | null;
+}
+
+export interface HeadToHeadRecord {
+  basis: string;
+  a_ahead: number;
+  b_ahead: number;
+  compared: number;
+  excluded: number;
+}
+
+export interface SeasonTotals {
+  points: string;
+  wins: number;
+  podiums: number;
+  poles: number;
+  starts: number;
+  dnfs: number;
+  best_finish: number | null;
+}
+
+export interface HeadToHeadResponse {
+  season_year: number;
+  driver_a: ComparedDriver;
+  driver_b: ComparedDriver;
+  qualifying: HeadToHeadRecord;
+  race: HeadToHeadRecord;
+  totals_a: SeasonTotals;
+  totals_b: SeasonTotals;
+  never_met: boolean;
+}
+
+export interface ConsistencyRow {
+  driver_id: string;
+  display_name: string;
+  abbreviation: string | null;
+  team_name: string | null;
+  team_color_hex: string | null;
+  clean_laps: number;
+  median_percent: number | null;
+  std_dev_percent: number | null;
+  iqr_percent: number | null;
+  races_started: number;
+  races_classified: number;
+  finish_rate: number | null;
+}
+
+export interface ConsistencyResponse {
+  season_year: number;
+  clean_lap_definition: string;
+  basis: string;
+  items: ConsistencyRow[];
+}

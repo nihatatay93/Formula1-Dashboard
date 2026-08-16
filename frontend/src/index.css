@@ -4589,3 +4589,341 @@ th,
 .pace-evolution__lone-lap {
   opacity: 0.75;
 }
+
+/* --------------------------------------------------------------------------
+   Head to head and consistency
+   -------------------------------------------------------------------------- */
+
+.h2h-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3);
+  align-items: flex-end;
+  margin-bottom: var(--s3);
+}
+
+.h2h-picker label {
+  display: flex;
+  flex: 1 1 12rem;
+  flex-direction: column;
+  gap: var(--s1);
+  color: var(--muted);
+  font-size: var(--t-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.h2h-picker select {
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r1);
+  background: var(--panel-inset);
+  color: var(--ink);
+  font-size: var(--t-body);
+  cursor: pointer;
+}
+
+.h2h-picker__versus {
+  padding-bottom: var(--s2);
+  color: var(--muted-dark);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+}
+
+.h2h-mates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  align-items: center;
+  margin-bottom: var(--s5);
+}
+
+.h2h-mates__label {
+  color: var(--muted);
+  font-size: var(--t-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.h2h-mates button {
+  padding: var(--s1) var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-dim);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.h2h-mates button:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.h2h-metric {
+  margin-bottom: var(--s5);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r2);
+  background: var(--panel-raised);
+}
+
+.h2h-metric__heading {
+  display: flex;
+  gap: var(--s3);
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--s3);
+}
+
+.h2h-metric__heading h4 {
+  margin: 0;
+  font-size: var(--t-body);
+}
+
+.h2h-metric__count {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  font-weight: 700;
+}
+
+.h2h-metric__count small,
+.h2h-metric__none {
+  color: var(--muted-dark);
+  font-family: var(--sans);
+  font-size: var(--t-micro);
+  font-weight: 500;
+}
+
+.h2h-metric__bar {
+  display: flex;
+  align-items: center;
+  height: 1.5rem;
+}
+
+.h2h-metric__side {
+  display: flex;
+  flex: 1;
+  height: 100%;
+  background: var(--panel-inset);
+  border-radius: var(--r1);
+  overflow: hidden;
+}
+
+/* The two halves grow away from a shared centre line. */
+.h2h-metric__side--a {
+  flex-direction: row-reverse;
+}
+
+.h2h-metric__fill {
+  height: 100%;
+  transition: width 160ms ease;
+}
+
+/* Team-mates share a colour exactly, so one side is hatched as well. */
+.h2h-metric__fill.is-hatched {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgb(0 0 0 / 32%) 0 4px,
+    transparent 4px 8px
+  );
+}
+
+.h2h-metric__axis {
+  width: 2px;
+  height: 100%;
+  background: var(--line-strong);
+}
+
+.h2h-metric__scale {
+  display: flex;
+  gap: var(--s3);
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: var(--s2);
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  font-weight: 600;
+}
+
+.h2h-metric__scale small {
+  color: var(--warning);
+  font-family: var(--sans);
+  font-weight: 500;
+}
+
+.h2h-metric__basis {
+  margin: var(--s3) 0 0;
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line);
+  color: var(--muted-dark);
+  font-size: var(--t-micro);
+  line-height: 1.6;
+}
+
+.h2h-totals {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.h2h-totals caption {
+  margin-bottom: var(--s2);
+  color: var(--muted);
+  font-size: var(--t-micro);
+  text-align: left;
+}
+
+.h2h-totals th,
+.h2h-totals td {
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--line);
+}
+
+.h2h-totals thead th {
+  color: var(--ink);
+  font-size: var(--t-small);
+  text-align: center;
+}
+
+.h2h-totals tbody th {
+  color: var(--muted);
+  font-size: var(--t-micro);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.h2h-totals__value {
+  width: 40%;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  font-weight: 700;
+  text-align: center;
+}
+
+/* The consistency ranking. */
+
+.consistency__table-wrap {
+  overflow-x: auto;
+}
+
+.consistency__table {
+  width: 100%;
+  min-width: 54rem;
+  border-collapse: collapse;
+}
+
+.consistency__table caption {
+  margin-bottom: var(--s3);
+  color: var(--muted);
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  text-align: left;
+}
+
+.consistency__table th,
+.consistency__table td {
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.consistency__table thead th {
+  color: var(--muted);
+  font-size: var(--t-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.consistency__rank {
+  color: var(--muted-dark);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+}
+
+.consistency__name {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+}
+
+.consistency__name strong {
+  display: block;
+  font-size: var(--t-small);
+}
+
+.consistency__name small {
+  color: var(--muted-dark);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+}
+
+.consistency__swatch {
+  width: 3px;
+  height: 1.75rem;
+  border-radius: 999px;
+}
+
+.consistency__team {
+  color: var(--ink-dim);
+  font-size: var(--t-small);
+}
+
+.consistency__figure {
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  text-align: right;
+}
+
+.consistency__figure--lead {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.consistency__spread {
+  position: relative;
+  display: block;
+  width: 10rem;
+  height: 1.25rem;
+  border-radius: var(--r1);
+  background: var(--panel-inset);
+}
+
+.consistency__spread--empty {
+  display: inline-flex;
+  align-items: center;
+  padding-left: var(--s2);
+  color: var(--muted-dark);
+  font-size: var(--t-micro);
+}
+
+.consistency__range {
+  position: absolute;
+  top: 50%;
+  height: 0.5rem;
+  border-radius: 999px;
+  opacity: 0.55;
+  transform: translateY(-50%);
+}
+
+.consistency__median {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: 0.9rem;
+  background: var(--ink);
+  transform: translate(-1px, -50%);
+}
+
+@media (width <= 700px) {
+  .h2h-picker__versus {
+    display: none;
+  }
+}

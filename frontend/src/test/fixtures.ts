@@ -701,3 +701,94 @@ export const racePace = {
     },
   ],
 };
+
+/** A head-to-head between the two McLaren drivers of `driverStandings`. */
+export const headToHead = {
+  season_year: 2026,
+  driver_a: {
+    driver_id: "11",
+    display_name: "Lando Norris",
+    abbreviation: "NOR",
+    team_name: "McLaren",
+    team_color_hex: "#F47600",
+  },
+  driver_b: {
+    driver_id: "12",
+    display_name: "Oscar Piastri",
+    abbreviation: "PIA",
+    team_name: "McLaren",
+    team_color_hex: "#F47600",
+  },
+  qualifying: {
+    basis: "Finishing position in the qualifying session.",
+    a_ahead: 1,
+    b_ahead: 0,
+    compared: 1,
+    excluded: 0,
+  },
+  race: {
+    basis:
+      "Finishing position in the race, counting only races both drivers were classified in.",
+    a_ahead: 1,
+    b_ahead: 0,
+    compared: 1,
+    excluded: 0,
+  },
+  totals_a: {
+    points: "25.000",
+    wins: 1,
+    podiums: 1,
+    poles: 1,
+    starts: 1,
+    dnfs: 0,
+    best_finish: 1,
+  },
+  totals_b: {
+    points: "18.000",
+    wins: 0,
+    podiums: 1,
+    poles: 0,
+    starts: 1,
+    dnfs: 0,
+    best_finish: 2,
+  },
+  never_met: false,
+};
+
+export const consistency = {
+  season_year: 2026,
+  clean_lap_definition:
+    'A lap is clean when the track was green for the whole lap (track status exactly "1").',
+  basis:
+    "Race sessions only, each clean lap expressed as a percentage of the best clean lap of that same session.",
+  items: [
+    {
+      driver_id: "11",
+      display_name: "Lando Norris",
+      abbreviation: "NOR",
+      team_name: "McLaren",
+      team_color_hex: "#F47600",
+      clean_laps: 40,
+      median_percent: 101.5,
+      std_dev_percent: 1.02,
+      iqr_percent: 1.4,
+      races_started: 1,
+      races_classified: 1,
+      finish_rate: 1,
+    },
+    {
+      driver_id: "12",
+      display_name: "Oscar Piastri",
+      abbreviation: "PIA",
+      team_name: "McLaren",
+      team_color_hex: "#F47600",
+      clean_laps: 38,
+      median_percent: 101.9,
+      std_dev_percent: 1.31,
+      iqr_percent: 1.8,
+      races_started: 1,
+      races_classified: 1,
+      finish_rate: 1,
+    },
+  ],
+};

@@ -2284,11 +2284,11 @@ race-run classification remain intentionally unimplemented.
 2. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
 3. Evolve the dashboard toward a full analytics product, following
-   `docs/FRONTEND_EVOLUTION_PLAN.md`. Phases 1-4 are done: standings are
-   computed, exposed and rendered, the landing page previews them, and race
-   pace compares a whole field from one request. Phase 5 (head to head and
-   consistency) is next; it reuses the race-pace reader and needs no new
-   ingestion.
+   `docs/FRONTEND_EVOLUTION_PLAN.md`. Phases 1-5 are done: standings, the
+   landing page, race pace, and now head to head and consistency. Phase 6
+   (strategy and stints) is next and can reuse `stintsOf` and the compound
+   data the race-pace work already returns. Phase 7's error boundary is worth
+   pulling forward: a single unguarded field once blanked the whole page.
 4. Add error reporting, and rate limiting beyond sign-in. Authentication,
    secret handling, PostgreSQL passwords, non-root images, the deployment,
    CI and backups are done; see `docs/DEPLOYMENT.md`. Reconsider manual job
@@ -2618,6 +2618,12 @@ mounted writable at `/live-sessions`.
 
 ## Change Log
 
+- 2026-08-16 — Added head to head and consistency. Both are season-scoped, and
+  both exclude what cannot honestly be compared: a race a driver did not start
+  carries a finishing position in the archive, and counting it scored a race
+  nobody took part in as a defeat. Consistency normalises every clean lap to
+  its own session's best, because an absolute season median mixes Monaco with
+  Monza and practice laps reach 221%.
 - 2026-08-16 — Added race pace analysis: one request returns every entry's
   laps for a session, each flagged against a single server-side definition of
   a clean lap, with a lap-time evolution chart and a box plot ordered by

@@ -303,19 +303,36 @@ analysis tool rather than a results site.
 
 ---
 
-## Phase 5 — Head to head and consistency
+## Phase 5 — Head to head and consistency (complete)
 
 **Read first**
 - `frontend/src/archive/lapAnalysis.ts` — `compareLapSelections` already does
   a two-way comparison
 - Phase 1's standings endpoints
 
+**Built, with two corrections to this plan:**
+
+- The qualifying record cannot come from `grid_position`. That column is
+  populated only on race and sprint results and is NULL on every qualifying row
+  in the archive; the capability map above was wrong. It reads the qualifying
+  session's own `position` instead, which is also the better measure -- a grid
+  slot reflects penalties as much as pace.
+- The race record cannot compare raw `position` either. A retirement and even a
+  "Did not start" still carry one, because it orders the cars rather than
+  ranking them. Comparing them scored a race a driver never started as a loss,
+  so the record counts only races both drivers were classified in and reports
+  the rest as excluded.
+
 **Build — backend**
 - `GET /api/v1/seasons/{year}/head-to-head?driver_a=&driver_b=` — qualifying
-  record from `grid_position`, race record from `position`, plus points, wins,
-  podiums, poles, DNFs, and best finish
+  record from the qualifying session's `position`, race record from `position`
+  among classified finishers, plus points, wins, podiums, poles, DNFs, and best
+  finish
 - `GET /api/v1/seasons/{year}/consistency` — per driver: median, standard
-  deviation and interquartile range of clean laps, and finish-rate
+  deviation and interquartile range of clean laps, and finish-rate. Measured
+  over race sessions only and normalised to each session's best clean lap: an
+  absolute season median mixes circuits, and practice laps reach 221% of a
+  session best in this archive, which would swamp any spread metric.
 
 **Build — frontend**
 - Diverging bars per metric, both absolute values and shares, driver identity

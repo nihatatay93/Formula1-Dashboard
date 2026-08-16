@@ -2,8 +2,10 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 import {
   completedSeason,
+  consistency,
   constructorStandings,
   driverStandings,
+  headToHead,
   racePace,
   requestBudget,
 } from "../src/test/fixtures";
@@ -102,6 +104,12 @@ async function installGatedApi(page: Page) {
 
     if (path === "/api/v1/seasons/2026") {
       return json(route, completedSeason);
+    }
+    if (path.endsWith("/head-to-head")) {
+      return json(route, headToHead);
+    }
+    if (path.endsWith("/consistency")) {
+      return json(route, consistency);
     }
     if (/^\/api\/v1\/sessions\/\d+\/laps$/.test(path)) {
       return json(route, racePace);
