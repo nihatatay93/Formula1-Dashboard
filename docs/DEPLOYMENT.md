@@ -166,15 +166,50 @@ POSTGRES_PASSWORD=... ./scripts/secure-existing-postgres.sh
 
 Both scripts are idempotent, report what they change, and verify the result.
 
+## Backups
+
+`scripts/backup-database.sh` takes a compressed, restorable dump, verifies it
+can be read back before keeping it, and prunes to the most recent `BACKUP_KEEP`
+(14 by default). Schedule it on the host:
+
+```cron
+# 03:15 UTC daily
+15 3 * * * cd /path/to/formula1-dashboard && \
+  COMPOSE_FILE=deploy/compose.prod.yaml POSTGRES_PASSWORD=... \
+  ./scripts/backup-database.sh >> /var/log/f1-backup.log 2>&1
+```
+
+**A dump on the same machine is not an off-site backup.** Losing the VPS loses
+both. Set `BACKUP_UPLOAD_COMMAND` to copy each dump somewhere else; `{}` is
+replaced with the path, and a failed upload fails the run rather than passing
+quietly:
+
+```bash
+BACKUP_UPLOAD_COMMAND='rclone copy {} r2:f1-backups/'
+```
+
+### Rehearse the restore
+
+A backup nobody has restored is a hypothesis. `scripts/restore-database.sh`
+restores into a scratch database by default, leaving the live one alone:
+
+```bash
+POSTGRES_PASSWORD=... RESTORE_DB=restore_check \
+  ./scripts/restore-database.sh backups/formula1-dashboard-<stamp>.dump
+```
+
+It prints the row counts that landed, so you can compare them with the live
+database. Restoring over the live database requires typing its name, or
+`ASSUME_YES=1`.
+
+Do this after the first deployment and then periodically. The archive is
+re-ingestible from FastF1 if it comes to it, but slowly and against the
+request budget.
+
 ## Still outstanding
 
-These were deliberately kept out of the deployment work and are worth doing
-before you rely on it:
+Deliberately kept out of the deployment work:
 
-- **Backups.** `pg_dump` on a schedule to object storage, and a restore you
-  have actually performed. Nothing here backs anything up. The archive is
-  re-ingestible from FastF1, but slowly and against the request budget.
-- **CI.** Nothing runs the test suite automatically.
 - **Error reporting.** No Sentry or equivalent; failures are visible only in
   `docker compose logs`.
 - **Rate limiting beyond sign-in.** Only the login endpoint is throttled.

@@ -347,6 +347,29 @@ Formula1-Dashboard/
 - Date: 2026-07-31
 - Status: implemented
 
+### Backups and continuous integration
+
+- Decision: A GitHub Actions workflow runs lint, both suites, the production
+  image builds and the compose validations on every push and pull request,
+  with a throwaway PostgreSQL so the database-backed tests run.
+  `scripts/backup-database.sh` dumps and verifies; `scripts/restore-database.sh`
+  restores into a scratch database by default.
+- Rationale: 109 integration tests skipped for want of `TEST_DATABASE_URL` and
+  had therefore never run; with a service container the suite goes from 773
+  passed and 109 skipped to 882 passed and none skipped. `alembic check` in the
+  same job turns "a model changed without a migration" from a startup failure
+  into a review failure. The image job asserts properties that are easy to lose
+  silently — that neither image runs as root, and that the production compose
+  still refuses to start without its secrets. On backups: verifying the dump
+  before keeping it matters because a truncated dump nobody notices is worse
+  than none, being trusted; and restoring to a scratch target by default makes
+  rehearsal the easy path, since a backup nobody has restored is a hypothesis.
+  Off-site copying is a command hook rather than a built-in provider, because
+  guessing one would mean shipping something untestable — and a dump on the
+  machine it protects is not an off-site backup.
+- Date: 2026-08-16
+- Status: implemented
+
 ### Deployment shape
 
 - Decision: One VPS running the whole stack under `deploy/compose.prod.yaml`,
@@ -2236,11 +2259,13 @@ race-run classification remain intentionally unimplemented.
    Dutch Grand Prix on 2026-08-21.
 2. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
-3. Before relying on the deployment, add backups with a restore that has
-   actually been performed, CI running the suites, and error reporting.
-   Authentication, secret handling, PostgreSQL passwords, non-root images and
-   the deployment itself are done; see `docs/DEPLOYMENT.md`. Reconsider manual
-   job cancellation and Redis only when measurements justify them.
+3. Evolve the dashboard toward a full analytics product, following
+   `docs/FRONTEND_EVOLUTION_PLAN.md`. Standings are the first dependency: six
+   of the planned views need them and nothing computes them yet.
+4. Add error reporting, and rate limiting beyond sign-in. Authentication,
+   secret handling, PostgreSQL passwords, non-root images, the deployment,
+   CI and backups are done; see `docs/DEPLOYMENT.md`. Reconsider manual job
+   cancellation and Redis only when measurements justify them.
 
 ## Run and Test Commands
 
