@@ -1,0 +1,178 @@
+name: CI
+
+# Every push and every pull request. Nothing here reaches the network beyond
+# package registries: no test contacts FastF1 or Formula 1's live feed, which
+# is why the suite is safe to run on every commit.
+on:
+  push:
+  pull_request:
+
+concurrency:
+  # A newer push to the same ref makes the older run irrelevant.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-24.04
+
+    # A throwaway database, so the integration tests actually run. Locally they
+    # skip for want of TEST_DATABASE_URL — 109 of them — which is exactly the
+    # coverage worth having in CI.
+    services:
+      postgres:
+        image: postgres:17.10-bookworm
+        env:
+          POSTGRES_DB: formula1_dashboard
+          POSTGRES_USER: formula1_dashboard
+          POSTGRES_PASSWORD: ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U formula1_dashboard -d formula1_dashboard"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://formula1_dashboard:ci_password@localhost:5432/formula1_dashboard
+      TEST_DATABASE_URL: postgresql://formula1_dashboard:ci_password@localhost:5432/formula1_dashboard
+      # The suite runs ungated; tests that exercise the gate build their own app.
+      DASHBOARD_AUTH_REQUIRED: "false"
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.29"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check app tests scripts
+
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+
+      - name: Verify the migration head matches the models
+        # A model changed without a migration is a deployment that fails at
+        # startup rather than in review.
+        run: uv run alembic check
+
+      - name: Test
+        run: uv run pytest -q
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        # tsc -b, the same check the production image build runs.
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test -- --run
+
+      - name: Build
+        run: npm run build
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: frontend/.playwright-browsers
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+
+      - name: Install Playwright chromium
+        run: npm run test:e2e:install
+
+      - name: End-to-end tests
+        run: npm run test:e2e
+
+      - name: Upload the report when the run fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          retention-days: 7
+
+  images:
+    name: Production images
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # Building both is the check. The web image runs tsc and vite build
+      # inside it, so a type error fails here rather than on the server, and
+      # the API image proves its dependency resolution still works.
+      - name: Build the API image
+        run: docker build -t formula1-dashboard-api ./backend
+
+      - name: Build the web image
+        run: docker build -f deploy/web.Dockerfile -t formula1-dashboard-web .
+
+      - name: Both images run as an unprivileged user
+        run: |
+          set -euo pipefail
+          for image in formula1-dashboard-api formula1-dashboard-web; do
+            uid="$(docker run --rm --entrypoint id "$image" -u)"
+            echo "$image runs as uid $uid"
+            if [ "$uid" = "0" ]; then
+              echo "::error::$image runs as root" >&2
+              exit 1
+            fi
+          done
+
+      - name: The Caddy configuration is valid
+        run: >-
+          docker run --rm --entrypoint caddy formula1-dashboard-web
+          validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+      - name: Compose files are valid
+        run: |
+          set -euo pipefail
+          docker compose config --quiet
+          # The production file must refuse to start without its secrets, so it
+          # is validated with placeholders rather than defaults.
+          POSTGRES_PASSWORD=x \
+          DASHBOARD_PASSWORD_HASH=x \
+          DASHBOARD_SECRET_KEY=x \
+          TUNNEL_TOKEN=x \
+          docker compose -f deploy/compose.prod.yaml config --quiet
+
+      - name: The production compose refuses to start without secrets
+        run: |
+          set -euo pipefail
+          if docker compose -f deploy/compose.prod.yaml config --quiet 2>/dev/null; then
+            echo "::error::production compose accepted a missing secret" >&2
+            exit 1
+          fi
+          echo "refused, as intended"
