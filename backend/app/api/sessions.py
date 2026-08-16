@@ -8,6 +8,8 @@ from app.api.contracts import (
     ErrorResponse,
     LapSummaryQuery,
     LapSummaryResponse,
+    RacePaceQuery,
+    RacePaceResponse,
     SessionDetailResponse,
     SessionResultsResponse,
 )
@@ -17,6 +19,7 @@ from app.api.session_data import (
     SessionDataUnavailableError,
     SessionEntryNotFoundError,
     SessionNotFoundError,
+    read_race_pace,
     read_session_detail,
     read_session_laps,
     read_session_results,
@@ -51,6 +54,16 @@ _SESSION_DATA_UNAVAILABLE_RESPONSE = {
     "model": ErrorResponse,
     "description": "The session has no completed historical snapshot.",
 }
+
+
+def _race_pace_query(
+    clean_only: bool = False,
+    outlier_cutoff: Annotated[float, Query(ge=100.0, le=200.0)] = 107.0,
+) -> RacePaceQuery:
+    return RacePaceQuery(
+        clean_only=clean_only,
+        outlier_cutoff=outlier_cutoff,
+    )
 
 
 def _lap_summary_query(
@@ -128,6 +141,38 @@ def get_session_results(
     try:
         return read_session_results(
             session_id=session_id,
+            session_factory=session_factory,
+        )
+    except SessionNotFoundError:
+        raise _session_not_found_error() from None
+    except SessionDataUnavailableError:
+        raise _session_data_unavailable_error() from None
+    except SQLAlchemyError:
+        raise _database_unavailable_error() from None
+
+
+@router.get(
+    "/{session_id}/laps",
+    response_model=RacePaceResponse,
+    responses={
+        404: _SESSION_NOT_FOUND_RESPONSE,
+        409: _SESSION_DATA_UNAVAILABLE_RESPONSE,
+        500: _CONFIGURATION_ERROR_RESPONSE,
+        503: _DATABASE_ERROR_RESPONSE,
+    },
+    summary="Read every entry's laps for one session",
+)
+def get_race_pace(
+    response: Response,
+    session_id: SessionId,
+    query: Annotated[RacePaceQuery, Depends(_race_pace_query)],
+    session_factory: DatabaseSessionFactory,
+) -> RacePaceResponse:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return read_race_pace(
+            session_id=session_id,
+            query=query,
             session_factory=session_factory,
         )
     except SessionNotFoundError:

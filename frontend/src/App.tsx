@@ -19,6 +19,7 @@ import type { DashboardView } from "./DashboardRail";
 import Home from "./Home";
 import ArchiveOverview from "./archive/ArchiveOverview";
 import SeasonCalendar from "./archive/SeasonCalendar";
+import RacePaceView from "./archive/RacePaceView";
 import StandingsView from "./archive/StandingsView";
 import SessionExplorer from "./archive/SessionExplorer";
 import LiveTiming from "./live/LiveTiming";
@@ -40,7 +41,7 @@ const currentUtcYear = new Date().getUTCFullYear();
 type ApiState = "checking" | "ready" | "unavailable";
 
 const VIEW_HEADINGS: Record<
-  Exclude<DashboardView, "session">,
+  Exclude<DashboardView, "session" | "race-pace">,
   { description: string; title: (year: number) => string }
 > = {
   home: {
@@ -333,7 +334,16 @@ function App() {
   }
 
   const heading =
-    activeView === "session"
+    activeView === "race-pace"
+      ? {
+          description: selectedSession
+            ? `Every lap set in ${selectedSession.session.session_name}, with clean laps separated from the rest.`
+            : "Choose a session from the season calendar to compare its laps.",
+          title: selectedSession
+            ? `${selectedSession.event.event_name} race pace`
+            : "Race pace",
+        }
+      : activeView === "session"
       ? {
           description: selectedSession
             ? `${selectedSession.session.session_name} · round ${selectedSession.event.round_number}`
@@ -475,6 +485,36 @@ function App() {
                   selectedSessionId={selectedSessionId}
                   year={selectedYear}
                 />
+              ) : null}
+
+              {activeView === "race-pace" ? (
+                <div className="workspace-view" data-view="race-pace">
+                  {selectedSession ? (
+                    <RacePaceView
+                      key={`${selectedSession.session.id}:${selectedSession.session.ingestion?.completed_at ?? "unavailable"}`}
+                      sessionId={selectedSession.session.id}
+                      sessionName={selectedSession.session.session_name}
+                    />
+                  ) : (
+                    <div className="empty-state empty-state--workspace">
+                      <span className="empty-state__number">—</span>
+                      <div>
+                        <h3>Select a session first</h3>
+                        <p>
+                          Race pace compares every driver's laps in one
+                          session. Open the season calendar and choose one.
+                        </p>
+                        <button
+                          className="secondary-action"
+                          onClick={() => setActiveView("calendar")}
+                          type="button"
+                        >
+                          Browse season sessions
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               ) : null}
 
               {activeView === "session" ? (

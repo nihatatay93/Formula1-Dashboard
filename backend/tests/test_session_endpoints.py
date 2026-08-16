@@ -12,6 +12,11 @@ from app.api.contracts import (
     LapSummaryPage,
     LapSummaryQuery,
     LapSummaryResponse,
+    RacePaceEntry,
+    RacePaceFilters,
+    RacePaceLap,
+    RacePaceQuery,
+    RacePaceResponse,
     RecordState,
     SessionDetailCounts,
     SessionDetailEvent,
@@ -330,6 +335,7 @@ def test_session_laps_endpoint_uses_accepted_query_defaults(
         "/api/v1/sessions/210/entries/0/laps",
     ],
 )
+
 def test_session_endpoints_keep_fastapi_path_validation(
     client: TestClient,
     monkeypatch,
@@ -563,6 +569,7 @@ def test_openapi_documents_historical_session_routes() -> None:
     laps = paths[
         "/api/v1/sessions/{session_id}/entries/{session_entry_id}/laps"
     ]["get"]
+    race_pace = paths["/api/v1/sessions/{session_id}/laps"]["get"]
 
     assert detail["responses"]["200"]["content"]["application/json"][
         "schema"
@@ -573,8 +580,11 @@ def test_openapi_documents_historical_session_routes() -> None:
     assert laps["responses"]["200"]["content"]["application/json"][
         "schema"
     ] == {"$ref": "#/components/schemas/LapSummaryResponse"}
+    assert race_pace["responses"]["200"]["content"]["application/json"][
+        "schema"
+    ] == {"$ref": "#/components/schemas/RacePaceResponse"}
 
-    for operation in (detail, results, laps):
+    for operation in (detail, results, laps, race_pace):
         for status_code in ("500", "503"):
             assert operation["responses"][status_code]["content"][
                 "application/json"
@@ -587,6 +597,13 @@ def test_openapi_documents_historical_session_routes() -> None:
     assert parameter_schemas["session_id"]["minimum"] == 1
     assert parameter_schemas["session_entry_id"]["minimum"] == 1
     assert parameter_schemas["after_lap"]["anyOf"][0]["minimum"] == 0
+
+    race_pace_schemas = {
+        parameter["name"]: parameter["schema"]
+        for parameter in race_pace["parameters"]
+    }
+    assert race_pace_schemas["outlier_cutoff"]["minimum"] == 100.0
+    assert race_pace_schemas["outlier_cutoff"]["maximum"] == 200.0
     assert parameter_schemas["limit"] == {
         "type": "integer",
         "maximum": 100,
@@ -601,3 +618,114 @@ def test_openapi_documents_historical_session_routes() -> None:
         {"$ref": "#/components/schemas/HTTPValidationError"},
         {"$ref": "#/components/schemas/ErrorResponse"},
     ]
+
+
+def _race_pace_response(query: RacePaceQuery) -> RacePaceResponse:
+    return RacePaceResponse(
+        session_id=SESSION_ID,
+        snapshot=_snapshot(),
+        filters=RacePaceFilters(
+            clean_only=query.clean_only,
+            outlier_cutoff=query.outlier_cutoff,
+        ),
+        clean_lap_definition="A lap is clean when ...",
+        session_best_lap_time_us=90_000_000,
+        outlier_cutoff_lap_time_us=96_300_000,
+        items=(
+            RacePaceEntry(
+                session_entry_id=SESSION_ENTRY_ID,
+                driver_id=77,
+                display_name="Ada Leader",
+                abbreviation="ADA",
+                racing_number="1",
+                team_name="Example Team",
+                team_color_hex="#27F4D2",
+                finishing_position=1,
+                laps=(
+                    RacePaceLap(
+                        lap_number=2,
+                        lap_time_us=90_000_000,
+                        stint_number=1,
+                        compound="MEDIUM",
+                        tyre_life_laps=2,
+                        position=1,
+                        is_clean=True,
+                        is_personal_best=True,
+                        beyond_cutoff=False,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+def test_race_pace_endpoint_maps_every_query_parameter(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    sentinel_factory = object()
+    calls: list[tuple[int, RacePaceQuery, object]] = []
+    app.dependency_overrides[get_database_session_factory] = (
+        lambda: sentinel_factory
+    )
+
+    def stub_read_race_pace(*, session_id, query, session_factory):
+        calls.append((session_id, query, session_factory))
+        return _race_pace_response(query)
+
+    monkeypatch.setattr("app.api.sessions.read_race_pace", stub_read_race_pace)
+
+    response = client.get(
+        f"/api/v1/sessions/{SESSION_ID}/laps",
+        params={"clean_only": "true", "outlier_cutoff": 110},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["filters"] == {
+        "clean_only": True,
+        "outlier_cutoff": 110.0,
+    }
+    assert calls == [
+        (
+            SESSION_ID,
+            RacePaceQuery(clean_only=True, outlier_cutoff=110.0),
+            sentinel_factory,
+        )
+    ]
+
+
+def test_race_pace_endpoint_uses_accepted_query_defaults(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    captured: list[RacePaceQuery] = []
+    app.dependency_overrides[get_database_session_factory] = lambda: object()
+
+    def stub_read_race_pace(*, session_id, query, session_factory):
+        captured.append(query)
+        return _race_pace_response(query)
+
+    monkeypatch.setattr("app.api.sessions.read_race_pace", stub_read_race_pace)
+
+    response = client.get(f"/api/v1/sessions/{SESSION_ID}/laps")
+
+    assert response.status_code == 200
+    # Every lap by default: a chart that silently dropped the pit laps would
+    # be lying about the race.
+    assert captured == [RacePaceQuery(clean_only=False, outlier_cutoff=107.0)]
+
+
+def test_race_pace_rejects_a_cutoff_below_the_session_best(
+    client: TestClient,
+) -> None:
+    app.dependency_overrides[get_database_session_factory] = lambda: object()
+
+    response = client.get(
+        f"/api/v1/sessions/{SESSION_ID}/laps",
+        params={"outlier_cutoff": 99},
+    )
+
+    # No lap can beat the best by definition, so a cutoff under 100% would
+    # mark the entire session as outlying.
+    assert response.status_code == 422

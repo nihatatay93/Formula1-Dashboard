@@ -475,6 +475,61 @@ class LapSummary(ApiModel):
     record_state: RecordState
 
 
+class RacePaceQuery(ApiModel):
+    """How a race pace request narrows the session."""
+
+    clean_only: bool = False
+    # A percentage of the session best clean lap. 107 is the familiar
+    # qualifying benchmark and a reasonable default for reading race pace;
+    # the floor of 100 exists because no lap can beat the best by definition.
+    outlier_cutoff: float = Field(default=107.0, ge=100.0, le=200.0)
+
+
+class RacePaceFilters(ApiModel):
+    clean_only: bool
+    outlier_cutoff: float = Field(ge=100.0, le=200.0)
+
+
+class RacePaceLap(ApiModel):
+    lap_number: int = Field(ge=1)
+    lap_time_us: int | None = Field(ge=0)
+    stint_number: int | None = Field(ge=1)
+    compound: str | None
+    tyre_life_laps: int | None = Field(ge=0)
+    position: int | None = Field(ge=1)
+    is_clean: bool
+    is_personal_best: bool | None
+    beyond_cutoff: bool
+
+
+class RacePaceEntry(ApiModel):
+    session_entry_id: DecimalIdentifier
+    driver_id: DecimalIdentifier | None
+    display_name: str
+    abbreviation: str | None
+    racing_number: str | None
+    team_name: str | None
+    team_color_hex: str | None
+    finishing_position: int | None = Field(ge=1)
+    laps: tuple[RacePaceLap, ...]
+
+
+class RacePaceResponse(ApiModel):
+    session_id: DecimalIdentifier
+    snapshot: SessionSnapshot
+    filters: RacePaceFilters
+    clean_lap_definition: str
+    session_best_lap_time_us: int | None = Field(ge=0)
+    outlier_cutoff_lap_time_us: int | None = Field(ge=0)
+    items: tuple[RacePaceEntry, ...]
+
+    @model_validator(mode="after")
+    def validate_snapshot(self) -> Self:
+        if not self.snapshot.data_available:
+            raise ValueError("race pace requires an available snapshot")
+        return self
+
+
 class LapSummaryResponse(ApiModel):
     session_id: DecimalIdentifier
     session_entry_id: DecimalIdentifier

@@ -4,6 +4,7 @@ import {
   completedSeason,
   constructorStandings,
   driverStandings,
+  racePace,
   ensureLapTelemetryAvailable,
   firstLapPage,
   lapTelemetry,
@@ -82,6 +83,9 @@ async function installApiRoutes(page: Page) {
     }
     if (path === "/api/v1/seasons/2026/standings/constructors") {
       return json(route, constructorStandings);
+    }
+    if (/^\/api\/v1\/sessions\/\d+\/laps$/.test(path)) {
+      return json(route, racePace);
     }
     if (path.includes("/standings/")) {
       // Any other season has nothing archived to rank.
@@ -383,4 +387,35 @@ test("opens live timing as a separate view without archive state", async ({
     scrollWidth: document.documentElement.scrollWidth,
   }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+});
+
+test("race pace compares the field and never bridges a gap in the laps", async ({
+  page,
+}) => {
+  await installApiRoutes(page);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /^Season sessions/ }).click();
+  await page.getByRole("button", { name: /Mar 08.*Race/ }).click();
+  await page.getByRole("button", { name: "Race pace", exact: true }).click();
+
+  // A row per driver, ordered by median, each one named rather than left to
+  // its team colour.
+  await expect(page.locator(".pace-box__name")).toHaveText([
+    "Kimi Antonelli",
+    "Lewis Hamilton",
+  ]);
+
+  // Antonelli's clean laps are 2 and 3 -- consecutive, so one stroke. Hamilton
+  // has 2 and 3 too. Turning off clean-only adds his lap 1, which is still
+  // consecutive, so the count must not change.
+  await expect(page.locator(".pace-box__caption")).toContainText(
+    "1.5x the interquartile range",
+  );
+
+  await page.getByRole("checkbox", { name: /clean laps only/i }).uncheck();
+  await expect(page.getByText(/5 laps from 2 drivers/)).toBeVisible();
+
+  await page.getByRole("checkbox", { name: /clean laps only/i }).check();
+  await expect(page.getByText(/4 laps from 2 drivers/)).toBeVisible();
 });

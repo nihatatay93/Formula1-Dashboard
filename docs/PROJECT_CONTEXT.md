@@ -2284,10 +2284,11 @@ race-run classification remain intentionally unimplemented.
 2. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
 3. Evolve the dashboard toward a full analytics product, following
-   `docs/FRONTEND_EVOLUTION_PLAN.md`. Phases 1-3 are done: standings are
-   computed, exposed, and rendered, and the landing page now previews them
-   alongside the next session. Phase 4 (race pace) is next and carries the
-   most value of what remains.
+   `docs/FRONTEND_EVOLUTION_PLAN.md`. Phases 1-4 are done: standings are
+   computed, exposed and rendered, the landing page previews them, and race
+   pace compares a whole field from one request. Phase 5 (head to head and
+   consistency) is next; it reuses the race-pace reader and needs no new
+   ingestion.
 4. Add error reporting, and rate limiting beyond sign-in. Authentication,
    secret handling, PostgreSQL passwords, non-root images, the deployment,
    CI and backups are done; see `docs/DEPLOYMENT.md`. Reconsider manual job
@@ -2617,6 +2618,11 @@ mounted writable at `/live-sessions`.
 
 ## Change Log
 
+- 2026-08-16 — Added race pace analysis: one request returns every entry's
+  laps for a session, each flagged against a single server-side definition of
+  a clean lap, with a lap-time evolution chart and a box plot ordered by
+  median. Established that FastF1 concatenates a lap's track statuses, so only
+  "1" is green throughout.
 - 2026-08-16 — Added the drivers' and constructors' championships end to end:
   SQL aggregation over stored results, two season endpoints, a tabbed
   standings view with per-season trend lines, and a landing page that previews

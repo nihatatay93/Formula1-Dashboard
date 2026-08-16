@@ -710,3 +710,41 @@ export type LiveStreamMessage =
       board: LiveBoard;
     }
   | { type: "error"; code: string; message: string };
+
+
+export interface RacePaceLap {
+  lap_number: number;
+  lap_time_us: number | null;
+  stint_number: number | null;
+  compound: string | null;
+  tyre_life_laps: number | null;
+  position: number | null;
+  is_clean: boolean;
+  is_personal_best: boolean | null;
+  beyond_cutoff: boolean;
+}
+
+export interface RacePaceEntry {
+  session_entry_id: string;
+  driver_id: string | null;
+  display_name: string;
+  abbreviation: string | null;
+  racing_number: string | null;
+  team_name: string | null;
+  team_color_hex: string | null;
+  finishing_position: number | null;
+  laps: RacePaceLap[];
+}
+
+export interface RacePaceResponse {
+  session_id: string;
+  snapshot: SessionSnapshot;
+  filters: {
+    clean_only: boolean;
+    outlier_cutoff: number;
+  };
+  clean_lap_definition: string;
+  session_best_lap_time_us: number | null;
+  outlier_cutoff_lap_time_us: number | null;
+  items: RacePaceEntry[];
+}

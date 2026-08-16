@@ -4344,3 +4344,248 @@ th,
     scroll-behavior: auto !important;
   }
 }
+
+/* --------------------------------------------------------------------------
+   Race pace
+   -------------------------------------------------------------------------- */
+
+.race-pace__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3) var(--s5);
+  align-items: center;
+  margin-bottom: var(--s4);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r2);
+  background: var(--panel-inset);
+}
+
+.race-pace__toggle {
+  display: inline-flex;
+  gap: var(--s2);
+  align-items: center;
+  color: var(--ink-dim);
+  font-size: var(--t-small);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.race-pace__toggle input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.race-pace__slider {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 15rem;
+  margin-left: auto;
+  color: var(--ink-dim);
+  font-size: var(--t-small);
+}
+
+.race-pace__slider strong {
+  color: var(--ink);
+  font-family: var(--mono);
+}
+
+.race-pace__slider small {
+  color: var(--muted-dark);
+  font-family: var(--mono);
+}
+
+.race-pace__slider input {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.race-pace__summary {
+  margin-bottom: var(--s3);
+  color: var(--ink-dim);
+  font-size: var(--t-small);
+}
+
+.race-pace__summary strong {
+  color: var(--ink);
+  font-family: var(--mono);
+}
+
+.race-pace__footnote {
+  margin-top: var(--s4);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--t-micro);
+  line-height: 1.6;
+}
+
+/* The evolution chart: everything drawn, one car raised at a time. */
+
+.pace-evolution,
+.pace-box {
+  margin: 0 0 var(--s5);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r2);
+  background: var(--panel-raised);
+}
+
+.pace-evolution__svg,
+.pace-box__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.pace-evolution__grid,
+.pace-box__grid {
+  stroke: rgb(255 255 255 / 8%);
+  stroke-width: 1;
+}
+
+.pace-evolution__axis,
+.pace-box__axis {
+  fill: var(--muted-dark);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.pace-evolution__line {
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.75;
+}
+
+.pace-evolution__series {
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+/* Context: the rest of the field stays visible but recedes. */
+.pace-evolution__series.is-dim {
+  opacity: 0.16;
+}
+
+.pace-evolution__series.is-focused .pace-evolution__line {
+  stroke-width: 2.5;
+  opacity: 1;
+}
+
+.pace-evolution__point {
+  stroke: var(--panel-raised);
+  stroke-width: 1;
+}
+
+.pace-evolution__label {
+  fill: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: var(--panel-raised);
+  stroke-width: 3px;
+}
+
+.pace-evolution__stint {
+  fill: rgb(255 255 255 / 3.5%);
+  stroke: rgb(255 255 255 / 7%);
+  stroke-width: 1;
+}
+
+.pace-evolution__stint-label {
+  fill: var(--muted-dark);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.pace-evolution__cutoff {
+  stroke: var(--warning);
+  stroke-dasharray: 4 4;
+  stroke-width: 1;
+  opacity: 0.5;
+}
+
+.pace-evolution__cutoff-label {
+  fill: var(--warning);
+  font-family: var(--mono);
+  font-size: 9px;
+  opacity: 0.75;
+}
+
+.pace-evolution__caption,
+.pace-box__caption {
+  margin-top: var(--s3);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line);
+  color: var(--muted-dark);
+  font-size: var(--t-micro);
+  line-height: 1.6;
+}
+
+/* The distribution: one named row per driver, ordered by median. */
+
+.pace-box__row {
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+.pace-box__row.is-dim {
+  opacity: 0.28;
+}
+
+.pace-box__name {
+  fill: var(--ink-dim);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pace-box__code {
+  fill: var(--muted-dark);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.pace-box__box {
+  fill-opacity: 0.28;
+  stroke-width: 1.5;
+}
+
+.pace-box__median {
+  stroke: var(--ink);
+  stroke-width: 2;
+}
+
+.pace-box__whisker {
+  stroke-width: 1.5;
+  opacity: 0.7;
+}
+
+.pace-box__cap {
+  stroke-width: 1.5;
+  opacity: 0.7;
+}
+
+.pace-box__outlier {
+  fill: none;
+  stroke-width: 1.2;
+  opacity: 0.75;
+}
+
+@media (width <= 900px) {
+  .race-pace__slider {
+    margin-left: 0;
+    min-width: 100%;
+  }
+}
+
+.pace-evolution__lone-lap {
+  opacity: 0.75;
+}

@@ -243,10 +243,26 @@ in this project computes them yet.
 
 ---
 
-## Phase 4 — Race pace analysis
+## Phase 4 — Race pace analysis (complete)
 
 **The most valuable phase.** This is what makes the reference feel like an
 analysis tool rather than a results site.
+
+**Built as specified, with three findings worth carrying forward:**
+
+- `laps.track_status` is not one code. FastF1 concatenates every status seen
+  during the lap, so `"1"` is green throughout but `"12"`, `"21"` and `"671"`
+  are not. Matching on "contains a 1" would admit most yellow laps.
+- 107% is a qualifying benchmark and is too tight for race pace. At Monaco it
+  excludes 53% of clean laps -- the winner's own median clean lap is 104.3% of
+  their best. `beyond_cutoff` is therefore a flag, never a filter, and the
+  slider reaches 130%.
+- Team colours cannot be re-picked: several real pairs fail CVD separation
+  (Williams `#1868DB` and Red Bull `#4781D7` sit at deltaE 8.0 for normal
+  vision, below the floor of 15; Cadillac and Haas are both achromatic), and
+  team-mates share one colour exactly. Identity therefore never rests on
+  colour -- every distribution row is named, team-mates are dashed, and the
+  evolution chart is focus-and-context with the raised line labelled.
 
 **Read first**
 - `frontend/src/archive/PaceTrendChart.tsx` — the existing SVG chart idiom

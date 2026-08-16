@@ -598,3 +598,106 @@ export const constructorStandings: ConstructorStandingsResponse = {
     },
   ],
 };
+
+/**
+ * Race pace for one session: two drivers, one of whom has a gap in their clean
+ * laps, so a spec can prove the evolution chart never bridges it.
+ */
+export const racePace = {
+  session_id: "5001",
+  snapshot: {
+    data_available: true,
+    source: "fastf1_archive",
+    record_state: "finalized",
+    completed_at: "2026-03-08T06:00:00Z",
+    source_updated_at: "2026-03-08T06:00:00Z",
+  },
+  filters: { clean_only: false, outlier_cutoff: 107 },
+  clean_lap_definition:
+    "A lap is clean when it has a recorded time, FastF1 marks it accurate, " +
+    "it was not deleted, the car neither entered nor left the pits on it, " +
+    'and the track was green for the whole lap (track status exactly "1").',
+  session_best_lap_time_us: 80_000_000,
+  outlier_cutoff_lap_time_us: 85_600_000,
+  items: [
+    {
+      session_entry_id: "9001",
+      driver_id: "1",
+      display_name: "Kimi Antonelli",
+      abbreviation: "ANT",
+      racing_number: "12",
+      team_name: "Mercedes",
+      team_color_hex: "#00D7B6",
+      finishing_position: 1,
+      laps: [
+        {
+          lap_number: 1,
+          lap_time_us: 92_000_000,
+          stint_number: 1,
+          compound: "MEDIUM",
+          tyre_life_laps: 1,
+          position: 1,
+          is_clean: false,
+          is_personal_best: false,
+          beyond_cutoff: true,
+        },
+        {
+          lap_number: 2,
+          lap_time_us: 80_000_000,
+          stint_number: 1,
+          compound: "MEDIUM",
+          tyre_life_laps: 2,
+          position: 1,
+          is_clean: true,
+          is_personal_best: true,
+          beyond_cutoff: false,
+        },
+        {
+          lap_number: 3,
+          lap_time_us: 81_000_000,
+          stint_number: 1,
+          compound: "MEDIUM",
+          tyre_life_laps: 3,
+          position: 1,
+          is_clean: true,
+          is_personal_best: false,
+          beyond_cutoff: false,
+        },
+      ],
+    },
+    {
+      session_entry_id: "9002",
+      driver_id: "2",
+      display_name: "Lewis Hamilton",
+      abbreviation: "HAM",
+      racing_number: "44",
+      team_name: "Ferrari",
+      team_color_hex: "#ED1131",
+      finishing_position: 2,
+      laps: [
+        {
+          lap_number: 2,
+          lap_time_us: 83_000_000,
+          stint_number: 1,
+          compound: "HARD",
+          tyre_life_laps: 2,
+          position: 2,
+          is_clean: true,
+          is_personal_best: true,
+          beyond_cutoff: false,
+        },
+        {
+          lap_number: 3,
+          lap_time_us: 84_000_000,
+          stint_number: 1,
+          compound: "HARD",
+          tyre_life_laps: 3,
+          position: 2,
+          is_clean: true,
+          is_personal_best: false,
+          beyond_cutoff: false,
+        },
+      ],
+    },
+  ],
+};

@@ -14,6 +14,7 @@ import type {
   LiveRecordingList,
   LiveStatus,
   LoginResult,
+  RacePaceResponse,
   SeasonOverview,
   SessionDetail,
   SessionResults,
@@ -212,6 +213,23 @@ export function getLapTelemetry(
 }
 
 /** The drivers' championship, aggregated server-side. */
+export function getRacePace(
+  sessionId: string,
+  options: { outlierCutoff?: number; signal?: AbortSignal } = {},
+): Promise<RacePaceResponse> {
+  const query =
+    options.outlierCutoff === undefined
+      ? ""
+      : `?outlier_cutoff=${options.outlierCutoff}`;
+  // Every lap is fetched once, flagged clean or not. The clean-laps toggle and
+  // the cutoff highlight then run in the browser, so moving a slider does not
+  // wait on the network.
+  return requestJson<RacePaceResponse>(
+    `/api/v1/sessions/${sessionId}/laps${query}`,
+    { signal: options.signal },
+  );
+}
+
 export function getDriverStandings(
   seasonYear: number,
   signal?: AbortSignal,

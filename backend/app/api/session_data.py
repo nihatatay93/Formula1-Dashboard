@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
-from sqlalchemy import func, select, text
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.orm import Session
 
 from app.api.contracts import (
@@ -13,6 +13,11 @@ from app.api.contracts import (
     LapSummaryQuery,
     LapSummaryResponse,
     LastError,
+    RacePaceEntry,
+    RacePaceFilters,
+    RacePaceLap,
+    RacePaceQuery,
+    RacePaceResponse,
     SessionDetailCounts,
     SessionDetailEvent,
     SessionDetailIngestion,
@@ -39,6 +44,45 @@ _READ_ONLY_TRANSACTION = (
     "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
 )
 _TEAM_COLOR_PATTERN = re.compile(r"^[0-9A-Fa-f]{6}$")
+
+
+# FastF1 reports a lap's track status as every status code seen while that lap
+# was running, concatenated in order: "1" was green throughout, "12" went green
+# then yellow, "21" yellow then green, "671" saw a virtual and a full safety
+# car. A lap is only fully green when the whole string is a single "1" --
+# matching on "contains a 1" would admit most of the yellow laps in the
+# archive, which is the opposite of what a pace comparison wants.
+GREEN_TRACK_STATUS = "1"
+
+CLEAN_LAP_DEFINITION = (
+    "A lap is clean when it has a recorded time, FastF1 marks it accurate, it "
+    "was not deleted, the car neither entered nor left the pits on it, and the "
+    'track was green for the whole lap (track status exactly "1").'
+)
+
+# The definition above as SQL. Its Python twin is ``is_clean_lap``; the two are
+# held together by a test that runs both over every lap of a session.
+CLEAN_LAP = and_(
+    Lap.lap_time_us.is_not(None),
+    Lap.is_accurate.is_(True),
+    Lap.deleted.is_not(True),
+    Lap.pit_in_time_us.is_(None),
+    Lap.pit_out_time_us.is_(None),
+    Lap.track_status == GREEN_TRACK_STATUS,
+)
+
+
+def is_clean_lap(lap: Lap) -> bool:
+    """Whether one lap is representative of pace. See ``CLEAN_LAP_DEFINITION``."""
+
+    return (
+        lap.lap_time_us is not None
+        and lap.is_accurate
+        and lap.deleted is not True
+        and lap.pit_in_time_us is None
+        and lap.pit_out_time_us is None
+        and lap.track_status == GREEN_TRACK_STATUS
+    )
 
 
 class SessionDataReadError(ValueError):
@@ -222,6 +266,134 @@ def read_session_laps(
             ),
             items=items,
         )
+
+
+def read_race_pace(
+    *,
+    session_id: int,
+    query: RacePaceQuery,
+    session_factory: SessionFactory,
+) -> RacePaceResponse:
+    """Read every entry's laps for one session in a single response.
+
+    Laps arrive already flagged clean or not, so a viewer can move between all
+    laps and representative ones without asking again; ``clean_only`` narrows
+    the payload for callers that never want the rest. Twenty drivers over a
+    race distance is one request, not twenty paginated walks.
+    """
+
+    _validate_identifier(session_id, "session_id")
+    if not isinstance(query, RacePaceQuery):
+        raise SessionDataReadError("query must be a RacePaceQuery")
+
+    with session_factory() as database, database.begin():
+        _begin_read_only(database)
+        _, _, ingestion = _session_context(database, session_id=session_id)
+        snapshot = _require_snapshot(ingestion)
+
+        # The reference is the best clean lap. Taking it from any lap would let
+        # one set behind a safety car define what the cutoff is a percentage
+        # of, and drag the whole field inside it.
+        session_best = database.scalar(
+            select(Lap.lap_time_us)
+            .join(SessionEntry, SessionEntry.id == Lap.session_entry_id)
+            .where(SessionEntry.session_id == session_id, CLEAN_LAP)
+            .order_by(Lap.lap_time_us.asc())
+            .limit(1)
+        )
+        cutoff = (
+            int(session_best * query.outlier_cutoff / 100)
+            if session_best is not None
+            else None
+        )
+
+        lap_statement = (
+            select(Lap)
+            .join(SessionEntry, SessionEntry.id == Lap.session_entry_id)
+            .where(SessionEntry.session_id == session_id)
+        )
+        if query.clean_only:
+            lap_statement = lap_statement.where(CLEAN_LAP)
+        laps_by_entry: dict[int, list[Lap]] = {}
+        for lap in database.scalars(
+            lap_statement.order_by(Lap.session_entry_id, Lap.lap_number)
+        ):
+            laps_by_entry.setdefault(lap.session_entry_id, []).append(lap)
+
+        rows = database.execute(
+            select(SessionEntry, SessionResult)
+            .outerjoin(
+                SessionResult,
+                SessionResult.session_entry_id == SessionEntry.id,
+            )
+            .where(SessionEntry.session_id == session_id)
+            .order_by(
+                SessionResult.position.asc().nulls_last(),
+                SessionEntry.id,
+            )
+        ).all()
+
+        return RacePaceResponse(
+            session_id=session_id,
+            snapshot=snapshot,
+            filters=RacePaceFilters(
+                clean_only=query.clean_only,
+                outlier_cutoff=query.outlier_cutoff,
+            ),
+            clean_lap_definition=CLEAN_LAP_DEFINITION,
+            session_best_lap_time_us=session_best,
+            outlier_cutoff_lap_time_us=cutoff,
+            items=tuple(
+                _race_pace_entry(
+                    entry=entry,
+                    result=result,
+                    laps=laps_by_entry.get(entry.id, ()),
+                    cutoff=cutoff,
+                )
+                for entry, result in rows
+            ),
+        )
+
+
+def _race_pace_entry(
+    *,
+    entry: SessionEntry,
+    result: SessionResult | None,
+    laps: Sequence[Lap],
+    cutoff: int | None,
+) -> RacePaceEntry:
+    return RacePaceEntry(
+        session_entry_id=entry.id,
+        driver_id=entry.driver_id,
+        display_name=entry.display_name,
+        abbreviation=entry.abbreviation,
+        racing_number=entry.racing_number,
+        team_name=entry.team_name,
+        team_color_hex=_team_color(entry.team_color),
+        finishing_position=result.position if result is not None else None,
+        laps=tuple(_race_pace_lap(lap, cutoff=cutoff) for lap in laps),
+    )
+
+
+def _race_pace_lap(lap: Lap, *, cutoff: int | None) -> RacePaceLap:
+    return RacePaceLap(
+        lap_number=lap.lap_number,
+        lap_time_us=lap.lap_time_us,
+        stint_number=lap.stint_number,
+        compound=lap.compound,
+        tyre_life_laps=lap.tyre_life_laps,
+        position=lap.position,
+        is_clean=is_clean_lap(lap),
+        is_personal_best=lap.is_personal_best,
+        # Outlier status is reported, never filtered away silently: a lap far
+        # off the reference is itself the interesting thing on an evolution
+        # chart, and the caller decides whether to draw it.
+        beyond_cutoff=(
+            cutoff is not None
+            and lap.lap_time_us is not None
+            and lap.lap_time_us > cutoff
+        ),
+    )
 
 
 def _begin_read_only(database: Session) -> None:
