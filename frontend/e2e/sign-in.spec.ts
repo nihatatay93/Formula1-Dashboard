@@ -1,6 +1,10 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
-import { completedSeason, requestBudget } from "../src/test/fixtures";
+import {
+  completedSeason,
+  driverStandings,
+  requestBudget,
+} from "../src/test/fixtures";
 
 /** No SignalR provider in this deployment, matching the archive workflows. */
 const liveUnconfigured = {
@@ -96,6 +100,9 @@ async function installGatedApi(page: Page) {
 
     if (path === "/api/v1/seasons/2026") {
       return json(route, completedSeason);
+    }
+    if (path.includes("/standings/")) {
+      return json(route, driverStandings);
     }
     if (path === "/api/v1/upstreams/fastf1/usage") {
       return json(route, requestBudget);

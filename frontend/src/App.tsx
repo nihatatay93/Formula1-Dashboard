@@ -19,6 +19,7 @@ import type { DashboardView } from "./DashboardRail";
 import Home from "./Home";
 import ArchiveOverview from "./archive/ArchiveOverview";
 import SeasonCalendar from "./archive/SeasonCalendar";
+import StandingsView from "./archive/StandingsView";
 import SessionExplorer from "./archive/SessionExplorer";
 import LiveTiming from "./live/LiveTiming";
 import { errorMessage, formatDateTime } from "./shared/format";
@@ -56,6 +57,11 @@ const VIEW_HEADINGS: Record<
     description:
       "Open any event and session without leaving the season archive.",
     title: (year) => `${year} season sessions`,
+  },
+  standings: {
+    description:
+      "Both championships, computed from the sessions this archive holds.",
+    title: (year) => `${year} championship`,
   },
   live: {
     description:
@@ -456,6 +462,10 @@ function App() {
                   now={now}
                   season={season}
                 />
+              ) : null}
+
+              {activeView === "standings" ? (
+                <StandingsView year={selectedYear} />
               ) : null}
 
               {activeView === "calendar" ? (

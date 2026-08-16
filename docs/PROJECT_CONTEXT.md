@@ -2284,8 +2284,10 @@ race-run classification remain intentionally unimplemented.
 2. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
 3. Evolve the dashboard toward a full analytics product, following
-   `docs/FRONTEND_EVOLUTION_PLAN.md`. Standings are the first dependency: six
-   of the planned views need them and nothing computes them yet.
+   `docs/FRONTEND_EVOLUTION_PLAN.md`. Phases 1-3 are done: standings are
+   computed, exposed, and rendered, and the landing page now previews them
+   alongside the next session. Phase 4 (race pace) is next and carries the
+   most value of what remains.
 4. Add error reporting, and rate limiting beyond sign-in. Authentication,
    secret handling, PostgreSQL passwords, non-root images, the deployment,
    CI and backups are done; see `docs/DEPLOYMENT.md`. Reconsider manual job
@@ -2614,6 +2616,12 @@ mounted writable at `/live-sessions`.
 - `README.md`: Local development overview and commands.
 
 ## Change Log
+
+- 2026-08-16 — Added the drivers' and constructors' championships end to end:
+  SQL aggregation over stored results, two season endpoints, a tabbed
+  standings view with per-season trend lines, and a landing page that previews
+  the leaders and counts down to the next session. Gave the Playwright specs
+  their own TypeScript project, which had never been typechecked.
 
 - 2026-07-29 — Repaired the live Docker Vite CSS failure by reconciling the
   persistent frontend dependency volume, avoiding transient PostCSS discovery,

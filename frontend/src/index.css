@@ -665,6 +665,307 @@ th,
   line-height: 1.6;
 }
 
+/* At-a-glance row: what is next, and who is winning. Two columns on a wide
+   screen, stacked below. */
+.home__glance {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: var(--s4);
+}
+
+.next-session {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: linear-gradient(
+    135deg,
+    var(--accent-soft),
+    var(--panel) 65%
+  );
+}
+
+.next-session--idle {
+  background: var(--panel);
+}
+
+.next-session__heading {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+}
+
+.next-session__round {
+  padding: 0.15rem var(--s2);
+  border-radius: var(--r-xs);
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  font-weight: 700;
+}
+
+.next-session h3 {
+  font-size: var(--t-h3);
+}
+
+.next-session__clock {
+  display: flex;
+  gap: var(--s4);
+  margin-top: auto;
+}
+
+.next-session__clock strong {
+  display: block;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 1.75rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.next-session__clock span {
+  color: var(--muted);
+  font-size: var(--t-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.next-session__note {
+  color: var(--muted);
+  font-size: var(--t-micro);
+  line-height: 1.5;
+}
+
+.championship-snapshot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel);
+}
+
+.championship-snapshot__columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--s4);
+}
+
+.championship-snapshot__label {
+  margin-bottom: var(--s2);
+  color: var(--muted);
+  font-size: var(--t-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.championship-snapshot__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.championship-snapshot__list li {
+  display: grid;
+  grid-template-columns: 1.25rem 3px minmax(0, 1fr) auto;
+  gap: var(--s2);
+  align-items: center;
+}
+
+.championship-snapshot__position {
+  color: var(--muted-dark);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.championship-snapshot__swatch {
+  width: 3px;
+  height: 1rem;
+  border-radius: 999px;
+}
+
+.championship-snapshot__name {
+  overflow: hidden;
+  color: var(--ink-dim);
+  font-size: var(--t-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.championship-snapshot__points {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-body);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* Championship standings. Ordering comes from the backend, which breaks ties
+   on wins then podiums; the table never re-sorts. */
+.standings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.standings__tabs {
+  display: flex;
+  gap: var(--s1);
+  padding: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel-inset);
+}
+
+.standings__tabs button {
+  padding: var(--s1) var(--s3);
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--t-small);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.standings__tabs button.is-selected {
+  background: var(--panel-raised);
+  color: var(--ink);
+}
+
+.standings__table-wrap {
+  max-height: 32rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel);
+}
+
+.standings__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.standings__table caption {
+  padding: var(--s3) var(--s4);
+  color: var(--muted);
+  font-size: var(--t-micro);
+  text-align: left;
+}
+
+.standings__table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-inset);
+  color: var(--muted);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.standings__table td {
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--t-body);
+}
+
+.standings__table tbody tr:hover {
+  background: var(--panel-hover);
+}
+
+.standings__position {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-base);
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.standings__name {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+}
+
+.standings__name strong {
+  display: block;
+  color: var(--ink);
+}
+
+.standings__name small {
+  display: block;
+  color: var(--muted-dark);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+}
+
+.standings__swatch {
+  width: 3px;
+  height: 1.75rem;
+  flex: none;
+  border-radius: 999px;
+}
+
+.standings__team {
+  color: var(--muted);
+  font-size: var(--t-small);
+}
+
+.standings__points {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.standings__count {
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.standings__trend {
+  width: 5rem;
+  height: 1.75rem;
+}
+
+.standings__trend polyline {
+  stroke: var(--chart-trace);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.standings__trend--empty {
+  display: inline-block;
+}
+
+.standings__footnote {
+  color: var(--muted-dark);
+  font-size: var(--t-micro);
+  line-height: 1.5;
+}
+
+@media (width <= 60rem) {
+  .home__glance {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .home__paths {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));

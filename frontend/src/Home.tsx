@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 
 import { getLiveRecordings, getLiveStatus } from "./api";
+import ChampionshipSnapshot from "./archive/ChampionshipSnapshot";
+import NextSessionCard from "./archive/NextSessionCard";
 import type { LiveStatus, SeasonOverview } from "./contracts";
 import StatusPill from "./shared/StatusPill";
 
@@ -17,7 +19,11 @@ import StatusPill from "./shared/StatusPill";
  * the facts rather than from the labels alone.
  */
 
-export type HomeDestination = "overview" | "calendar" | "live";
+export type HomeDestination =
+  | "overview"
+  | "calendar"
+  | "standings"
+  | "live";
 
 function liveSummary(status: LiveStatus | null): {
   headline: string;
@@ -100,6 +106,14 @@ export default function Home({
           appears in the archive, from a different source.
         </p>
       </section>
+
+      <div className="home__glance">
+        <NextSessionCard season={season} />
+        <ChampionshipSnapshot
+          onOpen={() => onNavigate("standings")}
+          year={year}
+        />
+      </div>
 
       <div className="home__paths">
         <article className="home-card" aria-labelledby="home-archive-title">

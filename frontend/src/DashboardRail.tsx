@@ -16,12 +16,18 @@ export type DashboardView =
   | "home"
   | "overview"
   | "calendar"
+  | "standings"
   | "session"
   | "live";
 
 /** Which group a view belongs to, so the season controls know when to show. */
 export function isArchiveView(view: DashboardView): boolean {
-  return view === "overview" || view === "calendar" || view === "session";
+  return (
+    view === "overview" ||
+    view === "calendar" ||
+    view === "standings" ||
+    view === "session"
+  );
 }
 
 function RailButton({
@@ -127,6 +133,11 @@ export default function DashboardRail({
             badge={String(season?.events.length ?? 0)}
             label="Season sessions"
             onSelect={() => onSelectView("calendar")}
+          />
+          <RailButton
+            active={view === "standings"}
+            label="Standings"
+            onSelect={() => onSelectView("standings")}
           />
           <RailButton
             active={view === "session"}

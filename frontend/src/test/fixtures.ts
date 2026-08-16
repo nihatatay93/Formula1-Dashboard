@@ -1,5 +1,7 @@
 import type {
   BackfillJob,
+  ConstructorStandingsResponse,
+  DriverStandingsResponse,
   EnsureBackfillResponse,
   EnsureLapTelemetryResponse,
   FastF1RequestBudget,
@@ -522,4 +524,77 @@ export const ensureLapTelemetryAvailable: EnsureLapTelemetryResponse = {
   action: "available",
   status: "completed",
   source_snapshot_completed_at: completedSnapshot.completed_at as string,
+};
+
+export const driverStandings: DriverStandingsResponse = {
+  season_year: 2026,
+  scoring_sessions: 1,
+  rounds: [
+    {
+      round_number: 1,
+      event_name: "Australian Grand Prix",
+      session_key: "race",
+      session_id: completedSession.id,
+    },
+  ],
+  items: [
+    {
+      position: 1,
+      driver_id: "11",
+      display_name: "Lando Norris",
+      abbreviation: "NOR",
+      team_name: "McLaren",
+      team_color: "F47600",
+      points: "25.000",
+      wins: 1,
+      podiums: 1,
+      poles: 1,
+      starts: 1,
+      dnfs: 0,
+      best_finish: 1,
+      rounds: [
+        { round_number: 1, session_key: "race", points: "25.000", position: 1 },
+      ],
+    },
+    {
+      position: 2,
+      driver_id: "12",
+      display_name: "Oscar Piastri",
+      abbreviation: "PIA",
+      team_name: "McLaren",
+      team_color: "F47600",
+      points: "18.000",
+      wins: 0,
+      podiums: 1,
+      poles: 0,
+      starts: 1,
+      dnfs: 0,
+      best_finish: 2,
+      rounds: [
+        { round_number: 1, session_key: "race", points: "18.000", position: 2 },
+      ],
+    },
+  ],
+};
+
+export const constructorStandings: ConstructorStandingsResponse = {
+  season_year: 2026,
+  scoring_sessions: 1,
+  rounds: driverStandings.rounds,
+  items: [
+    {
+      position: 1,
+      team_name: "McLaren",
+      team_color: "F47600",
+      points: "43.000",
+      wins: 1,
+      podiums: 2,
+      poles: 1,
+      best_finish: 1,
+      drivers: ["Lando Norris", "Oscar Piastri"],
+      rounds: [
+        { round_number: 1, session_key: "race", points: "43.000", position: 1 },
+      ],
+    },
+  ],
 };

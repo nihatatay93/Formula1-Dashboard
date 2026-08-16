@@ -2,6 +2,8 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 import {
   completedSeason,
+  constructorStandings,
+  driverStandings,
   ensureLapTelemetryAvailable,
   firstLapPage,
   lapTelemetry,
@@ -72,6 +74,21 @@ async function installApiRoutes(page: Page) {
       return json(route, {
         record_state: "unconfirmed_live",
         retention_days: 7,
+        items: [],
+      });
+    }
+    if (path === "/api/v1/seasons/2026/standings/drivers") {
+      return json(route, driverStandings);
+    }
+    if (path === "/api/v1/seasons/2026/standings/constructors") {
+      return json(route, constructorStandings);
+    }
+    if (path.includes("/standings/")) {
+      // Any other season has nothing archived to rank.
+      return json(route, {
+        season_year: 2025,
+        scoring_sessions: 0,
+        rounds: [],
         items: [],
       });
     }

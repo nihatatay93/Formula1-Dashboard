@@ -447,6 +447,72 @@ export interface LoginResult {
   expires_at: string;
 }
 
+/**
+ * Championship standings, aggregated server-side from stored results.
+ *
+ * `scoring_sessions` is how many sessions the table was computed from, so a
+ * reader can tell a mid-season standing from one built on an incomplete
+ * archive. Points arrive as strings because they are exact decimals.
+ */
+export interface StandingsRound {
+  round_number: number;
+  event_name: string;
+  session_key: string;
+  session_id: string;
+}
+
+export interface StandingsRoundPoints {
+  round_number: number;
+  session_key: string;
+  points: string;
+  position: number | null;
+}
+
+export interface DriverStanding {
+  position: number;
+  driver_id: string;
+  display_name: string;
+  abbreviation: string | null;
+  team_name: string | null;
+  team_color: string | null;
+  points: string;
+  wins: number;
+  podiums: number;
+  poles: number;
+  starts: number;
+  /** Races entered but not classified; a classified retirement is not one. */
+  dnfs: number;
+  best_finish: number | null;
+  rounds: StandingsRoundPoints[];
+}
+
+export interface ConstructorStanding {
+  position: number;
+  team_name: string;
+  team_color: string | null;
+  points: string;
+  wins: number;
+  podiums: number;
+  poles: number;
+  best_finish: number | null;
+  drivers: string[];
+  rounds: StandingsRoundPoints[];
+}
+
+export interface DriverStandingsResponse {
+  season_year: number;
+  scoring_sessions: number;
+  rounds: StandingsRound[];
+  items: DriverStanding[];
+}
+
+export interface ConstructorStandingsResponse {
+  season_year: number;
+  scoring_sessions: number;
+  rounds: StandingsRound[];
+  items: ConstructorStanding[];
+}
+
 export interface ApiErrorResponse {
   detail?: {
     code?: string;

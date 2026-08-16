@@ -2,6 +2,8 @@ import type {
   ApiErrorResponse,
   AuthSession,
   BackfillJob,
+  ConstructorStandingsResponse,
+  DriverStandingsResponse,
   EnsureBackfillResponse,
   EnsureLapTelemetryResponse,
   FastF1RequestBudget,
@@ -205,6 +207,27 @@ export function getLapTelemetry(
     `${telemetryPath(sessionId, sessionEntryId, lapNumber)}${
       encoded ? `?${encoded}` : ""
     }`,
+    { signal },
+  );
+}
+
+/** The drivers' championship, aggregated server-side. */
+export function getDriverStandings(
+  seasonYear: number,
+  signal?: AbortSignal,
+): Promise<DriverStandingsResponse> {
+  return requestJson<DriverStandingsResponse>(
+    `/api/v1/seasons/${seasonYear}/standings/drivers`,
+    { signal },
+  );
+}
+
+export function getConstructorStandings(
+  seasonYear: number,
+  signal?: AbortSignal,
+): Promise<ConstructorStandingsResponse> {
+  return requestJson<ConstructorStandingsResponse>(
+    `/api/v1/seasons/${seasonYear}/standings/constructors`,
     { signal },
   );
 }
