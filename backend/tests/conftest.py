@@ -1,10 +1,16 @@
+import os
 from collections.abc import Iterator
 from types import ModuleType
 
-import pytest
-from sqlalchemy import create_engine, text
+# Access control defaults to required, so the suite switches it off before any
+# test imports the application. Tests that care about the gate build their own
+# app with settings that enable it; see tests/test_auth.py.
+os.environ.setdefault("DASHBOARD_AUTH_REQUIRED", "false")
 
-from app.db.engine import sqlalchemy_database_url
+import pytest  # noqa: E402
+from sqlalchemy import create_engine, text  # noqa: E402
+
+from app.db.engine import sqlalchemy_database_url  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

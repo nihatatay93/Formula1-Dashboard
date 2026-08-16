@@ -62,3 +62,9 @@ postgres-data/
 # Local SignalR recordings for the live replay feed (README is tracked)
 recordings/*
 !recordings/README.md
+
+# Deployment secrets, filled in on the host only.
+deploy/.env
+
+# Database dumps, which must never be committed.
+backups/

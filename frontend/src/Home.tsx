@@ -82,7 +82,10 @@ export default function Home({
   const ready = counts?.data_available ?? 0;
   const total = counts?.sessions ?? 0;
   const summary = liveSummary(live);
-  const authenticated = live?.authentication.authenticated ?? false;
+  // Optional at every step: this card is a summary, and a status missing its
+  // authentication block should read as "not connected" rather than blank the
+  // whole page.
+  const authenticated = live?.authentication?.authenticated ?? false;
 
   return (
     <div className="workspace-view home" data-view="home">

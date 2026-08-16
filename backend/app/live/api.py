@@ -277,14 +277,25 @@ def _allow_extension_origin(response: Response) -> None:
     The extension fetches ``http://localhost:{port}/auth`` from its own
     extension origin, which is a different origin and triggers a preflight.
     Extension origins are per-install identifiers that cannot be pinned, so any
-    origin is allowed on this route only, exactly as FastF1's own local auth
-    server does. The API is bound to loopback and this route returns no
-    sensitive data; the residual risk is that a page could plant a token, which
-    the user can clear by signing out.
+    origin is allowed on this route, exactly as FastF1's own local auth server
+    does.
+
+    That is only acceptable because the route exists on a local instance and
+    nowhere else: ``LiveTimingSettings.companion_enabled`` is off by default, so
+    a deployed instance does not mount it at all. The residual risk on a local
+    instance is that a page you visit could plant a token, which signing out
+    clears.
+
+    Credentials are deliberately not allowed. A wildcard origin combined with
+    ``Access-Control-Allow-Credentials`` is the classic way to turn a permissive
+    route into a session-stealing one; this route needs no cookie, because the
+    extension carries the token in its body.
     """
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Vary"] = "Origin"
+    response.headers["Cache-Control"] = "no-store"
 
 
 def _save_token(service: LiveService, login_session: object) -> AuthStatusResponse:

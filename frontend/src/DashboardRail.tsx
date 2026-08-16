@@ -62,9 +62,11 @@ export default function DashboardRail({
   onRefresh,
   onSelectView,
   onSelectYear,
+  onSignOut,
   season,
   seasonLoading,
   sessionOpen,
+  signedIn,
   supportedYears,
   view,
   year,
@@ -76,9 +78,12 @@ export default function DashboardRail({
   onRefresh: () => void;
   onSelectView: (view: DashboardView) => void;
   onSelectYear: (year: number) => void;
+  onSignOut: () => void;
   season: SeasonOverview | null;
   seasonLoading: boolean;
   sessionOpen: boolean;
+  /** True only when a session actually exists to be ended. */
+  signedIn: boolean;
   supportedYears: number[];
   view: DashboardView;
   year: number;
@@ -194,6 +199,18 @@ export default function DashboardRail({
             <strong>{counts?.data_available ?? 0}</strong>
             <span> / {counts?.sessions ?? 0} sessions ready</span>
           </p>
+        </div>
+      ) : null}
+
+      {/* Absent on a deployment that requires no sign-in: there would be no
+          session to end, and offering one would imply otherwise. Kept out of
+          the footnote below because that is hidden on narrow screens, which
+          would leave a phone with no way to sign out. */}
+      {signedIn ? (
+        <div className="rail-account">
+          <button className="text-action" onClick={onSignOut} type="button">
+            Sign out
+          </button>
         </div>
       ) : null}
 

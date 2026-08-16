@@ -20,6 +20,6 @@ These rules apply to the entire repository.
 9. Every Git commit must use a concise subject and an explanatory body that
    records the scope, rationale, and relevant verification. Never append a
    `Co-Authored-By` or any other trailer to a commit message.
-10. Development continues from `main`. Use a short-lived feature branch and a
-    pull request for a large or risky change, and delete the branch after it
-    merges; small verified changes may be committed to `main` directly.
+10. Never commit or push to `main` directly. Branch from `main` for every
+    change, however small, and leave merging to the repository owner. Check the
+    current branch before the first commit of any piece of work.

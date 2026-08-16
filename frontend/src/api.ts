@@ -1,5 +1,6 @@
 import type {
   ApiErrorResponse,
+  AuthSession,
   BackfillJob,
   EnsureBackfillResponse,
   EnsureLapTelemetryResponse,
@@ -10,6 +11,7 @@ import type {
   LiveAuthStatus,
   LiveRecordingList,
   LiveStatus,
+  LoginResult,
   SeasonOverview,
   SessionDetail,
   SessionResults,
@@ -27,6 +29,21 @@ export class ApiClientError extends Error {
   }
 }
 
+/**
+ * Notified whenever the backend refuses a request for want of a session.
+ *
+ * A session can lapse at any point, including mid-poll, so this is handled
+ * once here rather than at each of the several dozen call sites — every one of
+ * which would otherwise have to remember.
+ */
+type UnauthorizedListener = () => void;
+
+let unauthorizedListener: UnauthorizedListener | null = null;
+
+export function onUnauthorized(listener: UnauthorizedListener | null): void {
+  unauthorizedListener = listener;
+}
+
 async function requestJson<T>(
   path: string,
   init: RequestInit = {},
@@ -34,11 +51,18 @@ async function requestJson<T>(
   const response = await fetch(path, {
     ...init,
     cache: "no-store",
+    // Same-origin by default, but stated so the session cookie travels even if
+    // the dashboard is ever served from somewhere else.
+    credentials: "include",
     headers: {
       Accept: "application/json",
       ...init.headers,
     },
   });
+
+  if (response.status === 401) {
+    unauthorizedListener?.();
+  }
 
   if (!response.ok) {
     let payload: ApiErrorResponse | null = null;
@@ -183,6 +207,35 @@ export function getLapTelemetry(
     }`,
     { signal },
   );
+}
+
+/** Whether this deployment requires a sign-in, and whether we have one. */
+export function getAuthSession(signal?: AbortSignal): Promise<AuthSession> {
+  return requestJson<AuthSession>("/api/v1/auth/session", { signal });
+}
+
+/**
+ * Sign in. The browser is authenticated by the HttpOnly cookie the response
+ * sets; the bearer token it also returns is for native clients and is
+ * deliberately not stored here, where script could reach it.
+ */
+export function signIn(
+  password: string,
+  signal?: AbortSignal,
+): Promise<LoginResult> {
+  return requestJson<LoginResult>("/api/v1/auth/login", {
+    body: JSON.stringify({ password }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+    signal,
+  });
+}
+
+export function signOut(signal?: AbortSignal): Promise<AuthSession> {
+  return requestJson<AuthSession>("/api/v1/auth/logout", {
+    method: "POST",
+    signal,
+  });
 }
 
 export function getLiveStatus(signal?: AbortSignal): Promise<LiveStatus> {

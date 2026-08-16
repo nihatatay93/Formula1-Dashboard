@@ -7,11 +7,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.auth.policy import AuthSettings
 from app.live.collector import RawFrame
 from app.live.policy import LiveTimingSettings
 from app.live.service import LiveService
 from app.live.state import set_live_service
-from app.main import app
+from app.main import app, create_app
 
 NOW = datetime(2026, 8, 21, 13, 0, 0, tzinfo=UTC)
 
@@ -36,11 +37,17 @@ class SingleFrameFeed:
         return None
 
 
-def build_service(tmp_path: Path, *, configured: bool = True) -> LiveService:
+def build_service(
+    tmp_path: Path,
+    *,
+    configured: bool = True,
+    companion_enabled: bool = True,
+) -> LiveService:
     return LiveService(
         settings=LiveTimingSettings(
             log_directory=str(tmp_path),
             token_path=str(tmp_path / "auth" / "f1-token.json"),
+            companion_enabled=companion_enabled,
         ),
         feed_factory=SingleFrameFeed if configured else None,
         clock=lambda: NOW,
@@ -216,6 +223,7 @@ def test_auth_status_starts_unauthenticated(client: TestClient) -> None:
     assert body["expires_at"] is None
     assert body["token_source"] is None
     # A one-click entry point for the companion extension, carrying our port.
+    # Offered only on a local instance; see the companion-route tests below.
     assert body["companion_url"] == "https://f1login.fastf1.dev?port=8000"
 
 
@@ -235,8 +243,21 @@ def test_the_extension_camel_case_key_is_accepted(client: TestClient) -> None:
     assert response.json()["authenticated"] is True
 
 
-def test_the_extension_posts_to_the_root_auth_path(client: TestClient) -> None:
+@pytest.fixture
+def companion_client(tmp_path: Path) -> Iterator[TestClient]:
+    """A local instance, which is the only place the companion route exists."""
+    set_live_service(build_service(tmp_path))
+    application = create_app(AuthSettings(required=False), companion_enabled=True)
+    with TestClient(application) as test_client:
+        yield test_client
+    set_live_service(None)
+
+
+def test_the_extension_posts_to_the_root_auth_path(
+    companion_client: TestClient,
+) -> None:
     # The FastF1 companion extension posts to http://localhost:{port}/auth.
+    client = companion_client
     response = client.post("/auth", json={"loginSession": TOKEN})
 
     assert response.status_code == 200
@@ -436,3 +457,84 @@ def test_an_out_of_range_replay_speed_is_rejected(
     )
 
     assert response.status_code == 422
+
+
+class TestTheCompanionRouteIsLocalOnly:
+    """The root /auth route only exists where the extension can reach it.
+
+    The FastF1 companion extension posts to http://localhost:<port>/auth on the
+    reader's own machine. A deployed instance is not that machine, so the route
+    could never be used there — and mounting it would publish a token-accepting
+    endpoint with wildcard CORS for no benefit.
+    """
+
+    def test_it_is_absent_by_default(self, client: TestClient) -> None:
+        assert client.post("/auth", json={"loginSession": TOKEN}).status_code == 404
+
+    def test_its_preflight_is_absent_by_default(self, client: TestClient) -> None:
+        response = client.options("/auth")
+
+        assert response.status_code == 404
+        assert "Access-Control-Allow-Origin" not in response.headers
+
+    def test_no_other_path_answers_an_unauthenticated_preflight(
+        self, client: TestClient
+    ) -> None:
+        # The OPTIONS exemption is handed to the gate only when the companion
+        # route is mounted, so nothing else can slip through it.
+        for path in ("/api/v1/seasons/2026", "/api/v1/live/session", "/"):
+            assert "Access-Control-Allow-Origin" not in client.options(path).headers
+
+    def test_it_answers_a_preflight_when_enabled(
+        self, companion_client: TestClient
+    ) -> None:
+        response = companion_client.options("/auth")
+
+        assert response.status_code == 200
+        assert response.headers["Access-Control-Allow-Origin"] == "*"
+
+    def test_a_wildcard_origin_never_carries_credentials(
+        self, companion_client: TestClient
+    ) -> None:
+        """The classic way to turn a permissive route into a session stealer.
+
+        A wildcard origin combined with Access-Control-Allow-Credentials would
+        let any page read authenticated responses. This route needs no cookie:
+        the extension carries the token in its body.
+        """
+        for response in (
+            companion_client.options("/auth"),
+            companion_client.post("/auth", json={"loginSession": TOKEN}),
+        ):
+            assert response.headers["Access-Control-Allow-Origin"] == "*"
+            assert "Access-Control-Allow-Credentials" not in response.headers
+
+    def test_the_stored_token_is_never_cached(
+        self, companion_client: TestClient
+    ) -> None:
+        response = companion_client.post("/auth", json={"loginSession": TOKEN})
+
+        assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_the_one_click_link_is_withheld_where_it_cannot_work(
+    tmp_path: Path,
+) -> None:
+    """A deployed instance must not offer a sign-in that goes nowhere.
+
+    The extension posts to localhost on the reader's machine, so on a deployed
+    instance the round trip never completes. The dashboard hides the button
+    when the URL is null and falls back to the manual paste, which does work.
+    """
+    set_live_service(build_service(tmp_path, companion_enabled=False))
+    try:
+        with TestClient(app) as deployed:
+            assert deployed.get("/api/v1/live/auth").json()["companion_url"] is None
+            assert (
+                deployed.get("/api/v1/live/session").json()["authentication"][
+                    "companion_url"
+                ]
+                is None
+            )
+    finally:
+        set_live_service(None)

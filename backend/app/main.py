@@ -3,16 +3,21 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import psycopg
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.responses import JSONResponse
 
 from app.api.router import api_v1_router
+from app.auth.api import COMPANION_PREFLIGHT_PATHS, AuthenticationMiddleware
+from app.auth.policy import AuthSettings
 from app.db.schema import (
     DatabaseSchemaMismatchError,
     verify_database_schema,
 )
 from app.live.api import compat_router as live_compat_router
+from app.live.policy import LiveTimingSettings
 from app.live.state import get_live_service
+
+service_router = APIRouter(tags=["service"])
 
 
 @asynccontextmanager
@@ -30,18 +35,58 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await live_service.shutdown()
 
 
-app = FastAPI(
-    title="Formula1 Dashboard API",
-    description="Backend API for Formula1 Dashboard.",
-    version="0.1.0",
-    lifespan=lifespan,
-)
-app.include_router(api_v1_router)
-# Root-level /auth, for the FastF1 companion extension's fixed contract.
-app.include_router(live_compat_router)
+def create_app(
+    auth_settings: AuthSettings | None = None,
+    *,
+    companion_enabled: bool | None = None,
+) -> FastAPI:
+    """Build the application.
+
+    Access settings are read once here rather than per request, so a deployment
+    that requires access control but is missing its secrets fails to start
+    instead of serving every route openly. Tests pass settings explicitly to
+    exercise both the gated and ungated shapes.
+
+    The companion route is mounted only where it can work — see
+    ``LiveTimingSettings.companion_enabled``.
+    """
+    settings = (
+        AuthSettings.from_environment() if auth_settings is None else auth_settings
+    )
+    companion = (
+        LiveTimingSettings.from_environment().companion_enabled
+        if companion_enabled is None
+        else companion_enabled
+    )
+    application = FastAPI(
+        title="Formula1 Dashboard API",
+        description="Backend API for Formula1 Dashboard.",
+        version="0.1.0",
+        lifespan=lifespan,
+    )
+    application.state.auth_settings = settings
+    application.add_middleware(
+        AuthenticationMiddleware,
+        settings=settings,
+        # Nothing may answer an unauthenticated preflight unless the route that
+        # needs one is actually mounted.
+        preflight_paths=COMPANION_PREFLIGHT_PATHS if companion else frozenset(),
+    )
+    application.include_router(api_v1_router)
+    if companion:
+        # Root-level /auth, for the FastF1 companion extension's fixed
+        # contract. Reachable only where the extension can actually post to it.
+        application.include_router(live_compat_router)
+    _register_service_routes(application)
+    return application
 
 
-@app.get("/")
+def _register_service_routes(application: FastAPI) -> None:
+    """Root and health probes. Health is reachable without signing in."""
+    application.include_router(service_router)
+
+
+@service_router.get("/")
 def root() -> dict[str, str]:
     return {
         "name": "Formula1 Dashboard API",
@@ -49,12 +94,12 @@ def root() -> dict[str, str]:
     }
 
 
-@app.get("/api/health/live")
+@service_router.get("/api/health/live")
 def liveness() -> dict[str, str]:
     return {"status": "alive"}
 
 
-@app.get("/api/health/ready")
+@service_router.get("/api/health/ready")
 def readiness() -> JSONResponse:
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
@@ -94,3 +139,6 @@ def readiness() -> JSONResponse:
             "checks": {"database": "ready"},
         },
     )
+
+
+app = create_app()

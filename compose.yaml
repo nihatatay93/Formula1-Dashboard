@@ -6,7 +6,14 @@ services:
     environment:
       POSTGRES_DB: formula1_dashboard
       POSTGRES_USER: formula1_dashboard
-      POSTGRES_HOST_AUTH_METHOD: trust
+      # A password, not trust. This local default is a development credential
+      # and not a secret: the port is bound to loopback and the archive is
+      # re-ingestible. A deployed instance must supply POSTGRES_PASSWORD from
+      # its own secret store and never rely on this value.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-formula1_dashboard_dev}
+      # Refuse to initialise a cluster that would accept unauthenticated
+      # connections, and hash with scram rather than md5.
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=scram-sha-256
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
@@ -27,7 +34,7 @@ services:
       context: ./backend
     command: ["/opt/venv/bin/alembic", "upgrade", "head"]
     environment:
-      DATABASE_URL: postgresql://formula1_dashboard@db:5432/formula1_dashboard
+      DATABASE_URL: postgresql://formula1_dashboard:${POSTGRES_PASSWORD:-formula1_dashboard_dev}@db:5432/formula1_dashboard
     volumes:
       - ./backend:/workspace
     depends_on:
@@ -48,10 +55,23 @@ services:
         "--reload",
       ]
     environment:
-      DATABASE_URL: postgresql://formula1_dashboard@db:5432/formula1_dashboard
+      DATABASE_URL: postgresql://formula1_dashboard:${POSTGRES_PASSWORD:-formula1_dashboard_dev}@db:5432/formula1_dashboard
       FASTF1_CACHE_PATH: /cache/fastf1
       LIVE_TIMING_LOG_DIRECTORY: /live-sessions
       LIVE_TIMING_TOKEN_PATH: /live-auth/f1-token.json
+      # The FastF1 companion extension posts to http://localhost:8000/auth on
+      # your own machine, so the route it needs only works when the API runs
+      # there. Enabled here, off by default, and deliberately left off on a
+      # deployed instance where it could never complete the round trip.
+      LIVE_TIMING_COMPANION_ENABLED: ${LIVE_TIMING_COMPANION_ENABLED:-true}
+      # Access control is required by default. This local stack is bound to
+      # loopback, so it opts out explicitly rather than carrying a password.
+      # A deployed instance must leave this unset and set DASHBOARD_PASSWORD_HASH
+      # and DASHBOARD_SECRET_KEY instead.
+      DASHBOARD_AUTH_REQUIRED: ${DASHBOARD_AUTH_REQUIRED:-false}
+      DASHBOARD_PASSWORD_HASH: ${DASHBOARD_PASSWORD_HASH:-}
+      DASHBOARD_SECRET_KEY: ${DASHBOARD_SECRET_KEY:-}
+      DASHBOARD_SECURE_COOKIES: ${DASHBOARD_SECURE_COOKIES:-false}
       # Optional: drive live timing from a recorded session instead of a live
       # upstream connection. Put a recording in ./recordings and set this to
       # /recordings/<file>.jsonl. Unset means no feed provider is configured.
@@ -86,7 +106,7 @@ services:
       context: ./backend
     command: ["/opt/venv/bin/python", "-m", "app.worker"]
     environment:
-      DATABASE_URL: postgresql://formula1_dashboard@db:5432/formula1_dashboard
+      DATABASE_URL: postgresql://formula1_dashboard:${POSTGRES_PASSWORD:-formula1_dashboard_dev}@db:5432/formula1_dashboard
       FASTF1_CACHE_PATH: /cache/fastf1
       FASTF1_ARCHIVE_SESSION_MIN_INTERVAL_SECONDS: "1"
       FASTF1_RATE_LIMIT_COOLDOWN_SECONDS: "3600"

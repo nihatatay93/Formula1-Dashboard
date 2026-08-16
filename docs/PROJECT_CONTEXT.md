@@ -232,10 +232,19 @@ Formula1-Dashboard/
 │   ├── Dockerfile
 │   ├── pyproject.toml
 │   └── uv.lock
+├── deploy/
+│   ├── Caddyfile
+│   ├── compose.prod.yaml
+│   ├── web.Dockerfile
+│   └── .env.example
+├── scripts/
+│   ├── prepare-existing-volumes.sh
+│   └── secure-existing-postgres.sh
 ├── docs/
 │   ├── AUTOMATIC_CURRENT_SEASON_PLANNING.md
 │   ├── BACKFILL_RUNTIME_POLICY.md
 │   ├── DATABASE_DESIGN.md
+│   ├── DEPLOYMENT.md
 │   ├── FASTF1_INGESTION_CONTRACT.md
 │   ├── HISTORICAL_API_DESIGN.md
 │   ├── HISTORICAL_SESSION_API_DESIGN.md
@@ -259,7 +268,10 @@ Formula1-Dashboard/
 - `backend/alembic/`: Alembic environment and reviewed migration revisions.
 - `backend/tests/`: Backend tests.
 - `frontend/src/`: React dashboard source, split by domain into `archive/`, `live/` and `shared/`, with `App.tsx` as the shell.
+- `deploy/`: The deployed stack — production compose, the Caddy front door, and the web image that builds and serves the dashboard.
+- `scripts/`: One-time operational upgrades for installations that predate the non-root images and the PostgreSQL password.
 - `docs/`: Architecture, decisions, and persistent project context.
+- `docs/DEPLOYMENT.md`: The deployed shape — single VPS behind Cloudflare, one origin, no published ports — with first-deployment steps, measured sizing, and the one-time upgrade scripts.
 - `docs/BACKFILL_RUNTIME_POLICY.md`: Accepted retry, backoff, heartbeat, lease recovery, fencing, current-season freshness, parent aggregation, and worker execution policy.
 - `docs/DATABASE_DESIGN.md`: Accepted Alembic conventions, migration phases, tables, constraints, indexes, and recovery behavior.
 - `docs/FASTF1_INGESTION_CONTRACT.md`: Accepted one-session validation, identity, atomic replacement, failure, and idempotency contract.
@@ -288,6 +300,140 @@ Formula1-Dashboard/
 - `AGENTS.md`: Mandatory repository workflow and context rules.
 
 ## Technical Decisions
+
+### Dashboard access control
+
+- Decision: Gate the whole API behind a single password. `POST
+  /api/v1/auth/login` issues an HttpOnly session cookie for the browser and a
+  long-lived bearer token for native clients; ASGI middleware refuses every
+  other request, HTTP and WebSocket alike. Access is required unless
+  `DASHBOARD_AUTH_REQUIRED=false` is set explicitly, and the application
+  refuses to start when it is required but unconfigured. The password is stored
+  as a PBKDF2-SHA256 hash (600,000 iterations, salted) in
+  `DASHBOARD_PASSWORD_HASH`; tokens are HMAC-SHA256 signed with
+  `DASHBOARD_SECRET_KEY`.
+- Rationale: The deployment target became a publicly reachable PaaS, and until
+  now every route was open to anyone who could reach the port — including the
+  endpoints that store and clear the F1 TV credential. There is one operator,
+  so a user table would be ceremony; a single password is the smallest control
+  that actually closes it. It is middleware rather than a per-route dependency
+  so a new route is protected because it exists, not because someone remembered
+  to decorate it — only the four paths in `PUBLIC_PATHS` are open, and each is
+  justified there. Required-by-default matters more than convenience: a control
+  that silently disables itself when unconfigured is worse than none, because
+  it looks present. Tokens are signed rather than stored because there is no
+  session table to keep; the cost is that an individual token cannot be
+  revoked, and rotating the secret key is what invalidates all of them at once.
+  This is unrelated to `app.live.f1_auth`, which authenticates the dashboard to
+  Formula 1 rather than a reader to the dashboard; the two share no secret.
+- Date: 2026-07-31
+- Status: implemented
+
+### Dashboard sign-in surface
+
+- Decision: Gate the whole dashboard behind `AuthGate`, which asks
+  `/api/v1/auth/session` before rendering anything and shows `SignInScreen`
+  when a session is needed. The API client notifies a single listener on any
+  401, so a session that lapses mid-use returns the reader to sign-in rather
+  than filling the page with failed requests. Sign-out lives in the rail
+  outside the footnote, and the password is never written to storage.
+- Rationale: The state has to come from the backend because the session lives
+  in an HttpOnly cookie the page cannot read, which is also what keeps script
+  away from it. Handling 401 once in the client rather than at each of the
+  several dozen call sites means a new call site cannot forget. Sign-out sits
+  outside `.rail-footnote` because that element is hidden below 63rem, which
+  would have left a phone with no way to sign out — found by the mobile browser
+  suite.
+- Date: 2026-07-31
+- Status: implemented
+
+### Backups and continuous integration
+
+- Decision: A GitHub Actions workflow runs lint, both suites, the production
+  image builds and the compose validations on every push and pull request,
+  with a throwaway PostgreSQL so the database-backed tests run.
+  `scripts/backup-database.sh` dumps and verifies; `scripts/restore-database.sh`
+  restores into a scratch database by default.
+- Rationale: 109 integration tests skipped for want of `TEST_DATABASE_URL` and
+  had therefore never run; with a service container the suite goes from 773
+  passed and 109 skipped to 882 passed and none skipped. `alembic check` in the
+  same job turns "a model changed without a migration" from a startup failure
+  into a review failure. The image job asserts properties that are easy to lose
+  silently — that neither image runs as root, and that the production compose
+  still refuses to start without its secrets. On backups: verifying the dump
+  before keeping it matters because a truncated dump nobody notices is worse
+  than none, being trusted; and restoring to a scratch target by default makes
+  rehearsal the easy path, since a backup nobody has restored is a hypothesis.
+  Off-site copying is a command hook rather than a built-in provider, because
+  guessing one would mean shipping something untestable — and a dump on the
+  machine it protects is not an off-site backup.
+- Date: 2026-08-16
+- Status: implemented
+
+### Deployment shape
+
+- Decision: One VPS running the whole stack under `deploy/compose.prod.yaml`,
+  with Caddy serving the built dashboard and proxying `/api` on a single
+  origin, and `cloudflared` providing the only ingress. Images run as uid
+  10001, carry the code rather than mounting it, and publish no ports. Every
+  secret is required with no default. Documented in `docs/DEPLOYMENT.md`.
+- Rationale: A single origin is what lets the session cookie stay `SameSite=Lax`
+  with no CORS layer; splitting the dashboard and API across hostnames would
+  force `SameSite=None` and credentialed CORS, which is where this class of bug
+  lives, and would buy nothing for a dashboard one person loads. An outbound
+  tunnel means no inbound ports and no certificate management on the host. The
+  earlier PaaS candidates were dropped because volumes there attach to a single
+  service, and both `api` and `worker` need the FastF1 cache — a constraint a
+  single box does not have. Sizing comes from measurement rather than
+  estimation: the worker peaks near 300 MiB loading telemetry, so 2 GB is the
+  floor and 1 GB is not viable.
+- Date: 2026-07-31
+- Status: implemented
+
+### PostgreSQL requires a password
+
+- Decision: Drop `POSTGRES_HOST_AUTH_METHOD: trust`, set `POSTGRES_PASSWORD`
+  and initialise clusters with `--auth-host=scram-sha-256`, carrying the
+  credential in every `DATABASE_URL`. The local compose default is a stated
+  development credential; a deployed instance supplies its own.
+  `scripts/secure-existing-postgres.sh` closes the same gap on a volume that
+  was already initialised.
+- Rationale: `trust` accepts any connection without a credential, so anything
+  that could reach the port could read and write the whole archive. Loopback
+  binding was the only control. The upgrade script exists because the fix is
+  not complete without it: `POSTGRES_PASSWORD` is honoured only when a cluster
+  is first created, so an existing volume keeps the `host all all all trust`
+  line it was initialised with and stays open no matter what compose says —
+  verified on the development volume, which still accepted a passwordless
+  connection after the compose change alone. The script sets the role password,
+  rewrites `pg_hba.conf`, reloads, and then proves both halves: that a
+  passwordless connection is refused and that the password is accepted.
+- Date: 2026-07-31
+- Status: implemented
+
+### The companion route exists only where it can work
+
+- Decision: Mount the root `/auth` route the FastF1 companion extension posts
+  to only when `LIVE_TIMING_COMPANION_ENABLED` is set, which defaults to off
+  and is enabled by the local compose file. The gate receives its OPTIONS
+  exemption from the caller, so it is empty unless that route is mounted, and
+  `companion_url` is null wherever the route is absent.
+- Rationale: The extension posts to `http://localhost:<port>/auth` on the
+  reader's own machine. A deployed instance is not that machine, so the round
+  trip can never complete there — the route could only ever publish a
+  token-accepting endpoint with wildcard CORS for no benefit. Off by default
+  follows the same rule as access control: the permissive thing is opted into
+  where it is justified, not out of where it is dangerous. The wildcard origin
+  remains on a local instance because extension origins are per-install
+  identifiers that cannot be pinned, exactly as FastF1's own local auth server
+  does; it never carries `Access-Control-Allow-Credentials`, which is what
+  would turn a permissive route into a session-stealing one, and it needs no
+  cookie because the extension carries the token in its body. Withholding
+  `companion_url` matters as much as withholding the route: the dashboard would
+  otherwise offer a one-click sign-in that silently goes nowhere, when the
+  manual paste beside it does work.
+- Date: 2026-07-31
+- Status: implemented
 
 ### Repository language
 
@@ -1425,10 +1571,13 @@ Formula1-Dashboard/
 - Date: 2026-07-28
 - Status: implemented
 
-### Interpolated RPM is rounded, not rejected
+### Real telemetry sits slightly outside its nominal range
 
 - Decision: Round the `RPM` channel in `telemetry_normalization` instead of
-  requiring an integral value. `nGear` and `DRS` stay strict.
+  requiring an integral value, and clamp `Distance`, `RelativeDistance` and
+  `Throttle` into range when they exceed it by less than a stated tolerance.
+  `nGear` and `DRS` stay strict, and an excursion beyond the tolerance is still
+  refused as a corrupt snapshot.
 - Rationale: This was a defect that made telemetry ingestion fail for every
   lap. FastF1's `get_telemetry(frequency="original")` merges car data with
   position data and interpolates onto the combined time base, so RPM arrives
@@ -1441,6 +1590,15 @@ Formula1-Dashboard/
   fractional value there really does mean a corrupt snapshot and is still
   refused. Verified after the fix: 776 samples for one Albert Park lap,
   44.7–296.4 km/h across gears 1–8 over 5,248 m.
+  The range checks were the same mistake in a second form, found later while
+  measuring resource use for deployment: three of four laps on that same
+  session still failed, because `Distance` starts a few millimetres negative
+  (FastF1 integrates it from speed, so the lap boundary undershoots) and the
+  ECU reports throttle a little over full — observed at -0.0049 m and 104%.
+  One such sample discarded the entire lap. `relative_distance` already carried
+  a 1.01 maximum for exactly this reason, so the tolerance generalises an
+  allowance the schema had already accepted rather than inventing one. After
+  the change all four laps normalise, 633–776 samples each.
 - Date: 2026-07-31
 - Status: implemented
 
@@ -2101,9 +2259,12 @@ race-run classification remain intentionally unimplemented.
    Dutch Grand Prix on 2026-08-21.
 2. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
-4. Before production, add authentication/authorization, secret management,
-   secure PostgreSQL configuration, observability, backups, CI, deployment,
-   and any demonstrated background-job infrastructure. Reconsider manual job
+3. Evolve the dashboard toward a full analytics product, following
+   `docs/FRONTEND_EVOLUTION_PLAN.md`. Standings are the first dependency: six
+   of the planned views need them and nothing computes them yet.
+4. Add error reporting, and rate limiting beyond sign-in. Authentication,
+   secret handling, PostgreSQL passwords, non-root images, the deployment,
+   CI and backups are done; see `docs/DEPLOYMENT.md`. Reconsider manual job
    cancellation and Redis only when measurements justify them.
 
 ## Run and Test Commands
