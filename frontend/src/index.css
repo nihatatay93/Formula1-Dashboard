@@ -32,8 +32,11 @@
   /* Ink */
   --ink: #eef2f7;
   --ink-dim: #b6c0cc;
-  --muted: #7c8794;
-  --muted-dark: #59626d;
+  /* Both carry text, so both clear 4.5:1 on every surface in this file --
+     the darkest was 2.93:1 before, which was never legible. The hierarchy
+     below --ink-dim is preserved: 6.9:1 then 4.9:1 at worst. */
+  --muted: #a3aeba;
+  --muted-dark: #8792a1;
 
   /* Lines */
   --line: rgb(255 255 255 / 7%);
@@ -42,6 +45,10 @@
   /* Accents — red means "attention", cyan means "live data". */
   --accent: #ff2e43;
   --accent-bright: #ff6274;
+  /* The same red, darkened until white small text clears 4.5:1 on it. Used
+     for filled buttons only; --accent stays the brand colour everywhere it
+     is a mark rather than a background behind text. */
+  --accent-strong: #e3293c;
   --accent-soft: rgb(255 46 67 / 12%);
   --data: #38bdf8;
   --data-soft: rgb(56 189 248 / 12%);
@@ -1223,7 +1230,7 @@ th,
 }
 
 .primary-action {
-  background: var(--accent);
+  background: var(--accent-strong);
   color: #fff;
   box-shadow: var(--shadow-sm);
 }
@@ -5077,4 +5084,203 @@ th,
 
 .pit-stops__caveat strong {
   color: var(--ink);
+}
+
+/* --------------------------------------------------------------------------
+   Scope bar, shared view states, export, density
+   -------------------------------------------------------------------------- */
+
+.scope-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3) var(--s4);
+  align-items: center;
+  margin-bottom: var(--s4);
+  padding: var(--s2) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r2);
+  background: var(--panel-inset);
+}
+
+.scope-bar__group {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+  min-width: 0;
+}
+
+.scope-bar__group--grow {
+  flex: 1 1 18rem;
+}
+
+.scope-bar__label {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--t-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.scope-bar__value {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  font-weight: 700;
+}
+
+.scope-bar__value--muted {
+  color: var(--muted-dark);
+  font-weight: 500;
+}
+
+.scope-bar select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r1);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: var(--t-small);
+  cursor: pointer;
+}
+
+.scope-bar__density {
+  display: inline-flex;
+  margin-left: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.scope-bar__density button {
+  padding: var(--s1) var(--s3);
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.scope-bar__density button.is-selected {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.scope-bar select:focus-visible,
+.scope-bar__density button:focus-visible,
+.export-button:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+}
+
+/* The three shared states. */
+
+.view-state {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+  padding: var(--s4);
+  color: var(--muted);
+  font-size: var(--t-small);
+}
+
+.view-state__spinner {
+  flex: none;
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: view-state-spin 700ms linear infinite;
+}
+
+@keyframes view-state-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view-state__spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+/* A failed render, contained so the rail and shell survive it. */
+
+.view-error {
+  display: flex;
+  gap: var(--s3);
+  padding: var(--s5);
+  border: 1px solid var(--danger);
+  border-radius: var(--r2);
+  background: var(--danger-soft);
+}
+
+.view-error h3 {
+  margin: 0 0 var(--s2);
+  font-size: var(--t-body);
+}
+
+.view-error p {
+  margin: 0 0 var(--s2);
+  color: var(--ink-dim);
+  font-size: var(--t-small);
+  line-height: 1.6;
+}
+
+.view-error__detail {
+  font-family: var(--mono);
+  font-size: var(--t-micro) !important;
+  color: var(--muted) !important;
+  overflow-wrap: anywhere;
+}
+
+.section-heading__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  align-items: center;
+}
+
+.export-button {
+  padding: var(--s1) var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r1);
+  background: transparent;
+  color: var(--ink-dim);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.export-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.export-button:disabled {
+  color: var(--muted-dark);
+  cursor: not-allowed;
+}
+
+/* Density applies to every table at once, from the document root. */
+
+:root[data-density="compact"] .standings__table th,
+:root[data-density="compact"] .standings__table td,
+:root[data-density="compact"] .consistency__table th,
+:root[data-density="compact"] .consistency__table td,
+:root[data-density="compact"] .pit-stops__table th,
+:root[data-density="compact"] .pit-stops__table td,
+:root[data-density="compact"] .h2h-totals th,
+:root[data-density="compact"] .h2h-totals td {
+  padding-top: var(--s1);
+  padding-bottom: var(--s1);
+}
+
+:root[data-density="compact"] .consistency__swatch,
+:root[data-density="compact"] .pit-stops__swatch {
+  height: 1.1rem;
 }

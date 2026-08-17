@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 
 import { getRacePace } from "../api";
 import type { RacePaceResponse } from "../contracts";
+import ExportButton from "../shared/ExportButton";
 import { errorMessage } from "../shared/format";
+import { EmptyState, ErrorState, LoadingState } from "../shared/ViewState";
 import PaceDistributionChart from "./PaceDistributionChart";
 import PaceEvolutionChart from "./PaceEvolutionChart";
 import PitStopTable from "./PitStopTable";
 import StrategyChart from "./StrategyChart";
-import { buildPaceSeries, orderByMedian } from "./racePaceAnalysis";
+import { buildPaceSeries, orderByMedian, stintsOf } from "./racePaceAnalysis";
 import { formatLapTime } from "./sessionFormat";
 
 /**
@@ -94,6 +96,44 @@ export default function RacePaceView({
         <h2 className="sr-only" id="race-pace-title">
           Race analysis{sessionName ? ` · ${sessionName}` : ""}
         </h2>
+        <div className="section-heading__actions">
+          <ExportButton
+            filename={`session-${sessionId}-${tab}`}
+            headers={
+              tab === "pace"
+                ? ["driver", "abbreviation", "team", "lap", "lap_time_us", "stint", "compound", "is_clean", "beyond_cutoff"]
+                : ["driver", "abbreviation", "team", "stint", "compound", "first_lap", "last_lap", "laps"]
+            }
+            // The filtered set, so the file agrees with the screen above it.
+            rows={
+              tab === "pace"
+                ? series.flatMap((item) =>
+                    item.laps.map((lap) => [
+                      item.entry.display_name,
+                      item.entry.abbreviation,
+                      item.entry.team_name,
+                      lap.lap_number,
+                      lap.lap_time_us,
+                      lap.stint_number,
+                      lap.compound,
+                      String(lap.is_clean),
+                      String(lap.beyond_cutoff),
+                    ]),
+                  )
+                : (data?.items ?? []).flatMap((entry) =>
+                    stintsOf(entry).map((stint) => [
+                      entry.display_name,
+                      entry.abbreviation,
+                      entry.team_name,
+                      stint.stint_number,
+                      stint.compound,
+                      stint.first_lap,
+                      stint.last_lap,
+                      stint.laps,
+                    ]),
+                  )
+            }
+          />
         <div className="standings__tabs" role="tablist" aria-label="Race analysis">
           {(
             [
@@ -112,6 +152,7 @@ export default function RacePaceView({
               {label}
             </button>
           ))}
+        </div>
         </div>
       </div>
 
@@ -155,31 +196,19 @@ export default function RacePaceView({
       ) : null}
 
       {loading ? (
-        <div className="session-explorer__loading" aria-live="polite">
-          <span />
-          Reading every lap of the session…
-        </div>
+        <LoadingState>Reading every lap of the session…</LoadingState>
       ) : null}
 
       {error ? (
-        <div className="inline-alert inline-alert--danger" role="alert">
-          <strong>Race pace unavailable</strong>
-          <span>{error}</span>
-        </div>
+        <ErrorState message={error} title="Race pace unavailable" />
       ) : null}
 
       {isEmpty ? (
-        <div className="empty-state">
-          <span className="empty-state__number">0</span>
-          <div>
-            <h3>No laps to compare</h3>
-            <p>
-              {cleanOnly
-                ? "No lap of this session is clean under the current filter. Turn off clean laps only to see what was set."
-                : "This session has no timed laps in the archive yet."}
-            </p>
-          </div>
-        </div>
+        <EmptyState marker={0} title="No laps to compare">
+          {cleanOnly
+            ? "No lap of this session is clean under the current filter. Turn off clean laps only to see what was set."
+            : "This session has no timed laps in the archive yet."}
+        </EmptyState>
       ) : null}
 
       {!loading && !error && !isEmpty && data !== null && tab === "pace" ? (

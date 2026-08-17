@@ -2301,12 +2301,10 @@ race-run classification remain intentionally unimplemented.
    Dutch Grand Prix on 2026-08-21.
 2. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
-3. Evolve the dashboard toward a full analytics product, following
-   `docs/FRONTEND_EVOLUTION_PLAN.md`. Phases 1-6 are done: standings, the
-   landing page, race pace, head to head and consistency, and tyre strategy.
-   Phase 7 (design and interaction polish) is all that remains, and its error
-   boundary is worth doing first: a single unguarded field once blanked the
-   whole page.
+3. `docs/FRONTEND_EVOLUTION_PLAN.md` is complete. All seven build phases have
+   landed, and the phase 8 verification passes: no `fetch` outside `api.ts`,
+   no chart library, no second y-axis, no hard-coded points table. Further
+   dashboard work is no longer following that plan.
 4. Add error reporting, and rate limiting beyond sign-in. Authentication,
    secret handling, PostgreSQL passwords, non-root images, the deployment,
    CI and backups are done; see `docs/DEPLOYMENT.md`. Reconsider manual job
@@ -2636,6 +2634,12 @@ mounted writable at `/live-sessions`.
 
 ## Change Log
 
+- 2026-08-17 — Finished the frontend evolution plan: a scope bar that changes
+  season and session without leaving the view, three shared view states, a
+  render-error boundary per view, CSV export, and a density toggle. Raised
+  `--muted` and `--muted-dark`, which carried text at 2.93:1 against every
+  dark surface, and darkened the filled-button red so white text on it clears
+  4.5:1. A sweep of the rendered pages now finds no contrast failure.
 - 2026-08-17 — Added tyre strategy and pit stops to the session view, served
   by the existing race-pace request rather than a second endpoint. A pit-lane
   time is withheld when the lap was red-flagged: in the 2026 Monaco race those

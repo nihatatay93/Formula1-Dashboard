@@ -6,7 +6,9 @@ import type {
   DriverStandingsResponse,
   StandingsRoundPoints,
 } from "../contracts";
+import ExportButton from "../shared/ExportButton";
 import { errorMessage } from "../shared/format";
+import { EmptyState, ErrorState, LoadingState } from "../shared/ViewState";
 
 /**
  * The drivers' and constructors' championships.
@@ -136,6 +138,41 @@ export default function StandingsView({ year }: { year: number }) {
           <p className="section-kicker">Championship</p>
           <h2 id="standings-title">{year} standings</h2>
         </div>
+        <div className="section-heading__actions">
+          <ExportButton
+            filename={`${year}-${championship}-standings`}
+            headers={
+              championship === "drivers"
+                ? ["position", "driver", "abbreviation", "team", "points", "wins", "podiums", "poles", "starts", "dnfs", "best_finish"]
+                : ["position", "constructor", "drivers", "points", "wins", "podiums", "poles", "best_finish"]
+            }
+            rows={
+              championship === "drivers"
+                ? (drivers?.items ?? []).map((row) => [
+                    row.position,
+                    row.display_name,
+                    row.abbreviation,
+                    row.team_name,
+                    row.points,
+                    row.wins,
+                    row.podiums,
+                    row.poles,
+                    row.starts,
+                    row.dnfs,
+                    row.best_finish,
+                  ])
+                : (constructors?.items ?? []).map((row) => [
+                    row.position,
+                    row.team_name,
+                    row.drivers.join(" & "),
+                    row.points,
+                    row.wins,
+                    row.podiums,
+                    row.poles,
+                    row.best_finish,
+                  ])
+            }
+          />
         <div className="standings__tabs" role="tablist" aria-label="Championship">
           {(["drivers", "constructors"] as const).map((option) => (
             <button
@@ -150,33 +187,22 @@ export default function StandingsView({ year }: { year: number }) {
             </button>
           ))}
         </div>
+        </div>
       </div>
 
       {loading ? (
-        <div className="session-explorer__loading" aria-live="polite">
-          <span />
-          Computing the {year} championship…
-        </div>
+        <LoadingState>Computing the {year} championship…</LoadingState>
       ) : null}
 
       {error ? (
-        <div className="inline-alert inline-alert--danger" role="alert">
-          <strong>Standings unavailable</strong>
-          <span>{error}</span>
-        </div>
+        <ErrorState message={error} title="Standings unavailable" />
       ) : null}
 
       {isEmpty ? (
-        <div className="empty-state">
-          <span className="empty-state__number">{year}</span>
-          <div>
-            <h3>Nothing to rank yet</h3>
-            <p>
-              No scoring session of this season has been ingested. Run the
-              season check, then come back once a race has been archived.
-            </p>
-          </div>
-        </div>
+        <EmptyState marker={year} title="Nothing to rank yet">
+          No scoring session of this season has been ingested. Run the season
+          check, then come back once a race has been archived.
+        </EmptyState>
       ) : null}
 
       {!loading && !error && !isEmpty ? (

@@ -469,3 +469,51 @@ test("head to head reports the record, the share and what was excluded", async (
     "Oscar Piastri",
   ]);
 });
+
+test("the scope bar switches session, and density persists", async ({ page }) => {
+  await installApiRoutes(page);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Standings", exact: true }).click();
+
+  // Standings describe a whole season, so no session control belongs here.
+  await expect(page.locator(".scope-bar")).toBeVisible();
+  await expect(page.locator("#scope-session")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Compact" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-density", "compact");
+
+  // The preference survives a reload; it is stored, not component state.
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-density", "compact");
+});
+
+test("the scope bar changes session without leaving race analysis", async ({
+  page,
+}) => {
+  await installApiRoutes(page);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /^Season sessions/ }).click();
+  await page.getByRole("button", { name: /Mar 08.*Race/ }).click();
+  await page.getByRole("button", { name: "Race analysis", exact: true }).click();
+
+  // Changing scope used to mean going back to the calendar and drilling in
+  // again, which lost your place in whatever you were reading.
+  const session = page.locator("#scope-session");
+  await expect(session).toBeVisible();
+  await expect(page.locator("[data-view='race-pace']")).toBeVisible();
+});
+
+test("every analysis view offers its data as CSV", async ({ page }) => {
+  await installApiRoutes(page);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Standings", exact: true }).click();
+
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export CSV" }).click();
+  const file = await download;
+
+  expect(file.suggestedFilename()).toBe("2026-drivers-standings.csv");
+});

@@ -390,12 +390,27 @@ longer and would look wrong to anyone who knows the sport.
 
 ---
 
-## Phase 7 — Design and interaction polish
+## Phase 7 — Design and interaction polish (complete)
 
 **Read first**
 - `frontend/src/index.css` — the whole token block at the top
 - The `dataviz` skill
 - `docs/PROJECT_CONTEXT.md` → "Dashboard visual system"
+
+**Built.** Two notes:
+
+- Export is CSV, not PNG. The charts are inline SVG styled by the stylesheet,
+  so serialising one to a canvas drops every colour it inherits -- a `fill` of
+  `var(--tyre-medium)` means nothing once the element leaves the document. The
+  numbers are also what the data is for; a picture of a box plot cannot be
+  re-analysed.
+- The contrast pass found one token, not thirty problems: `--muted-dark` sat
+  at 2.93:1 against every dark surface and was used for text throughout.
+  Raising it collided with `--muted`, so both moved and the three-tier
+  hierarchy below `--ink-dim` was rebuilt at 4.9:1 and 6.9:1. White on the
+  brand red measured 3.67:1, so filled buttons use a darkened `--accent-strong`
+  while `--accent` stays the brand colour wherever it is a mark rather than a
+  background behind text.
 
 **Build**
 - A persistent scope bar (season / event / session / drivers) shared by the

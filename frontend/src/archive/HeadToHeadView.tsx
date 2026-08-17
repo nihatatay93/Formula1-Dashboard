@@ -10,7 +10,9 @@ import type {
   DriverStandingsResponse,
   HeadToHeadResponse,
 } from "../contracts";
+import ExportButton from "../shared/ExportButton";
 import { errorMessage } from "../shared/format";
+import { EmptyState, ErrorState, LoadingState } from "../shared/ViewState";
 import ConsistencyTable from "./ConsistencyTable";
 import HeadToHeadBars from "./HeadToHeadBars";
 
@@ -141,6 +143,23 @@ export default function HeadToHeadView({ year }: { year: number }) {
         <h2 className="sr-only" id="head-to-head-title">
           {year} drivers compared
         </h2>
+        <div className="section-heading__actions">
+          <ExportButton
+            filename={`${year}-consistency`}
+            headers={["driver", "abbreviation", "team", "clean_laps", "median_percent", "std_dev_percent", "iqr_percent", "races_started", "races_classified"]}
+            rows={(consistency?.items ?? []).map((row) => [
+              row.display_name,
+              row.abbreviation,
+              row.team_name,
+              row.clean_laps,
+              row.median_percent,
+              row.std_dev_percent,
+              row.iqr_percent,
+              row.races_started,
+              row.races_classified,
+            ])}
+            label="Export consistency"
+          />
         <div className="standings__tabs" role="tablist" aria-label="Comparison">
           {(
             [
@@ -160,34 +179,20 @@ export default function HeadToHeadView({ year }: { year: number }) {
             </button>
           ))}
         </div>
+        </div>
       </div>
 
-      {loading ? (
-        <div className="session-explorer__loading" aria-live="polite">
-          <span />
-          Reading the {year} season…
-        </div>
-      ) : null}
+      {loading ? <LoadingState>Reading the {year} season…</LoadingState> : null}
 
       {error ? (
-        <div className="inline-alert inline-alert--danger" role="alert">
-          <strong>Comparison unavailable</strong>
-          <span>{error}</span>
-        </div>
+        <ErrorState message={error} title="Comparison unavailable" />
       ) : null}
 
       {isEmpty ? (
-        <div className="empty-state">
-          <span className="empty-state__number">{year}</span>
-          <div>
-            <h3>Not enough drivers to compare</h3>
-            <p>
-              A comparison needs at least two drivers with archived results.
-              Run the season check, then come back once a race has been
-              ingested.
-            </p>
-          </div>
-        </div>
+        <EmptyState marker={year} title="Not enough drivers to compare">
+          A comparison needs at least two drivers with archived results. Run
+          the season check, then come back once a race has been ingested.
+        </EmptyState>
       ) : null}
 
       {!loading && !error && !isEmpty && tab === "head-to-head" ? (

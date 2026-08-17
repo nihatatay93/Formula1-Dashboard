@@ -15,6 +15,9 @@ import type {
 } from "./contracts";
 import { useAccessControlled } from "./AuthGate";
 import DashboardRail, { isArchiveView } from "./DashboardRail";
+import ScopeBar from "./ScopeBar";
+import ErrorBoundary from "./shared/ErrorBoundary";
+import { useDensity } from "./shared/useDensity";
 import type { DashboardView } from "./DashboardRail";
 import Home from "./Home";
 import ArchiveOverview from "./archive/ArchiveOverview";
@@ -40,6 +43,18 @@ const JOB_POLL_INTERVAL_MS = 2_000;
 const currentUtcYear = new Date().getUTCFullYear();
 
 type ApiState = "checking" | "ready" | "unavailable";
+
+/** What to name in the boundary's message when a view fails to render. */
+const VIEW_LABELS: Partial<Record<DashboardView, string>> = {
+  home: "The landing page",
+  overview: "Coverage & ingestion",
+  calendar: "The season calendar",
+  standings: "The standings",
+  "head-to-head": "The comparison",
+  session: "The session workspace",
+  "race-pace": "Race analysis",
+  live: "Live timing",
+};
 
 const VIEW_HEADINGS: Record<
   Exclude<DashboardView, "session" | "race-pace">,
@@ -84,6 +99,7 @@ function App() {
   const [seasonLoading, setSeasonLoading] = useState(true);
   const [seasonError, setSeasonError] = useState<string | null>(null);
   const [commandPending, setCommandPending] = useState(false);
+  const [density, setDensity] = useDensity();
   const [notice, setNotice] = useState<string | null>(null);
   const [job, setJob] = useState<BackfillJob | null>(null);
   const [pollingJobId, setPollingJobId] = useState<string | null>(null);
@@ -407,6 +423,21 @@ function App() {
         </header>
 
         <main className="workspace-content" aria-labelledby="dashboard-title">
+          {needsSeason ? (
+            <ScopeBar
+              density={density}
+              events={season?.events}
+              onSelectDensity={setDensity}
+              onSelectSession={handleSessionSelection}
+              selectedSessionId={selectedSessionId}
+              // Standings and the calendar describe a whole season; a session
+              // choice would not change what they show.
+              showSession={
+                activeView === "session" || activeView === "race-pace"
+              }
+              year={selectedYear}
+            />
+          ) : null}
           {signOutError ? (
             <div className="inline-alert inline-alert--danger" role="alert">
               <strong>Still signed in</strong>
@@ -480,6 +511,10 @@ function App() {
                 />
               ) : null}
 
+              <ErrorBoundary
+                label={VIEW_LABELS[activeView] ?? "This view"}
+                resetKey={`${activeView}:${selectedYear}:${selectedSessionId ?? ""}`}
+              >
               {activeView === "head-to-head" ? (
                 <HeadToHeadView year={selectedYear} />
               ) : null}
@@ -498,7 +533,7 @@ function App() {
               ) : null}
 
               {activeView === "race-pace" ? (
-                <div className="workspace-view" data-view="race-pace">
+                <div className="workspace-view">
                   {selectedSession ? (
                     <RacePaceView
                       key={`${selectedSession.session.id}:${selectedSession.session.ingestion?.completed_at ?? "unavailable"}`}
@@ -561,6 +596,7 @@ function App() {
                   )}
                 </div>
               ) : null}
+              </ErrorBoundary>
             </>
           ) : null}
         </main>
