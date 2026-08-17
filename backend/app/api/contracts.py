@@ -494,6 +494,13 @@ class RacePaceLap(ApiModel):
     lap_number: int = Field(ge=1)
     lap_time_us: int | None = Field(ge=0)
     stint_number: int | None = Field(ge=1)
+    #: Session-relative instants, so they carry no lower bound: a car already
+    #: on track when the session clock starts records a negative one.
+    pit_in_time_us: int | None
+    pit_out_time_us: int | None
+    #: Every status code seen during the lap, concatenated. A "5" anywhere in
+    #: it means the lap was red-flagged.
+    track_status: str | None
     compound: str | None
     tyre_life_laps: int | None = Field(ge=0)
     position: int | None = Field(ge=1)

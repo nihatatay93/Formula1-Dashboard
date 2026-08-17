@@ -343,11 +343,11 @@ function App() {
     activeView === "race-pace"
       ? {
           description: selectedSession
-            ? `Every lap set in ${selectedSession.session.session_name}, with clean laps separated from the rest.`
+            ? `Pace and tyre strategy across every lap of ${selectedSession.session.session_name}.`
             : "Choose a session from the season calendar to compare its laps.",
           title: selectedSession
-            ? `${selectedSession.event.event_name} race pace`
-            : "Race pace",
+            ? `${selectedSession.event.event_name} race analysis`
+            : "Race analysis",
         }
       : activeView === "session"
       ? {
@@ -511,8 +511,9 @@ function App() {
                       <div>
                         <h3>Select a session first</h3>
                         <p>
-                          Race pace compares every driver's laps in one
-                          session. Open the season calendar and choose one.
+                          Race analysis compares every driver's laps and tyre
+                          strategy in one session. Open the season calendar and
+                          choose one.
                         </p>
                         <button
                           className="secondary-action"

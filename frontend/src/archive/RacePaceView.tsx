@@ -5,6 +5,8 @@ import type { RacePaceResponse } from "../contracts";
 import { errorMessage } from "../shared/format";
 import PaceDistributionChart from "./PaceDistributionChart";
 import PaceEvolutionChart from "./PaceEvolutionChart";
+import PitStopTable from "./PitStopTable";
+import StrategyChart from "./StrategyChart";
 import { buildPaceSeries, orderByMedian } from "./racePaceAnalysis";
 import { formatLapTime } from "./sessionFormat";
 
@@ -20,6 +22,8 @@ import { formatLapTime } from "./sessionFormat";
 
 const DEFAULT_CUTOFF = 107;
 
+type Tab = "pace" | "strategy";
+
 export default function RacePaceView({
   sessionId,
   sessionName,
@@ -34,6 +38,7 @@ export default function RacePaceView({
   const [excludeBeyondCutoff, setExcludeBeyondCutoff] = useState(false);
   const [cutoff, setCutoff] = useState(DEFAULT_CUTOFF);
   const [highlighted, setHighlighted] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>("pace");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -85,10 +90,32 @@ export default function RacePaceView({
     >
       {/* The page heading already names the event and the session, so the
           view carries only a screen-reader label rather than repeating it. */}
-      <h2 className="sr-only" id="race-pace-title">
-        Race pace{sessionName ? ` · ${sessionName}` : ""}
-      </h2>
+      <div className="section-heading">
+        <h2 className="sr-only" id="race-pace-title">
+          Race analysis{sessionName ? ` · ${sessionName}` : ""}
+        </h2>
+        <div className="standings__tabs" role="tablist" aria-label="Race analysis">
+          {(
+            [
+              ["pace", "Pace"],
+              ["strategy", "Strategy"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              aria-selected={tab === value}
+              className={tab === value ? "is-selected" : ""}
+              key={value}
+              onClick={() => setTab(value)}
+              role="tab"
+              type="button"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
 
+      {tab === "pace" ? (
       <div className="race-pace__controls">
         <label className="race-pace__toggle">
           <input
@@ -125,6 +152,7 @@ export default function RacePaceView({
           />
         </label>
       </div>
+      ) : null}
 
       {loading ? (
         <div className="session-explorer__loading" aria-live="polite">
@@ -154,7 +182,7 @@ export default function RacePaceView({
         </div>
       ) : null}
 
-      {!loading && !error && !isEmpty && data !== null ? (
+      {!loading && !error && !isEmpty && data !== null && tab === "pace" ? (
         <>
           <p className="race-pace__summary">
             {measuredLaps} laps from {series.filter((item) => item.laps.length > 0).length}{" "}
@@ -182,6 +210,15 @@ export default function RacePaceView({
           />
 
           <p className="race-pace__footnote">{data.clean_lap_definition}</p>
+        </>
+      ) : null}
+
+      {!loading && !error && data !== null && tab === "strategy" ? (
+        <>
+          {/* Strategy reads every lap the car ran, not only the clean ones:
+              an in lap is exactly where a stint ends. */}
+          <StrategyChart entries={data.items ?? []} />
+          <PitStopTable entries={data.items ?? []} />
         </>
       ) : null}
     </section>

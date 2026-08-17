@@ -4927,3 +4927,154 @@ th,
     display: none;
   }
 }
+
+/* --------------------------------------------------------------------------
+   Strategy and pit stops
+   -------------------------------------------------------------------------- */
+
+.strategy {
+  margin: 0 0 var(--s5);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r2);
+  background: var(--panel-raised);
+}
+
+.strategy__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.strategy__grid {
+  stroke: rgb(255 255 255 / 8%);
+  stroke-width: 1;
+}
+
+.strategy__axis {
+  fill: var(--muted-dark);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.strategy__name {
+  fill: var(--ink-dim);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.strategy__code {
+  fill: var(--muted-dark);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.strategy__stint {
+  fill-opacity: 0.82;
+}
+
+/* A pit entry: a hard mark on the boundary, not a colour change. */
+.strategy__stop {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+
+.strategy__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s4);
+  align-items: center;
+  margin-top: var(--s3);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line);
+}
+
+.strategy__legend small {
+  margin-left: auto;
+  color: var(--muted-dark);
+  font-size: var(--t-micro);
+}
+
+.pit-stops__table-wrap {
+  overflow-x: auto;
+}
+
+.pit-stops__table {
+  width: 100%;
+  min-width: 34rem;
+  border-collapse: collapse;
+}
+
+.pit-stops__table caption {
+  margin-bottom: var(--s2);
+  color: var(--muted);
+  font-size: var(--t-micro);
+  text-align: left;
+}
+
+.pit-stops__table th,
+.pit-stops__table td {
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.pit-stops__table thead th {
+  color: var(--muted);
+  font-size: var(--t-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pit-stops__rank {
+  color: var(--muted-dark);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+}
+
+.pit-stops__name {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+  font-size: var(--t-small);
+}
+
+.pit-stops__swatch {
+  width: 3px;
+  height: 1.5rem;
+  border-radius: 999px;
+}
+
+.pit-stops__team {
+  color: var(--ink-dim);
+  font-size: var(--t-small);
+}
+
+.pit-stops__figure {
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  text-align: right;
+}
+
+.pit-stops__figure--lead {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+/* The caveat is part of the data, not a footnote to skip. */
+.pit-stops__caveat {
+  margin-top: var(--s4);
+  padding: var(--s3);
+  border: 1px solid var(--warning);
+  border-radius: var(--r1);
+  background: var(--warning-soft);
+  color: var(--ink-dim);
+  font-size: var(--t-micro);
+  line-height: 1.6;
+}
+
+.pit-stops__caveat strong {
+  color: var(--ink);
+}

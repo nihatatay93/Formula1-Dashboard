@@ -405,7 +405,7 @@ test("race pace compares the field and never bridges a gap in the laps", async (
 
   await page.getByRole("button", { name: /^Season sessions/ }).click();
   await page.getByRole("button", { name: /Mar 08.*Race/ }).click();
-  await page.getByRole("button", { name: "Race pace", exact: true }).click();
+  await page.getByRole("button", { name: "Race analysis", exact: true }).click();
 
   // A row per driver, ordered by median, each one named rather than left to
   // its team colour.
@@ -426,6 +426,26 @@ test("race pace compares the field and never bridges a gap in the laps", async (
 
   await page.getByRole("checkbox", { name: /clean laps only/i }).check();
   await expect(page.getByText(/4 laps from 2 drivers/)).toBeVisible();
+});
+
+test("strategy shows stints by compound and states the pit-lane caveat", async ({
+  page,
+}) => {
+  await installApiRoutes(page);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /^Season sessions/ }).click();
+  await page.getByRole("button", { name: /Mar 08.*Race/ }).click();
+  await page.getByRole("button", { name: "Race analysis", exact: true }).click();
+  await page.getByRole("tab", { name: "Strategy" }).click();
+
+  // One segment per stint, coloured from the tyre palette.
+  await expect(page.locator(".strategy__stint").first()).toBeVisible();
+  await expect(page.locator(".strategy__stop")).toHaveCount(1);
+
+  // Pit-lane time is roughly twenty seconds longer than the televised stop
+  // time, so the distinction has to be on screen.
+  await expect(page.getByText(/Pit-lane time, not stop time/)).toBeVisible();
 });
 
 test("head to head reports the record, the share and what was excluded", async ({

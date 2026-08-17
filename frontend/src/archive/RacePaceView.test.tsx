@@ -19,6 +19,9 @@ function lap(
   return {
     lap_time_us: 90_000_000,
     stint_number: 1,
+    pit_in_time_us: null,
+    pit_out_time_us: null,
+    track_status: "1",
     compound: "MEDIUM",
     tyre_life_laps: 1,
     position: 1,
@@ -246,5 +249,136 @@ describe("RacePaceView", () => {
       expect(row.querySelector(".pace-box__name")?.textContent).toMatch(/\S/);
       expect(row.querySelector(".pace-box__code")?.textContent).toMatch(/\S/);
     }
+  });
+});
+
+describe("RacePaceView strategy tab", () => {
+  beforeEach(() => {
+    getRacePace.mockReset();
+    getRacePace.mockResolvedValue(
+      response({
+        items: [
+          {
+            session_entry_id: "1",
+            driver_id: "1",
+            display_name: "Kimi Antonelli",
+            abbreviation: "ANT",
+            racing_number: "12",
+            team_name: "Mercedes",
+            team_color_hex: "#00D7B6",
+            finishing_position: 1,
+            laps: [
+              lap({ lap_number: 1, stint_number: 1, compound: "MEDIUM" }),
+              lap({
+                lap_number: 2,
+                stint_number: 1,
+                compound: "MEDIUM",
+                pit_in_time_us: 600_000_000,
+              }),
+              lap({
+                lap_number: 3,
+                stint_number: 2,
+                compound: "HARD",
+                pit_out_time_us: 624_000_000,
+              }),
+              lap({ lap_number: 4, stint_number: 2, compound: "HARD" }),
+            ],
+          },
+        ],
+      }),
+    );
+  });
+
+  async function openStrategy() {
+    const user = userEvent.setup();
+    const view = render(<RacePaceView sessionId="821" />);
+    await screen.findByText(/session best/);
+    await user.click(screen.getByRole("tab", { name: "Strategy" }));
+    return view;
+  }
+
+  it("draws one segment per stint", async () => {
+    const { container } = await openStrategy();
+
+    // Stint boundaries follow stint_number, not compound: two stints on the
+    // same compound must still be two segments.
+    expect(container.querySelectorAll(".strategy__stint")).toHaveLength(2);
+  });
+
+  it("marks the pit entry", async () => {
+    const { container } = await openStrategy();
+
+    expect(container.querySelectorAll(".strategy__stop")).toHaveLength(1);
+  });
+
+  it("uses the tyre palette rather than a driver colour", async () => {
+    const { container } = await openStrategy();
+    const fills = [...container.querySelectorAll(".strategy__stint")].map(
+      (node) => node.getAttribute("fill"),
+    );
+
+    // Compound colour belongs to the tyre; the driver's name carries identity.
+    expect(fills).toEqual(["var(--tyre-medium)", "var(--tyre-hard)"]);
+  });
+
+  it("reports pit-lane time, and says that is what it is", async () => {
+    await openStrategy();
+
+    expect(screen.getByText("24.000s")).toBeVisible();
+    // The caveat must be on screen, not only in a code comment: pit-lane time
+    // is about twenty seconds longer than the televised figure.
+    expect(screen.getByText(/Pit-lane time, not stop time/)).toBeVisible();
+    expect(
+      screen.getByText(/roughly twenty seconds shorter/),
+    ).toBeVisible();
+  });
+
+  it("does not time a stop taken while the race was suspended", async () => {
+    getRacePace.mockResolvedValue(
+      response({
+        items: [
+          {
+            session_entry_id: "1",
+            driver_id: "1",
+            display_name: "Kimi Antonelli",
+            abbreviation: "ANT",
+            racing_number: "12",
+            team_name: "Mercedes",
+            team_color_hex: "#00D7B6",
+            finishing_position: 1,
+            laps: [
+              lap({
+                lap_number: 68,
+                stint_number: 4,
+                pit_in_time_us: 8_905_488_000,
+                track_status: "451",
+              }),
+              lap({
+                lap_number: 69,
+                stint_number: 5,
+                pit_out_time_us: 11_059_751_000,
+                track_status: "14",
+              }),
+            ],
+          },
+        ],
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<RacePaceView sessionId="821" />);
+    await screen.findByText(/session best/);
+    await user.click(screen.getByRole("tab", { name: "Strategy" }));
+
+    // 2154 seconds is the length of the stoppage, not of a pit stop.
+    expect(screen.getByText("race suspended")).toBeVisible();
+    expect(screen.queryByText(/2154/)).toBeNull();
+  });
+
+  it("keeps the pace charts out of the strategy tab", async () => {
+    const { container } = await openStrategy();
+
+    expect(container.querySelector(".pace-evolution")).toBeNull();
+    expect(container.querySelector(".pace-box")).toBeNull();
   });
 });

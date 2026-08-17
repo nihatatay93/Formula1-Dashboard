@@ -186,6 +186,69 @@ export interface Stint {
   compound: string | null;
   first_lap: number;
   last_lap: number;
+  /** Laps on this set of tyres, counted from the laps actually present. */
+  laps: number;
+}
+
+/** FastF1's code for a red flag, within a lap's concatenated track status. */
+const RED_FLAG = "5";
+
+export interface PitStop {
+  /** The lap the car entered the pit lane on. */
+  lap_number: number;
+  /**
+   * Time between entering and leaving the pit lane, when both instants are
+   * known and the lap was racing. This is pit-lane time, not the stationary
+   * time a broadcast quotes: it includes the drive in and out and runs
+   * roughly twenty seconds longer.
+   */
+  pit_lane_us: number | null;
+  /**
+   * The car was in the pit lane while the race was suspended, so the time it
+   * spent there measures the stoppage rather than the stop. In the 2026
+   * Monaco race the sixteen red-flagged entries all read between 2023 and
+   * 2158 seconds, against 19 to 66 for the seventy that were not.
+   */
+  under_red_flag: boolean;
+}
+
+/**
+ * Every pit entry, paired with the following exit.
+ *
+ * FastF1 records the entry on the lap the car came in and the exit on the next
+ * lap, so the two live on different rows and have to be stitched together. A
+ * final entry with no exit -- the car retired in the pits -- is reported with
+ * no duration rather than dropped, because the stop still happened.
+ */
+export function pitStopsOf(entry: RacePaceEntry): PitStop[] {
+  const ordered = [...entry.laps].sort(
+    (left, right) => left.lap_number - right.lap_number,
+  );
+  const stops: PitStop[] = [];
+
+  for (const [index, lap] of ordered.entries()) {
+    if (lap.pit_in_time_us === null) {
+      continue;
+    }
+    const exit = ordered.slice(index + 1).find(
+      (candidate) => candidate.pit_out_time_us !== null,
+    );
+    const underRedFlag =
+      (lap.track_status ?? "").includes(RED_FLAG) ||
+      (exit?.track_status ?? "").includes(RED_FLAG);
+
+    stops.push({
+      lap_number: lap.lap_number,
+      // A suspension is reported as no duration rather than as a 36-minute
+      // pit stop, which is what subtracting the two instants would give.
+      pit_lane_us:
+        exit?.pit_out_time_us != null && !underRedFlag
+          ? exit.pit_out_time_us - lap.pit_in_time_us
+          : null,
+      under_red_flag: underRedFlag,
+    });
+  }
+  return stops;
 }
 
 /**
@@ -205,6 +268,7 @@ export function stintsOf(entry: RacePaceEntry): Stint[] {
     const current = stints[stints.length - 1];
     if (current !== undefined && current.stint_number === lap.stint_number) {
       current.last_lap = lap.lap_number;
+      current.laps += 1;
       continue;
     }
     stints.push({
@@ -212,6 +276,7 @@ export function stintsOf(entry: RacePaceEntry): Stint[] {
       compound: lap.compound,
       first_lap: lap.lap_number,
       last_lap: lap.lap_number,
+      laps: 1,
     });
   }
   return stints;

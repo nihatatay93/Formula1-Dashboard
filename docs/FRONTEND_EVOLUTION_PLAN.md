@@ -352,13 +352,26 @@ changes make it meaningless. Scope to a season.
 
 ---
 
-## Phase 6 — Strategy and stints
+## Phase 6 — Strategy and stints (complete)
 
 **Read first**
 - `backend/app/db/models/lap.py` — `stint_number`, `compound`,
   `tyre_life_laps`, `fresh_tyre`
 - `frontend/src/index.css` `.live-tyre`, `.compound` — existing compound
   colours
+
+**Built.** One finding worth carrying forward: subtracting the two pit
+instants does not always give a pit-lane time. A car that pits under a red
+flag sits there through the suspension, and in the 2026 Monaco race those
+sixteen entries computed to between 2023 and 2158 seconds against 19 to 66 for
+the seventy that were not — a clean separation with no overlap. A red flag in
+the lap's `track_status` (the code is `5`, anywhere in the concatenated
+string) is the discriminator, so those stops are listed without a duration
+rather than with an absurd one.
+
+Served from the existing `/sessions/{id}/laps` response, which gained
+`pit_in_time_us`, `pit_out_time_us` and `track_status`, rather than a second
+endpoint: strategy and pace describe the same laps.
 
 **Build**
 - A strategy chart per race: one horizontal bar per driver, segmented by

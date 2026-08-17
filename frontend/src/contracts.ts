@@ -716,6 +716,9 @@ export interface RacePaceLap {
   lap_number: number;
   lap_time_us: number | null;
   stint_number: number | null;
+  pit_in_time_us: number | null;
+  pit_out_time_us: number | null;
+  track_status: string | null;
   compound: string | null;
   tyre_life_laps: number | null;
   position: number | null;

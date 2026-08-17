@@ -2302,11 +2302,11 @@ race-run classification remain intentionally unimplemented.
 2. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
 3. Evolve the dashboard toward a full analytics product, following
-   `docs/FRONTEND_EVOLUTION_PLAN.md`. Phases 1-5 are done: standings, the
-   landing page, race pace, and now head to head and consistency. Phase 6
-   (strategy and stints) is next and can reuse `stintsOf` and the compound
-   data the race-pace work already returns. Phase 7's error boundary is worth
-   pulling forward: a single unguarded field once blanked the whole page.
+   `docs/FRONTEND_EVOLUTION_PLAN.md`. Phases 1-6 are done: standings, the
+   landing page, race pace, head to head and consistency, and tyre strategy.
+   Phase 7 (design and interaction polish) is all that remains, and its error
+   boundary is worth doing first: a single unguarded field once blanked the
+   whole page.
 4. Add error reporting, and rate limiting beyond sign-in. Authentication,
    secret handling, PostgreSQL passwords, non-root images, the deployment,
    CI and backups are done; see `docs/DEPLOYMENT.md`. Reconsider manual job
@@ -2636,6 +2636,11 @@ mounted writable at `/live-sessions`.
 
 ## Change Log
 
+- 2026-08-17 — Added tyre strategy and pit stops to the session view, served
+  by the existing race-pace request rather than a second endpoint. A pit-lane
+  time is withheld when the lap was red-flagged: in the 2026 Monaco race those
+  sixteen entries read 2023-2158 s against 19-66 s for the seventy that were
+  not, because the car sat in the pit lane through the suspension.
 - 2026-08-17 — Repaired the 2025 Spanish Grand Prix third-practice ingestion.
   FastF1 reports a lap's session-relative instants from the official session
   start, so cars already on track carry negative offsets; the schema and the

@@ -4,6 +4,7 @@ import type { RacePaceEntry, RacePaceLap } from "../contracts";
 import {
   buildPaceSeries,
   orderByMedian,
+  pitStopsOf,
   quantile,
   stintsOf,
   summarizeDistribution,
@@ -13,6 +14,9 @@ function lap(overrides: Partial<RacePaceLap> & { lap_number: number }): RacePace
   return {
     lap_time_us: 90_000_000,
     stint_number: 1,
+    pit_in_time_us: null,
+    pit_out_time_us: null,
+    track_status: "1",
     compound: "MEDIUM",
     tyre_life_laps: 1,
     position: 1,
@@ -261,8 +265,20 @@ describe("stintsOf", () => {
     );
 
     expect(stints).toEqual([
-      { stint_number: 1, compound: "MEDIUM", first_lap: 1, last_lap: 2 },
-      { stint_number: 2, compound: "HARD", first_lap: 3, last_lap: 3 },
+      {
+        stint_number: 1,
+        compound: "MEDIUM",
+        first_lap: 1,
+        last_lap: 2,
+        laps: 2,
+      },
+      {
+        stint_number: 2,
+        compound: "HARD",
+        first_lap: 3,
+        last_lap: 3,
+        laps: 1,
+      },
     ]);
   });
 
@@ -295,5 +311,95 @@ describe("stintsOf", () => {
     );
 
     expect(stints.map((stint) => stint.first_lap)).toEqual([1, 3]);
+  });
+});
+
+describe("pitStopsOf", () => {
+  it("pairs an entry with the exit on the following lap", () => {
+    const stops = pitStopsOf(
+      entry({
+        laps: [
+          lap({ lap_number: 10, pit_in_time_us: 600_000_000 }),
+          lap({ lap_number: 11, pit_out_time_us: 624_000_000 }),
+        ],
+      }),
+    );
+
+    // FastF1 records the two instants on different rows, so they have to be
+    // stitched together.
+    expect(stops).toEqual([
+      { lap_number: 10, pit_lane_us: 24_000_000, under_red_flag: false },
+    ]);
+  });
+
+  it("reports a stop whose exit was never recorded", () => {
+    const stops = pitStopsOf(
+      entry({ laps: [lap({ lap_number: 10, pit_in_time_us: 600_000_000 })] }),
+    );
+
+    // The car retired in the pits. The stop happened; its duration is unknown.
+    expect(stops).toEqual([
+      { lap_number: 10, pit_lane_us: null, under_red_flag: false },
+    ]);
+  });
+
+  it("refuses to time a stop taken while the race was suspended", () => {
+    const stops = pitStopsOf(
+      entry({
+        laps: [
+          // "451" is safety car, then red flag, then green.
+          lap({
+            lap_number: 68,
+            pit_in_time_us: 8_905_488_000,
+            track_status: "451",
+          }),
+          lap({
+            lap_number: 69,
+            pit_out_time_us: 11_059_751_000,
+            track_status: "14",
+          }),
+        ],
+      }),
+    );
+
+    // Subtracting the instants gives 2154 seconds, which measures the
+    // stoppage rather than the stop.
+    expect(stops[0].under_red_flag).toBe(true);
+    expect(stops[0].pit_lane_us).toBeNull();
+  });
+
+  it("finds every stop of a multi-stop race in lap order", () => {
+    const stops = pitStopsOf(
+      entry({
+        laps: [
+          lap({ lap_number: 37, pit_in_time_us: 6_162_250_000 }),
+          lap({ lap_number: 38, pit_out_time_us: 6_186_328_000 }),
+          lap({ lap_number: 61, pit_in_time_us: 8_060_549_000 }),
+          lap({ lap_number: 62, pit_out_time_us: 8_087_516_000 }),
+        ],
+      }),
+    );
+
+    expect(stops.map((stop) => stop.lap_number)).toEqual([37, 61]);
+    // The real Monaco figures: 24.078s and 26.967s in the pit lane.
+    expect(stops[0].pit_lane_us).toBe(24_078_000);
+    expect(stops[1].pit_lane_us).toBe(26_967_000);
+  });
+});
+
+describe("stintsOf lap counts", () => {
+  it("counts the laps of each stint", () => {
+    const stints = stintsOf(
+      entry({
+        laps: [
+          lap({ lap_number: 1, stint_number: 1 }),
+          lap({ lap_number: 2, stint_number: 1 }),
+          lap({ lap_number: 3, stint_number: 1 }),
+          lap({ lap_number: 4, stint_number: 2 }),
+        ],
+      }),
+    );
+
+    expect(stints.map((stint) => stint.laps)).toEqual([3, 1]);
   });
 });

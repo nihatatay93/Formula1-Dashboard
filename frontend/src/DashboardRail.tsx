@@ -158,7 +158,7 @@ export default function DashboardRail({
           <RailButton
             active={view === "race-pace"}
             disabled={!sessionOpen}
-            label="Race pace"
+            label="Race analysis"
             onSelect={() => onSelectView("race-pace")}
           />
           <RailButton

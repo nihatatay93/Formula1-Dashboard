@@ -667,3 +667,27 @@ def _purge(engine: Engine, *, season_year: int, suffix: str) -> None:
             ),
             {"pattern": f"%-{suffix}"},
         )
+
+
+def test_pit_times_travel_with_the_laps(target: RacePaceTarget) -> None:
+    """Strategy needs the pit instants, and one request should carry them.
+
+    Fetching them separately would mean a second walk over the same laps just
+    to draw the stints they already describe.
+    """
+    laps = _leader_laps(_read(target))
+
+    assert laps[1].pit_out_time_us == 5_000_000
+    assert laps[1].pit_in_time_us is None
+    assert laps[5].pit_in_time_us == 95_000_000
+    assert laps[2].pit_out_time_us is None
+
+
+def test_a_stint_boundary_follows_the_stint_number(target: RacePaceTarget) -> None:
+    response = _read(target)
+    laps = _leader_laps(response)
+
+    # The fixture puts laps 1-5 in stint 1 and lap 6 in stint 2, which is what
+    # a strategy chart segments on.
+    assert [laps[n].stint_number for n in (1, 2, 3, 4, 5)] == [1, 1, 1, 1, 1]
+    assert laps[6].stint_number == 2
