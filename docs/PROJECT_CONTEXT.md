@@ -497,7 +497,7 @@ Formula1-Dashboard/
 
 ### Single project workspace
 
-- Decision: All source code, documentation, and Docker files must remain under `/Users/nihatatay/Desktop/Projects/Formula1-Dashboard`.
+- Decision: All source code, documentation, and Docker files must remain under the repository root.
 - Rationale: Isolate this project from other Formula 1 work and maintain one authoritative workspace.
 - Date: 2026-07-27
 - Status: accepted

@@ -1,11 +1,14 @@
 # Formula1 Dashboard
 
-Formula1 Dashboard is a local-first Formula 1 data platform. It will combine
-historical FastF1 data and future SignalR live timing behind a single API for
-the web dashboard and a future iOS application.
+Formula1 Dashboard is a local-first Formula 1 data platform. It combines the
+historical FastF1 archive and SignalR live timing behind a single API, serving
+a web dashboard today and a planned iOS application later. Everything runs on
+your own machine: nothing is sent anywhere, and no account is needed to read
+the archive.
 
-The repository currently contains the local development scaffold, five
-database migrations, the historical backfill API, and session exploration:
+The repository contains the local development scaffold, eight database
+migrations, the historical backfill API, session exploration, live timing, and
+the analysis views built on top of them:
 
 - FastAPI backend with liveness and PostgreSQL readiness endpoints
 - Single-concurrency archive worker using the same backend image
@@ -37,7 +40,9 @@ database migrations, the historical backfill API, and session exploration:
 - Reproducible FastF1 lap-telemetry measurement and PostgreSQL-first storage decision
 - Docker Compose health checks
 
-Historical telemetry and live timing ingestion are not implemented yet.
+Historical telemetry, live timing, championship standings, race pace, driver
+comparison, and tyre strategy are implemented. See the change log in
+[`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md) for what landed when.
 
 ## Requirements
 
@@ -182,8 +187,10 @@ docker compose run --rm migrate /opt/venv/bin/alembic check
 Downgrades can remove data. Review the target revision and migration before
 running a downgrade.
 
-PostgreSQL uses trust authentication only for this loopback-bound local
-development scaffold. This configuration must not be reused for production.
+PostgreSQL authenticates with scram-sha-256 and is bound to loopback. The
+local development password in `compose.yaml` is a development credential, not
+a secret; a deployment supplies `POSTGRES_PASSWORD` from its own secret store.
+See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ## Project context
 
@@ -191,3 +198,23 @@ Read [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md) before making changes.
 It is the authoritative record of implemented behavior and accepted decisions.
 Telemetry evidence and the TimescaleDB review triggers are recorded in
 [`docs/TELEMETRY_STORAGE_DECISION.md`](docs/TELEMETRY_STORAGE_DECISION.md).
+
+## Licence
+
+Released under the [MIT Licence](LICENSE).
+
+## Disclaimer
+
+This is an unofficial, non-commercial personal project. It is not associated
+with, endorsed by, or affiliated with Formula 1, Formula One Digital Media
+Limited, the FIA, or any Formula 1 team.
+
+"Formula 1", "F1", "FORMULA ONE", "GRAND PRIX" and related marks are
+trademarks of Formula One Licensing BV. They are used here only to describe
+the sport the data concerns.
+
+Timing and telemetry data is read through [FastF1](https://github.com/theOehrly/Fast-F1),
+which sources it from publicly available Formula 1 feeds, and is subject to
+those feeds' own terms. Nothing here redistributes that data: the archive is
+built locally, on your own machine, from your own requests. No team logo,
+driver photograph, or other licensed media is included or fetched.
