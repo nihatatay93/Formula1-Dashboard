@@ -348,3 +348,45 @@ def test_rejects_sub_microsecond_duration() -> None:
             pd.DataFrame(),
             session_name="Race",
         )
+
+
+def test_a_lap_run_before_the_session_start_is_kept() -> None:
+    """FastF1 counts from the official start, so an earlier lap is negative.
+
+    In the 2025 Spanish Grand Prix third practice thirteen cars were already
+    on track when the session clock reached zero. Rejecting their negative
+    offsets cost all 312 laps of the session.
+    """
+    early = lap_row()
+    early["Time"] = timedelta(seconds=-75, milliseconds=-195)
+    early["LapStartTime"] = timedelta(seconds=-134)
+    early["Sector1SessionTime"] = timedelta(seconds=-120)
+    early["Sector2SessionTime"] = timedelta(seconds=-100)
+    early["PitOutTime"] = timedelta(seconds=-140)
+
+    session = normalize_fastf1_session(
+        pd.DataFrame([result_row()]),
+        pd.DataFrame([early]),
+        session_name="Practice 3",
+    )
+
+    lap = session.laps[0]
+    assert lap.session_time_us == -75_195_000
+    assert lap.lap_start_time_us == -134_000_000
+    assert lap.sector_1_session_time_us == -120_000_000
+    assert lap.pit_out_time_us == -140_000_000
+
+
+def test_a_negative_duration_is_still_rejected() -> None:
+    # An instant may precede the session start; a lap cannot take less than no
+    # time to complete, and neither can a sector.
+    for field in ("LapTime", "Sector1Time", "Sector2Time", "Sector3Time"):
+        impossible = lap_row()
+        impossible[field] = timedelta(seconds=-1)
+
+        with pytest.raises(FastF1NormalizationError, match="must not be negative"):
+            normalize_fastf1_session(
+                pd.DataFrame([result_row()]),
+                pd.DataFrame([impossible]),
+                session_name="Practice 3",
+            )

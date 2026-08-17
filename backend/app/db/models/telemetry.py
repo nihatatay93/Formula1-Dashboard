@@ -105,10 +105,8 @@ class LapTelemetrySample(TimestampMixin, Base):
         ),
         CheckConstraint("sample_index >= 0", name="sample_index_nonnegative"),
         CheckConstraint("lap_time_us >= 0", name="lap_time_us_nonnegative"),
-        CheckConstraint(
-            "session_time_us IS NULL OR session_time_us >= 0",
-            name="session_time_us_nonnegative",
-        ),
+        # Measured from the session start, so a sample taken before it is
+        # negative. See the note on `laps`.
         CheckConstraint(
             "distance_m IS NULL OR distance_m >= 0",
             name="distance_m_nonnegative",

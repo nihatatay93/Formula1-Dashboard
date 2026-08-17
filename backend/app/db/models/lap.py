@@ -26,30 +26,20 @@ class Lap(TimestampMixin, Base):
             f"record_state IN ({sql_values(RECORD_STATES)})",
             name="record_state",
         ),
+        # Only durations are constrained non-negative. The session-relative
+        # instants below them -- session_time_us, lap_start_time_us, the pit
+        # times and the sector session times -- deliberately are not: FastF1
+        # measures them from a session's official start, and a car already on
+        # track before that start carries a negative one. Rejecting those cost
+        # a whole practice session for the sake of thirteen out laps.
         CheckConstraint("lap_number >= 1", name="lap_number_positive"),
         CheckConstraint(
             "stint_number IS NULL OR stint_number >= 1",
             name="stint_number_positive",
         ),
         CheckConstraint(
-            "session_time_us IS NULL OR session_time_us >= 0",
-            name="session_time_us_nonnegative",
-        ),
-        CheckConstraint(
             "lap_time_us IS NULL OR lap_time_us >= 0",
             name="lap_time_us_nonnegative",
-        ),
-        CheckConstraint(
-            "lap_start_time_us IS NULL OR lap_start_time_us >= 0",
-            name="lap_start_time_us_nonnegative",
-        ),
-        CheckConstraint(
-            "pit_out_time_us IS NULL OR pit_out_time_us >= 0",
-            name="pit_out_time_us_nonnegative",
-        ),
-        CheckConstraint(
-            "pit_in_time_us IS NULL OR pit_in_time_us >= 0",
-            name="pit_in_time_us_nonnegative",
         ),
         CheckConstraint(
             "sector_1_time_us IS NULL OR sector_1_time_us >= 0",
@@ -62,18 +52,6 @@ class Lap(TimestampMixin, Base):
         CheckConstraint(
             "sector_3_time_us IS NULL OR sector_3_time_us >= 0",
             name="sector_3_time_us_nonnegative",
-        ),
-        CheckConstraint(
-            "sector_1_session_time_us IS NULL OR sector_1_session_time_us >= 0",
-            name="sector_1_session_time_us_nonnegative",
-        ),
-        CheckConstraint(
-            "sector_2_session_time_us IS NULL OR sector_2_session_time_us >= 0",
-            name="sector_2_session_time_us_nonnegative",
-        ),
-        CheckConstraint(
-            "sector_3_session_time_us IS NULL OR sector_3_session_time_us >= 0",
-            name="sector_3_session_time_us_nonnegative",
         ),
         CheckConstraint(
             "speed_i1_kph IS NULL OR speed_i1_kph >= 0",

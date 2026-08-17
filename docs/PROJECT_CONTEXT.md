@@ -1092,6 +1092,24 @@ Formula1-Dashboard/
 - Date: 2026-07-27
 - Status: accepted
 
+### Session-relative instants may be negative
+
+- Decision: Constrain lap *durations* to be non-negative, but not the
+  session-relative *instants* beside them — `laps.session_time_us`,
+  `lap_start_time_us`, `pit_in_time_us`, `pit_out_time_us`, the three
+  `sector_N_session_time_us` columns, and `lap_telemetry_samples.session_time_us`.
+- Rationale: FastF1 measures those from the moment a session officially
+  starts, so a car already on track carries a negative offset. In the 2025
+  Spanish Grand Prix third practice thirteen out laps do, the earliest at
+  -148.7 s. Requiring them to be non-negative rejected the whole session's 312
+  laps, which was the only failed ingestion of the 2025 season. Durations keep
+  their floor: no lap takes less than no time.
+- Migration: `20260817_0008_negative_session_times`. The downgrade is lossy by
+  nature — it nulls the negatives before restoring the constraints, because a
+  negative instant has no non-negative representation.
+- Date: 2026-08-17
+- Status: implemented
+
 ### Phased database design
 
 - Decision: Separate the control plane, sporting data, and telemetry into independent migration phases.
@@ -2618,6 +2636,11 @@ mounted writable at `/live-sessions`.
 
 ## Change Log
 
+- 2026-08-17 — Repaired the 2025 Spanish Grand Prix third-practice ingestion.
+  FastF1 reports a lap's session-relative instants from the official session
+  start, so cars already on track carry negative offsets; the schema and the
+  normalizer treated every timedelta as a duration and rejected them, losing
+  all 312 laps. Instants and durations are now distinguished in both.
 - 2026-08-16 — Added head to head and consistency. Both are season-scoped, and
   both exclude what cannot honestly be compared: a race a driver did not start
   carries a finishing position in the archive, and counting it scored a race

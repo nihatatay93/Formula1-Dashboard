@@ -380,7 +380,7 @@ def _normalize_laps(
                     f"laps row {row_number} Stint",
                     minimum=1,
                 ),
-                session_time_us=_optional_duration_us(
+                session_time_us=_optional_session_time_us(
                     row.get("Time"),
                     f"laps row {row_number} Time",
                 ),
@@ -388,15 +388,15 @@ def _normalize_laps(
                     row.get("LapTime"),
                     f"laps row {row_number} LapTime",
                 ),
-                lap_start_time_us=_optional_duration_us(
+                lap_start_time_us=_optional_session_time_us(
                     row.get("LapStartTime"),
                     f"laps row {row_number} LapStartTime",
                 ),
-                pit_out_time_us=_optional_duration_us(
+                pit_out_time_us=_optional_session_time_us(
                     row.get("PitOutTime"),
                     f"laps row {row_number} PitOutTime",
                 ),
-                pit_in_time_us=_optional_duration_us(
+                pit_in_time_us=_optional_session_time_us(
                     row.get("PitInTime"),
                     f"laps row {row_number} PitInTime",
                 ),
@@ -412,15 +412,15 @@ def _normalize_laps(
                     row.get("Sector3Time"),
                     f"laps row {row_number} Sector3Time",
                 ),
-                sector_1_session_time_us=_optional_duration_us(
+                sector_1_session_time_us=_optional_session_time_us(
                     row.get("Sector1SessionTime"),
                     f"laps row {row_number} Sector1SessionTime",
                 ),
-                sector_2_session_time_us=_optional_duration_us(
+                sector_2_session_time_us=_optional_session_time_us(
                     row.get("Sector2SessionTime"),
                     f"laps row {row_number} Sector2SessionTime",
                 ),
-                sector_3_session_time_us=_optional_duration_us(
+                sector_3_session_time_us=_optional_session_time_us(
                     row.get("Sector3SessionTime"),
                     f"laps row {row_number} Sector3SessionTime",
                 ),
@@ -643,7 +643,28 @@ def _optional_decimal(
     return normalized
 
 
+def _optional_session_time_us(value: Any, field: str) -> int | None:
+    """A moment measured from the session start, which may precede it.
+
+    FastF1 counts from the instant a session officially starts, so a car
+    already on track before that carries a negative offset -- thirteen out
+    laps of the 2025 Spanish Grand Prix third practice do. These are instants,
+    not durations, and rejecting them threw away the whole session.
+    """
+
+    return _microseconds(value, field)
+
+
 def _optional_duration_us(value: Any, field: str) -> int | None:
+    """How long something took, which cannot be negative."""
+
+    microseconds = _microseconds(value, field)
+    if microseconds is not None and microseconds < 0:
+        raise FastF1NormalizationError(f"{field} must not be negative")
+    return microseconds
+
+
+def _microseconds(value: Any, field: str) -> int | None:
     if _is_missing(value):
         return None
 
@@ -662,8 +683,6 @@ def _optional_duration_us(value: Any, field: str) -> int | None:
     else:
         raise FastF1NormalizationError(f"{field} must be a timedelta")
 
-    if microseconds < 0:
-        raise FastF1NormalizationError(f"{field} must not be negative")
     return microseconds
 
 

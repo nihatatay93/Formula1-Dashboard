@@ -139,3 +139,37 @@ def test_deferred_event_membership_is_snapshot_indexed() -> None:
         "ix_deferred_season_events_season_year_discovered_at_round_number"
         in {index.name for index in table.indexes}
     )
+
+
+def test_session_relative_instants_are_not_constrained_nonnegative() -> None:
+    """A car can be on track before a session's clock reaches zero.
+
+    FastF1 measures these columns from the official session start, so a lap
+    begun earlier carries a negative offset. Durations beside them keep their
+    floor, because nothing takes less than no time.
+    """
+    laps = Base.metadata.tables["laps"]
+    constrained = {
+        constraint.name
+        for constraint in laps.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    for instant in (
+        "session_time_us",
+        "lap_start_time_us",
+        "pit_in_time_us",
+        "pit_out_time_us",
+        "sector_1_session_time_us",
+        "sector_2_session_time_us",
+        "sector_3_session_time_us",
+    ):
+        assert f"ck_laps_{instant}_nonnegative" not in constrained
+
+    for duration in (
+        "lap_time_us",
+        "sector_1_time_us",
+        "sector_2_time_us",
+        "sector_3_time_us",
+    ):
+        assert f"ck_laps_{duration}_nonnegative" in constrained
