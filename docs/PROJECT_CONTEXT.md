@@ -2634,6 +2634,13 @@ mounted writable at `/live-sessions`.
 
 ## Change Log
 
+- 2026-08-22 — Repaired season discovery during a live race weekend. Two
+  faults compounded: an event whose session metadata upstream had not yet
+  published failed the whole season's backfill with a 503, and FastF1's
+  parsed-result cache never expires, so a season index read in July hid every
+  event confirmed after it. The index is now read live and an unpublished
+  event defers instead of failing. The 2026 Dutch Grand Prix was invisible to
+  the archive while it was running; it now ingests.
 - 2026-08-17 — Finished the frontend evolution plan: a scope bar that changes
   season and session without leaving the view, three shared view states, a
   render-error boundary per view, CSV export, and a density toggle. Raised

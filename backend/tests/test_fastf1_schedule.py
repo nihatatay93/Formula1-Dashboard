@@ -679,3 +679,133 @@ def test_factory_uses_environment_cache_path(
     loader = create_fastf1_schedule_loader()
 
     assert loader.cache_path == cache_path
+
+
+def test_loader_defers_an_event_upstream_has_not_published_yet(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A race weekend in progress must not fail the whole season.
+
+    Once an event's first session has started it is no longer future-dated, so
+    the loader tries to fetch its exact session metadata. Upstream publishes
+    that only after the fact, and the gap between the two made every 2026
+    backfill answer 503 while the Dutch Grand Prix was running.
+    """
+    monkeypatch.setattr(
+        fastf1_loader.fastf1.Cache,
+        "enable_cache",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1._api,
+        "season_schedule",
+        lambda _path: [meeting(1, name="Bahrain Grand Prix")],
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1,
+        "get_event_schedule",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            [
+                {"RoundNumber": 1, "EventName": "Bahrain Grand Prix"},
+                {
+                    "RoundNumber": 2,
+                    "EventName": "Dutch Grand Prix",
+                    "Session1": "Practice 1",
+                    "Session1DateUtc": pd.Timestamp("2024-03-08T10:30:00"),
+                    "Session2": "Qualifying",
+                    "Session2DateUtc": pd.Timestamp("2024-03-09T14:00:00"),
+                },
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1,
+        "get_session",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            api_path="/static/2024/zandvoort/Practice_1/"
+        ),
+    )
+
+    def session_info(_path: str) -> dict[str, object]:
+        raise fastf1_schedule.SessionNotAvailableError(
+            "No data for this session!"
+        )
+
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1._api,
+        "session_info",
+        session_info,
+    )
+
+    # The weekend has already begun, so the event is not future-dated and
+    # cannot be deferred by the ordinary rule.
+    loader = FastF1ScheduleLoader(
+        tmp_path / "cache",
+        now_provider=lambda: datetime(2024, 3, 8, 12, 0, tzinfo=UTC),
+    )
+    loaded = loader.load(2024)
+
+    assert [event.event_name for event in loaded.events] == [
+        "Bahrain Grand Prix",
+    ]
+    assert [
+        (event.round_number, event.event_name)
+        for event in loaded.deferred_future_events
+    ] == [(2, "Dutch Grand Prix")]
+
+
+def test_loader_reads_the_season_index_without_fastf1_caching(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The index grows during a season, and FastF1 caches it forever.
+
+    ``Cache._data_ok_for_use`` checks a version number and never an age, so a
+    season index parsed in July is reused for the rest of the year. Every event
+    confirmed after that point stays invisible, which is what hid the Dutch
+    Grand Prix from this archive while it was already running.
+    """
+    monkeypatch.setattr(
+        fastf1_loader.fastf1.Cache,
+        "enable_cache",
+        lambda *_args, **_kwargs: None,
+    )
+
+    disabled_during: list[bool] = []
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1.Cache,
+        "set_disabled",
+        lambda: setattr(fastf1_schedule.fastf1.Cache, "_tmp_disabled", True),
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1.Cache,
+        "set_enabled",
+        lambda: setattr(fastf1_schedule.fastf1.Cache, "_tmp_disabled", False),
+    )
+
+    def season_schedule(_path: str) -> list[dict[str, object]]:
+        disabled_during.append(
+            bool(getattr(fastf1_schedule.fastf1.Cache, "_tmp_disabled", False))
+        )
+        return [meeting(1)]
+
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1._api,
+        "season_schedule",
+        season_schedule,
+    )
+    monkeypatch.setattr(
+        fastf1_schedule.fastf1,
+        "get_event_schedule",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            [{"RoundNumber": 1, "EventName": "Bahrain Grand Prix"}]
+        ),
+    )
+
+    FastF1ScheduleLoader(tmp_path / "cache").load(2024)
+
+    assert disabled_during == [True], "the index was served from a cache"
+    # Caching is restored for everything else, which does not change once
+    # published and is expensive to refetch.
+    assert getattr(fastf1_schedule.fastf1.Cache, "_tmp_disabled", False) is False

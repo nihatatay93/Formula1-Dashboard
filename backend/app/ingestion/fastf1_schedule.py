@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from numbers import Integral
@@ -11,6 +12,7 @@ from typing import Protocol
 
 import fastf1
 import pandas as pd
+from fastf1._api import SessionNotAvailableError
 
 from app.ingestion.fastf1_loader import (
     MINIMUM_ARCHIVE_YEAR,
@@ -91,6 +93,31 @@ _CANONICAL_SESSION_KEYS = {
 }
 
 
+@contextmanager
+def _live_schedule_reads() -> Iterator[None]:
+    """Read the season index without FastF1's caches for the duration.
+
+    FastF1's parsed-result cache never expires -- ``_data_ok_for_use`` checks a
+    version number and nothing else -- so a season index written once is reused
+    for the rest of the year. The index is the one upstream resource that grows
+    as a season runs: events are appended as their timing is confirmed. A copy
+    cached in July therefore hides every event added since, which is how the
+    Dutch Grand Prix stayed invisible to this archive while it was running.
+
+    The schedule is only read when the freshness policy calls for a coverage
+    refresh, so reading it live costs a handful of requests rather than one per
+    call, and the request budget still accounts for them.
+    """
+
+    previously_disabled = bool(getattr(fastf1.Cache, "_tmp_disabled", False))
+    fastf1.Cache.set_disabled()
+    try:
+        yield
+    finally:
+        if not previously_disabled:
+            fastf1.Cache.set_enabled()
+
+
 class FastF1ScheduleLoader:
     """Load one championship schedule through FastF1's serialized cache."""
 
@@ -117,14 +144,15 @@ class FastF1ScheduleLoader:
         # and round numbers; exact timing metadata fills any missing event.
         with serialized_fastf1_access(self._cache_client):
             try:
-                meetings = fastf1._api.season_schedule(
-                    f"/static/{season_year}/"
-                )
-                public_schedule = fastf1.get_event_schedule(
-                    season_year,
-                    include_testing=False,
-                    backend="fastf1",
-                )
+                with _live_schedule_reads():
+                    meetings = fastf1._api.season_schedule(
+                        f"/static/{season_year}/"
+                    )
+                    public_schedule = fastf1.get_event_schedule(
+                        season_year,
+                        include_testing=False,
+                        backend="fastf1",
+                    )
             except FastF1RequestBudgetExhaustedError:
                 raise
             except Exception as error:
@@ -165,6 +193,17 @@ class FastF1ScheduleLoader:
                     raise
                 except FastF1ScheduleNormalizationError:
                     raise
+                except SessionNotAvailableError:
+                    # The weekend has started but upstream has not published
+                    # this event's session metadata yet. That is an ordinary
+                    # state during a live race weekend, not a broken schedule,
+                    # and it must not fail the whole season: before this, the
+                    # Dutch Grand Prix going green made every 2026 backfill
+                    # answer 503.
+                    deferred_future_events.append(
+                        _curated_event_awaiting_timing(event=missing_event)
+                    )
+                    continue
                 except Exception as error:
                     event_name = _required_text(
                         missing_event.get("EventName"),
@@ -588,6 +627,45 @@ def _deferred_current_season_event(
         round_number=round_number,
         event_name=event_name,
         scheduled_start_at=scheduled_start_at,
+    )
+
+
+def _curated_event_awaiting_timing(
+    *,
+    event: pd.Series,
+) -> DeferredFutureEvent:
+    """Describe a curated event whose exact session metadata is not published.
+
+    Same shape as a deferred future event, without the future-dated test: this
+    is reached when an event has already begun and upstream still has nothing
+    for it, which is normal during a race weekend.
+    """
+
+    event_name = _required_text(
+        event.get("EventName"),
+        "curated event EventName",
+    )
+    session_starts = tuple(
+        _curated_utc_session_start(
+            event,
+            index=index,
+            event_name=event_name,
+        )
+        for index in range(1, 6)
+        if _optional_text(event.get(f"Session{index}")) is not None
+    )
+    if not session_starts:
+        raise FastF1ScheduleNormalizationError(
+            f"curated event {event_name!r} has no usable session starts"
+        )
+
+    return DeferredFutureEvent(
+        round_number=_positive_integer(
+            event.get("RoundNumber"),
+            "curated event RoundNumber",
+        ),
+        event_name=event_name,
+        scheduled_start_at=min(session_starts),
     )
 
 
