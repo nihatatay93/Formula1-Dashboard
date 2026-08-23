@@ -2658,6 +2658,19 @@ has run during a real session.
   messages, not the track status.
 - A red flag on lap 2 reported `track_status_code` 5 and `session_status`
   "Aborted", confirming the constant the pit-lane rule keys on.
+- Peak sustained traffic was 272 frames in fifteen seconds, about 1088 a
+  minute, during the opening laps.
+
+**Editing backend code during a live session destroys the capture.** The dev
+API runs under `uvicorn --reload`, and the collector lives in the application
+process, so a reload tears it down, resets its counters and drops every
+subscribed websocket. It does not come back on its own; something has to POST
+`/live/session` again. This happened three times during the Dutch Grand Prix
+race before the cause was identified, twice from nothing more than appending a
+test case, because the default reload watch covers the whole working directory.
+The watch is now narrowed to `app`, which stops test edits from doing it, but
+an edit under `backend/app` still will. Do not edit backend code while a
+session is being collected.
 
 ## Change Log
 

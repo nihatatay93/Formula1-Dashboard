@@ -44,6 +44,11 @@ services:
   api:
     build:
       context: ./backend
+    # Reload watches `app` only. The default is the whole working directory,
+    # which includes `tests`, so appending a test case restarted the process --
+    # and a restart destroys any live-timing session in progress, because the
+    # collector lives in the application. That cost part of a real race
+    # capture, so the watch is narrowed to the code the API actually serves.
     command:
       [
         "/opt/venv/bin/uvicorn",
@@ -53,6 +58,8 @@ services:
         "--port",
         "8000",
         "--reload",
+        "--reload-dir",
+        "app",
       ]
     environment:
       DATABASE_URL: postgresql://formula1_dashboard:${POSTGRES_PASSWORD:-formula1_dashboard_dev}@db:5432/formula1_dashboard
