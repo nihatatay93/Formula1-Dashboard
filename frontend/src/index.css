@@ -5322,13 +5322,24 @@ th,
   font-weight: 600;
 }
 
+/* Ten rows, then scroll. Both these lists grow for the whole session -- a
+   radio message every few minutes, a stop for every car -- and left alone they
+   push everything below them off the page. The row heights are measured from
+   the rendered lists rather than guessed. */
 .live-radio {
+  --visible-rows: 10;
+  --row-height: 2.75rem;
+
   display: flex;
   flex-direction: column;
   gap: var(--s1);
+  max-height: calc(var(--visible-rows) * var(--row-height));
   margin: 0;
   padding: 0;
   list-style: none;
+  overflow-y: auto;
+  /* Reaching the end of the list must not start scrolling the page. */
+  overscroll-behavior: contain;
 }
 
 .live-radio li {
@@ -5617,12 +5628,18 @@ th,
    -------------------------------------------------------------------------- */
 
 .live-pits {
+  --visible-rows: 10;
+  --row-height: 1.8rem;
+
   display: flex;
   flex-direction: column;
   gap: var(--s1);
+  max-height: calc(var(--visible-rows) * var(--row-height));
   margin: 0;
   padding: 0;
   list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .live-pits li {
@@ -5693,4 +5710,23 @@ th,
   color: var(--muted-dark);
   font-size: var(--t-micro);
   line-height: 1.6;
+}
+
+/* A scrollable list has to be reachable by keyboard, or its overflow is only
+   readable with a pointer. */
+.live-radio:focus-visible,
+.live-pits:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+}
+
+.live-radio::-webkit-scrollbar,
+.live-pits::-webkit-scrollbar {
+  width: 6px;
+}
+
+.live-radio::-webkit-scrollbar-thumb,
+.live-pits::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--line-strong);
 }

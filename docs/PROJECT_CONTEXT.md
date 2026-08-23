@@ -2706,6 +2706,13 @@ Two exclusions, both structural rather than thresholds:
   the pit lane before a race; timing from the moment collection happened to
   start produced a six-second stop, quicker than any pit lane can be driven.
 
+Durations use the feed's own timestamps, not when frames arrived. Replaying the
+recorded race at 120x turned twenty-second stops into two-tenths, because
+arrival time measures how fast the frames reached us rather than how long the
+car took. The feed stamps 99.96% of `TimingData` frames; arrival time is the
+fallback for the rest. Replay is what exposed this, and is worth reaching for
+whenever a live figure looks plausible but unverified.
+
 Run over the whole recorded race, the tracker yields thirty-six stops from
 14.0 to 60.9 seconds. This is pit-*lane* time, entry to exit, timed at this
 end rather than by the circuit's loops, and it is not the stationary figure a
@@ -2725,6 +2732,12 @@ than one naming the quickest it can see.
 It is distinct from `last_lap_overall_best`, which is true only while that very
 lap is the latest the driver set. The board carries the holder and the row
 carries a flag, so the marker survives the driver setting a slower lap after.
+
+Both the pit-stop and team-radio lists show ten rows and scroll beyond that.
+They grow for a whole session -- a stop for every car, a message every few
+minutes -- and uncapped they pushed the panels below them off the page. Each
+list takes focus so its overflow is reachable by keyboard, and the totals stay
+in the headings so the count is visible even when the rows are not.
 
 ### Team radio, and what the feed does not carry
 

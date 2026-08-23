@@ -420,9 +420,9 @@ export default function LiveBoard({ board }: { board: Board }) {
         {/* Optional chain on the field, not just the board: a deployment
             serving an older contract has no `team_radio`, and reading
             `.length` off it would blank the whole live view. */}
-        {(board.pit_stops?.length ?? 0) > 0 ? (
-          <LivePitStops stops={board.pit_stops} />
-        ) : null}
+        {/* Always shown. The panel carries its own empty state, and hiding
+            it left a reader looking for a section that was not there. */}
+        <LivePitStops stops={board.pit_stops ?? []} />
 
         {board.benchmarks ? (
           <LiveBenchmarksPanel benchmarks={board.benchmarks} />

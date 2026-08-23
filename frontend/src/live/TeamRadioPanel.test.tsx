@@ -92,6 +92,22 @@ describe("TeamRadioPanel", () => {
     );
   });
 
+  it("keeps a long list reachable without a pointer", () => {
+    // The list is capped at ten rows and scrolls past that. A scroll container
+    // that cannot take focus hides its overflow from keyboard users.
+    const many = Array.from({ length: 14 }, (_, index) =>
+      clip({ audio_url: `https://example.test/${index}.mp3` }),
+    );
+    const { container } = render(<TeamRadioPanel clips={many} />);
+
+    const list = container.querySelector(".live-radio");
+    expect(list).toHaveAttribute("tabindex", "0");
+    expect(list).toHaveAttribute("aria-label", "Team radio, 14 messages");
+    // The count stays in the heading, so the total is visible even when the
+    // rows below the cap are not.
+    expect(screen.getByText("14")).toBeVisible();
+  });
+
   it("names the driver for a screen reader, not only the code", () => {
     render(<TeamRadioPanel clips={[clip()]} />);
 

@@ -19,7 +19,9 @@ export default function LivePitStops({ stops }: { stops: LivePitStop[] }) {
       <section className="live-board__panel">
         <h4>Pit stops</h4>
         <p className="session-explorer__hint">
-          No stop has been completed yet.
+          No completed stop yet. A stop is timed from the car entering the pit
+          lane to leaving it, so one appears here once a car has done both
+          since this session started being collected.
         </p>
       </section>
     );
@@ -32,7 +34,11 @@ export default function LivePitStops({ stops }: { stops: LivePitStop[] }) {
       <h4>
         Pit stops <span className="live-radio__count">{stops.length}</span>
       </h4>
-      <ol className="live-pits">
+      <ol
+        aria-label={`Pit stops, ${stops.length} completed, quickest first`}
+        className="live-pits"
+        tabIndex={0}
+      >
         {stops.map((stop, index) => (
           <li key={`${stop.racing_number}-${stop.lap_number}-${index}`}>
             <span className="live-pits__rank">{index + 1}</span>

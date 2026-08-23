@@ -174,3 +174,41 @@ def test_a_later_real_stop_is_still_timed_after_a_snapshot_entry() -> None:
     )
 
     assert [stop.seconds for stop in tracker.stops()] == [19.4]
+
+
+def test_a_stop_is_timed_on_the_feed_clock_not_on_arrival() -> None:
+    """Arrival time is a different clock from the session's.
+
+    A replay delivers a recorded session faster than it happened, which turned
+    twenty-second stops into two-tenths when this timed on arrival. The feed
+    stamps its own frames, and that is what a duration has to measure.
+    """
+    tracker = PitStopTracker()
+    tracker.observe(
+        frame("44", True),
+        received_at=START,
+        feed_timestamp=START,
+        session_status="Started",
+    )
+    tracker.observe(
+        frame("44", False),
+        # Arrived a fifth of a second later; happened eighteen seconds later.
+        received_at=START + timedelta(seconds=0.2),
+        feed_timestamp=START + timedelta(seconds=18.6),
+        session_status="Started",
+    )
+
+    assert [stop.seconds for stop in tracker.stops()] == [18.6]
+
+
+def test_arrival_time_is_used_when_the_feed_sends_no_stamp() -> None:
+    # A small share of frames carry none; they still have to be timed.
+    tracker = PitStopTracker()
+    tracker.observe(frame("5", True), received_at=START, session_status="Started")
+    tracker.observe(
+        frame("5", False),
+        received_at=START + timedelta(seconds=17.1),
+        session_status="Started",
+    )
+
+    assert [stop.seconds for stop in tracker.stops()] == [17.1]

@@ -393,6 +393,7 @@ class LiveCollector:
             self._pit_stops.observe(
                 frame.payload,
                 received_at=frame.received_at,
+                feed_timestamp=frame.feed_timestamp,
                 session_status=self._session_status(),
                 initial=frame.initial,
             )

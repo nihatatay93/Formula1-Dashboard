@@ -70,7 +70,12 @@ export default function TeamRadioPanel({
         ref={player}
       />
 
-      <ol className="live-radio">
+      <ol
+        aria-label={`Team radio, ${clips.length} message${clips.length === 1 ? "" : "s"}`}
+        className="live-radio"
+        // Focusable so the overflow is reachable without a pointer.
+        tabIndex={0}
+      >
         {clips.map((clip) => {
           const isPlaying = playing === clip.audio_url;
           const name = clip.display_name || clip.tla || clip.racing_number;

@@ -319,6 +319,34 @@ describe("LiveTiming", () => {
     expect(rows[1]).toContain("+1.9");
   });
 
+  it("keeps a long pit list capped and reachable", async () => {
+    const many = board();
+    (many as { pit_stops: unknown[] }).pit_stops = Array.from(
+      { length: 24 },
+      (_, index) => ({
+        racing_number: String(index + 1),
+        tla: `D${index + 1}`,
+        display_name: `Driver ${index + 1}`,
+        team_colour: "F47600",
+        seconds: 14 + index * 0.4,
+        lap_number: 20 + index,
+      }),
+    );
+
+    await openBoard(many);
+    await screen.findByText("Pit stops");
+
+    const list = document.querySelector(".live-pits");
+    expect(list).toHaveAttribute("tabindex", "0");
+    expect(list).toHaveAttribute(
+      "aria-label",
+      "Pit stops, 24 completed, quickest first",
+    );
+    // Every row is still in the document; the cap is visual, so nothing is
+    // hidden from a screen reader or from find-in-page.
+    expect(list?.querySelectorAll("li")).toHaveLength(24);
+  });
+
   it("says the pit figure is lane time, not the televised stop time", async () => {
     await openBoard();
 
@@ -329,14 +357,18 @@ describe("LiveTiming", () => {
     ).toBeVisible();
   });
 
-  it("survives a board with no pit stops field", async () => {
+  it("explains an empty pit-stop list rather than hiding it", async () => {
+    // Hiding the panel when there is nothing in it left a reader hunting for
+    // a section that was not there. A board on an older contract with no
+    // field at all must behave the same way.
     const bare = board();
     delete (bare as { pit_stops?: unknown }).pit_stops;
 
     await openBoard(bare);
 
     expect(await screen.findByText("NOR")).toBeVisible();
-    expect(screen.queryByText("Pit stops")).toBeNull();
+    expect(screen.getByText("Pit stops")).toBeVisible();
+    expect(screen.getByText(/No completed stop yet/)).toBeVisible();
   });
 
   it("reads track conditions with their units", async () => {

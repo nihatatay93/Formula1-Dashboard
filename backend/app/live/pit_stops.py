@@ -12,9 +12,14 @@ sat in the lane for minutes and every one of those visits spanned a change of
 session status. That is the exclusion this uses: a visit that outlives the
 session state it began in was not a racing stop.
 
-This is pit-*lane* time, entry to exit, and it is timed at this end rather than
-by the circuit's own loops. It is not the stationary figure a broadcast quotes,
-which is roughly twenty seconds shorter.
+Durations come from the feed's own timestamps rather than when frames arrived
+here. Arrival time is not the same clock: a replay delivers a session faster
+than it happened, which turned twenty-second stops into two-tenths, and live
+capture has jitter of its own. The feed stamps 99.96% of `TimingData` frames,
+and where it does not, arrival time is the fallback.
+
+This is pit-*lane* time, entry to exit, and it is not the stationary figure a
+broadcast quotes, which is roughly twenty seconds shorter.
 
 State lives here rather than in the merged topic view for the same reason
 position history does: the view holds only what the feed last said, and a
@@ -66,6 +71,7 @@ class PitStopTracker:
         payload: object,
         *,
         received_at: datetime,
+        feed_timestamp: datetime | None = None,
         session_status: str = "",
         initial: bool = False,
         laps: Mapping[str, int | None] | None = None,
@@ -85,6 +91,10 @@ class PitStopTracker:
         if not isinstance(lines, Mapping):
             return
 
+        # The feed's clock where it gives one, so a duration measures the
+        # session rather than how fast the frames reached us.
+        moment = feed_timestamp or received_at
+
         for number, line in lines.items():
             if not isinstance(line, Mapping) or "InPit" not in line:
                 continue
@@ -94,7 +104,7 @@ class PitStopTracker:
                 # never left, so the earlier moment is not the start of
                 # anything that finished.
                 self._open[str(number)] = _Visit(
-                    started_at=received_at,
+                    started_at=moment,
                     session_status=session_status,
                     lap_number=(laps or {}).get(str(number)),
                     observed_entry=not initial,
@@ -105,7 +115,7 @@ class PitStopTracker:
             visit = self._open.pop(str(number), None)
             if visit is None or not visit.observed_entry:
                 continue
-            elapsed = received_at - visit.started_at
+            elapsed = moment - visit.started_at
             if elapsed <= timedelta(0) or elapsed >= self._limit:
                 continue
             if session_status and visit.session_status != session_status:
