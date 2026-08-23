@@ -28,6 +28,7 @@ from app.live.frames import (
     LiveFrameRejectedError,
     normalize_frame,
 )
+from app.live.pit_stops import PitStopTracker
 from app.live.policy import LiveTimingSettings, calculate_reconnect_delay
 from app.live.positions import PositionTracker
 from app.live.session_log import LiveSessionLog, build_log_path
@@ -202,6 +203,7 @@ class LiveCollector:
         )
         self._subscribers: set[asyncio.Queue[Mapping[str, object]]] = set()
         self._positions = PositionTracker()
+        self._pit_stops = PitStopTracker()
 
     def _build_log_path(self) -> Path:
         identity = self._identity
@@ -228,6 +230,21 @@ class LiveCollector:
     @property
     def view(self) -> LiveCurrentView:
         return self._view
+
+    @property
+    def pit_stops(self) -> PitStopTracker:
+        return self._pit_stops
+
+    def _session_status(self) -> str:
+        """The session's current state, for deciding what counts as a stop."""
+
+        state = self._view.topics.get("SessionStatus")
+        payload = getattr(state, "payload", None)
+        if isinstance(payload, Mapping):
+            status = payload.get("Status")
+            if isinstance(status, str):
+                return status
+        return ""
 
     @property
     def positions(self) -> PositionTracker:
@@ -371,6 +388,14 @@ class LiveCollector:
             # arrive rather than derived from the merged view, which only ever
             # holds what the feed last said.
             self._positions.observe(frame.payload, received_at=frame.received_at)
+            # A pit visit that outlives the session state it began in was not a
+            # racing stop, so the tracker is told which state this frame is in.
+            self._pit_stops.observe(
+                frame.payload,
+                received_at=frame.received_at,
+                session_status=self._session_status(),
+                initial=frame.initial,
+            )
         self._record(frame)
         self._publish(frame)
 

@@ -210,6 +210,24 @@ function board(overrides: Record<string, unknown> = {}) {
     race_control: [
       { utc: "2026-07-26T14:45:40", category: "Flag", message: "GREEN LIGHT", lap: 1, flag: "GREEN" },
     ],
+    pit_stops: [
+      {
+        racing_number: "43",
+        tla: "COL",
+        display_name: "Franco COLAPINTO",
+        team_colour: "00A1E8",
+        seconds: 14.8,
+        lap_number: 31,
+      },
+      {
+        racing_number: "23",
+        tla: "ALB",
+        display_name: "Alexander ALBON",
+        team_colour: "1868DB",
+        seconds: 16.7,
+        lap_number: 33,
+      },
+    ],
     benchmarks: {
       // Deliberately not the row fixture's driver: a query for that code
       // must not match a side panel as well as the leaderboard.
@@ -284,6 +302,41 @@ describe("LiveTiming", () => {
     const strips = document.querySelector(".live-board__minisectors");
     expect(strips?.querySelectorAll(".live-segments")).toHaveLength(3);
     expect(strips?.querySelectorAll(".live-segments--empty")).toHaveLength(2);
+  });
+
+  it("ranks pit stops quickest first with the gap to the best", async () => {
+    await openBoard();
+    await screen.findByText("Pit stops");
+
+    const rows = [...document.querySelectorAll(".live-pits li")].map((li) =>
+      li.textContent?.replace(/\s+/g, " ").trim(),
+    );
+
+    expect(rows[0]).toContain("COL");
+    expect(rows[0]).toContain("14.8s");
+    // The second is shown against the quickest, not in isolation.
+    expect(rows[1]).toContain("16.7s");
+    expect(rows[1]).toContain("+1.9");
+  });
+
+  it("says the pit figure is lane time, not the televised stop time", async () => {
+    await openBoard();
+
+    // Roughly twenty seconds separates the two, so a reader who assumes the
+    // wrong one is badly wrong.
+    expect(
+      await screen.findByText(/Not the stationary time quoted on television/),
+    ).toBeVisible();
+  });
+
+  it("survives a board with no pit stops field", async () => {
+    const bare = board();
+    delete (bare as { pit_stops?: unknown }).pit_stops;
+
+    await openBoard(bare);
+
+    expect(await screen.findByText("NOR")).toBeVisible();
+    expect(screen.queryByText("Pit stops")).toBeNull();
   });
 
   it("reads track conditions with their units", async () => {

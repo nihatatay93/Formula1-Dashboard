@@ -5611,3 +5611,86 @@ th,
     gap: var(--s1) var(--s3);
   }
 }
+
+/* --------------------------------------------------------------------------
+   Live pit stops
+   -------------------------------------------------------------------------- */
+
+.live-pits {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.live-pits li {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+  padding: var(--s1) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.live-pits li:last-child {
+  border-bottom: 0;
+}
+
+.live-pits__rank {
+  flex: none;
+  width: 1.2rem;
+  color: var(--muted-dark);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+}
+
+.live-pits__swatch {
+  flex: none;
+  width: 3px;
+  height: 1.2rem;
+  border-radius: 999px;
+}
+
+.live-pits__driver {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  font-weight: 700;
+}
+
+.live-pits__lap {
+  color: var(--muted-dark);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+}
+
+.live-pits__time {
+  display: inline-flex;
+  gap: var(--s1);
+  align-items: baseline;
+  margin-left: auto;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  font-weight: 700;
+}
+
+.live-pits__time small {
+  color: var(--muted);
+  font-size: var(--t-micro);
+  font-weight: 500;
+}
+
+.live-pits li:first-child .live-pits__time {
+  color: var(--tyre-intermediate);
+}
+
+.live-pits__caveat {
+  margin: var(--s3) 0 0;
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line);
+  color: var(--muted-dark);
+  font-size: var(--t-micro);
+  line-height: 1.6;
+}

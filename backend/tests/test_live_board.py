@@ -665,3 +665,59 @@ def test_stints_read_as_runs_on_one_set_of_tyres() -> None:
         ("MEDIUM", 2, 2, True),
         ("SOFT", 9, 22, False),
     ]
+
+
+def test_the_board_accepts_the_arguments_the_stream_passes() -> None:
+    """The websocket calls this with both trackers.
+
+    Nothing else in these tests passes `pit_stops`, so a signature that had not
+    been updated still satisfied them while every live board request failed
+    with a TypeError. This calls it the way the stream does.
+    """
+    from app.live.pit_stops import PitStop
+    from app.live.positions import PositionTracker
+
+    stop = PitStop(
+        racing_number="43",
+        seconds=14.8,
+        lap_number=31,
+        entered_at=datetime(2026, 8, 23, 13, 40, tzinfo=UTC),
+    )
+    board = build_board(
+        {"DriverList": {"43": {"RacingNumber": "43", "Tla": "COL"}}},
+        positions=PositionTracker(),
+        pit_stops=(stop,),
+    )
+
+    assert [(s.tla, s.seconds, s.lap_number) for s in board.pit_stops] == [
+        ("COL", 14.8, 31)
+    ]
+
+
+def test_pit_stops_reach_the_serialised_board() -> None:
+    from app.live.pit_stops import PitStop
+
+    payload = board_to_dict(
+        build_board(
+            {"DriverList": {"43": {"RacingNumber": "43", "Tla": "COL"}}},
+            pit_stops=(
+                PitStop(
+                    racing_number="43",
+                    seconds=14.8,
+                    lap_number=31,
+                    entered_at=datetime(2026, 8, 23, 13, 40, tzinfo=UTC),
+                ),
+            ),
+        )
+    )
+
+    assert payload["pit_stops"] == [
+        {
+            "racing_number": "43",
+            "tla": "COL",
+            "display_name": "",
+            "team_colour": "",
+            "seconds": 14.8,
+            "lap_number": 31,
+        }
+    ]

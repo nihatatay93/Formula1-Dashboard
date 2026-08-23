@@ -2687,6 +2687,31 @@ leaning on the sector cell's title, which is what it did when nested inside it.
 on and how many laps it has covered, which is where the live stint bars come
 from. `New` arrives as the strings "true" and "false", not booleans.
 
+### Live pit-stop times
+
+The feed carries no pit duration. `InPit` is a boolean and
+`PitLaneTimeCollection` arrived empty throughout the 2026 Dutch Grand Prix, so
+a stop is timed from the flag turning on to turning off, in `PitStopTracker`.
+Measured that way once that race was running, twenty-three stops fell between
+14.8 and 19.4 seconds with nothing outside, which is the shape a real pit lane
+produces.
+
+Two exclusions, both structural rather than thresholds:
+
+- A visit that outlives the session status it began in was not a racing stop.
+  Cars sat in the lane through the red flag for two and three minutes, and
+  every one of those visits spanned a change of status.
+- A car already in the lane on a snapshot is never timed. The feed reports
+  current state on connect and on every reconnect, and the whole grid sits in
+  the pit lane before a race; timing from the moment collection happened to
+  start produced a six-second stop, quicker than any pit lane can be driven.
+
+Run over the whole recorded race, the tracker yields thirty-six stops from
+14.0 to 60.9 seconds. This is pit-*lane* time, entry to exit, timed at this
+end rather than by the circuit's loops, and it is not the stationary figure a
+broadcast quotes. Like the position baseline, the history is per collector: a
+restart loses the stops recorded before it.
+
 ### Who holds the fastest lap
 
 `TimingStats.Lines[car].PersonalBestLapTime.Position` ranks each driver's best

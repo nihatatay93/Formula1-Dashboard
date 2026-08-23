@@ -673,6 +673,16 @@ export interface LiveRaceControlMessage {
 }
 
 /** Display-ready board, normalised server-side from the raw feed topics. */
+export interface LivePitStop {
+  racing_number: string;
+  tla: string;
+  display_name: string;
+  team_colour: string;
+  /** Seconds in the pit lane, entry to exit. Not the stationary figure. */
+  seconds: number;
+  lap_number: number | null;
+}
+
 export interface LiveSectorBest {
   sector: number;
   value: string;
@@ -730,6 +740,7 @@ export interface LiveBoard {
   team_radio: LiveTeamRadioClip[];
   fastest_lap: LiveFastestLap | null;
   benchmarks: LiveBenchmarks | null;
+  pit_stops: LivePitStop[];
 }
 
 export interface LiveTopicState {

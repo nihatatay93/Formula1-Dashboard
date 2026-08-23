@@ -18,6 +18,7 @@ import type {
 
 import LiveBenchmarksPanel from "./LiveBenchmarks";
 import LiveConditions from "./LiveConditions";
+import LivePitStops from "./LivePitStops";
 import LiveStints from "./LiveStints";
 import TeamRadioPanel from "./TeamRadioPanel";
 
@@ -419,6 +420,10 @@ export default function LiveBoard({ board }: { board: Board }) {
         {/* Optional chain on the field, not just the board: a deployment
             serving an older contract has no `team_radio`, and reading
             `.length` off it would blank the whole live view. */}
+        {(board.pit_stops?.length ?? 0) > 0 ? (
+          <LivePitStops stops={board.pit_stops} />
+        ) : null}
+
         {board.benchmarks ? (
           <LiveBenchmarksPanel benchmarks={board.benchmarks} />
         ) : null}

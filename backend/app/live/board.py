@@ -118,6 +118,18 @@ class RaceControlMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class LivePitStop:
+    """One completed trip through the pit lane."""
+
+    racing_number: str
+    tla: str
+    display_name: str
+    team_colour: str
+    seconds: float
+    lap_number: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class SectorBest:
     """The quickest anyone has run one sector, and who ran it."""
 
@@ -198,6 +210,7 @@ class LiveBoard:
     team_radio: tuple[TeamRadioClip, ...] = ()
     fastest_lap: FastestLap | None = None
     benchmarks: Benchmarks | None = None
+    pit_stops: tuple[LivePitStop, ...] = ()
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -371,6 +384,31 @@ def _fastest_lap(
     )
 
 
+def _live_pit_stops(
+    stops: Sequence[Any],
+    *,
+    drivers: Mapping[str, Any],
+) -> tuple[LivePitStop, ...]:
+    """Completed pit-lane visits, already quickest first, named for a reader."""
+
+    built = []
+    for stop in stops:
+        number = str(getattr(stop, "racing_number", ""))
+        driver = _mapping(drivers.get(number))
+        built.append(
+            LivePitStop(
+                racing_number=_text(driver.get("RacingNumber")) or number,
+                tla=_text(driver.get("Tla")),
+                display_name=_text(driver.get("FullName"))
+                or _text(driver.get("BroadcastName")),
+                team_colour=_text(driver.get("TeamColour")),
+                seconds=float(getattr(stop, "seconds", 0.0)),
+                lap_number=getattr(stop, "lap_number", None),
+            )
+        )
+    return tuple(built)
+
+
 def _benchmarks(
     stats: Mapping[str, Any],
     *,
@@ -497,6 +535,7 @@ def build_board(
     topics: Mapping[str, Any],
     *,
     positions: PositionTracker | None = None,
+    pit_stops: Sequence[Any] | None = None,
     now: datetime | None = None,
 ) -> LiveBoard:
     """Build the board from merged topic payloads keyed by topic name.
@@ -603,6 +642,7 @@ def build_board(
         race_control=_race_control(_mapping(topics.get("RaceControlMessages"))),
         fastest_lap=fastest,
         benchmarks=benchmarks,
+        pit_stops=_live_pit_stops(pit_stops or (), drivers=drivers),
         team_radio=_team_radio(
             _mapping(topics.get("TeamRadio")),
             session_path=_text(session.get("Path")),
@@ -696,6 +736,17 @@ def board_to_dict(board: LiveBoard) -> dict[str, Any]:
             "lap_time": board.fastest_lap.lap_time,
             "lap_number": board.fastest_lap.lap_number,
         },
+        "pit_stops": [
+            {
+                "racing_number": stop.racing_number,
+                "tla": stop.tla,
+                "display_name": stop.display_name,
+                "team_colour": stop.team_colour,
+                "seconds": stop.seconds,
+                "lap_number": stop.lap_number,
+            }
+            for stop in board.pit_stops
+        ],
         "benchmarks": None
         if board.benchmarks is None
         else {

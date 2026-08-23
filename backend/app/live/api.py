@@ -418,6 +418,7 @@ async def stream_live_session(
                         for topic, state in collector.view.topics.items()
                     },
                     positions=collector.positions,
+                    pit_stops=collector.pit_stops.stops(),
                 )
             ),
         }
