@@ -2661,6 +2661,20 @@ has run during a real session.
 - Peak sustained traffic was 272 frames in fifteen seconds, about 1088 a
   minute, during the opening laps.
 
+### Who holds the fastest lap
+
+`TimingStats.Lines[car].PersonalBestLapTime.Position` ranks each driver's best
+lap against the field, so position 1 is the session's fastest. That marker was
+checked against the 2026 Dutch Grand Prix race and stayed unique through
+twenty-four changes of hands, from 3:18 on a wet track down to 1:15, so it is
+trusted rather than recomputed. A fallback picks the quickest recorded time if
+it is ever missing or shared, because a board naming two fastest laps is worse
+than one naming the quickest it can see.
+
+It is distinct from `last_lap_overall_best`, which is true only while that very
+lap is the latest the driver set. The board carries the holder and the row
+carries a flag, so the marker survives the driver setting a slower lap after.
+
 ### Team radio, and what the feed does not carry
 
 `TeamRadio` names one capture per driver: a car number, a moment, and a

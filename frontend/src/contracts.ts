@@ -648,6 +648,7 @@ export interface LiveDriverRow {
   last_lap: string;
   last_lap_personal_best: boolean;
   last_lap_overall_best: boolean;
+  holds_fastest_lap: boolean;
   best_lap: string;
   sectors: LiveSectorCell[];
   compound: string;
@@ -671,6 +672,15 @@ export interface LiveRaceControlMessage {
 }
 
 /** Display-ready board, normalised server-side from the raw feed topics. */
+export interface LiveFastestLap {
+  racing_number: string;
+  tla: string;
+  display_name: string;
+  team_colour: string;
+  lap_time: string;
+  lap_number: number | null;
+}
+
 export interface LiveTeamRadioClip {
   utc: string;
   racing_number: string;
@@ -697,6 +707,7 @@ export interface LiveBoard {
   drivers: LiveDriverRow[];
   race_control: LiveRaceControlMessage[];
   team_radio: LiveTeamRadioClip[];
+  fastest_lap: LiveFastestLap | null;
 }
 
 export interface LiveTopicState {

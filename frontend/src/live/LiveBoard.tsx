@@ -195,7 +195,18 @@ function DriverRow({ row, isRace }: { row: LiveDriverRow; isRace: boolean }) {
         <td className="live-board__gap">{row.gap_to_leader || "—"}</td>
       )}
       <td className={lapClass(row)}>{row.last_lap || "—"}</td>
-      <td className="live-board__lap">{row.best_lap || "—"}</td>
+      <td
+        className={`live-board__lap${
+          row.holds_fastest_lap ? " is-fastest" : ""
+        }`}
+      >
+        {row.holds_fastest_lap ? (
+          // Purple is the convention, but it is not the only carrier: the
+          // cell is labelled for anyone reading it without colour.
+          <span className="sr-only">Fastest lap of the session: </span>
+        ) : null}
+        {row.best_lap || "—"}
+      </td>
       <td>
         <div className="live-board__sectors">
           {row.sectors.length > 0
@@ -239,6 +250,27 @@ export default function LiveBoard({ board }: { board: Board }) {
           <h3>{board.session_name || board.session_type || "Live timing"}</h3>
         </div>
         <div className="live-board__meta">
+          {/* Truthiness, not `!== null`: a board without the field at all
+              would pass that test and then crash on `.tla`. */}
+          {board.fastest_lap ? (
+            <span
+              className="live-fastest"
+              title={
+                board.fastest_lap.lap_number !== null
+                  ? `Fastest lap of the session, set on lap ${board.fastest_lap.lap_number}`
+                  : "Fastest lap of the session"
+              }
+            >
+              <span aria-hidden="true" className="live-fastest__dot" />
+              Fastest{" "}
+              <strong>
+                {board.fastest_lap.tla || board.fastest_lap.display_name}
+              </strong>{" "}
+              <time className="live-fastest__time">
+                {board.fastest_lap.lap_time}
+              </time>
+            </span>
+          ) : null}
           {board.current_lap !== null ? (
             <span>
               Lap <strong>{board.current_lap}</strong>

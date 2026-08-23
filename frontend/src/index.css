@@ -5388,3 +5388,45 @@ th,
   color: var(--danger);
   font-size: var(--t-micro);
 }
+
+/* --------------------------------------------------------------------------
+   Fastest lap
+   -------------------------------------------------------------------------- */
+
+/* Purple is the sport's convention for the fastest lap. It is never the only
+   carrier: the cell also announces itself to a screen reader, and the header
+   names the driver in text. */
+.live-board__lap.is-fastest {
+  color: var(--tyre-soft);
+  color: #c77dff;
+  font-weight: 700;
+}
+
+.live-fastest {
+  display: inline-flex;
+  gap: var(--s1);
+  align-items: center;
+  padding: 0 var(--s2);
+  border: 1px solid rgb(199 125 255 / 45%);
+  border-radius: 999px;
+  background: rgb(199 125 255 / 12%);
+  color: var(--ink-dim);
+  font-size: var(--t-micro);
+  white-space: nowrap;
+}
+
+.live-fastest strong {
+  color: #c77dff;
+  font-family: var(--mono);
+}
+
+.live-fastest__dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: #c77dff;
+}
+
+.live-fastest__time {
+  font-family: var(--mono);
+}

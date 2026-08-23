@@ -167,6 +167,7 @@ function board(overrides: Record<string, unknown> = {}) {
         last_lap: "1:23.625",
         last_lap_personal_best: true,
         last_lap_overall_best: false,
+        holds_fastest_lap: false,
         best_lap: "1:22.491",
         sectors: [
           {
@@ -197,6 +198,16 @@ function board(overrides: Record<string, unknown> = {}) {
     race_control: [
       { utc: "2026-07-26T14:45:40", category: "Flag", message: "GREEN LIGHT", lap: 1, flag: "GREEN" },
     ],
+    fastest_lap: {
+      // Deliberately not the driver in the row fixture, so a query for that
+      // driver's code cannot match the header chip as well.
+      racing_number: "44",
+      tla: "HAM",
+      display_name: "Lewis HAMILTON",
+      team_colour: "ED1131",
+      lap_time: "1:15.566",
+      lap_number: 28,
+    },
     team_radio: [
       {
         utc: "2026-07-26T14:46:10Z",
@@ -215,6 +226,46 @@ function board(overrides: Record<string, unknown> = {}) {
 }
 
 describe("LiveTiming", () => {
+  it("marks who holds the fastest lap", async () => {
+    getLiveStatus.mockResolvedValue(activeStatus());
+
+    render(<LiveTiming />);
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    socket().open();
+    socket().emit({
+      type: "snapshot",
+      record_state: "unconfirmed_live",
+      session: null,
+      board: board(),
+    });
+
+    // Named in text, not signalled by colour alone.
+    expect(await screen.findByText("HAM")).toBeVisible();
+    expect(screen.getByText("1:15.566")).toBeVisible();
+  });
+
+  it("survives a board with no fastest lap field", async () => {
+    // `!== null` passes for a missing field and then reads `.tla` off it,
+    // which blanked the whole board the first time this was written.
+    const withoutFastest = board();
+    delete (withoutFastest as { fastest_lap?: unknown }).fastest_lap;
+    getLiveStatus.mockResolvedValue(activeStatus());
+
+    render(<LiveTiming />);
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    socket().open();
+    socket().emit({
+      type: "snapshot",
+      record_state: "unconfirmed_live",
+      session: null,
+      board: withoutFastest,
+    });
+
+    expect(await screen.findByText("NOR")).toBeVisible();
+  });
+
   it("survives a board with no team radio field", async () => {
     // A deployment on an older contract sends no `team_radio`. Reading
     // `.length` off it would blank the live view, which is the failure that

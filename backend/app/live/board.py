@@ -88,6 +88,10 @@ class DriverRow:
     last_lap: str
     last_lap_personal_best: bool
     last_lap_overall_best: bool
+    #: Whether this driver currently holds the session's fastest lap. Distinct
+    #: from ``last_lap_overall_best``, which is true only while that very lap
+    #: is the latest one they set.
+    holds_fastest_lap: bool
     best_lap: str
     sectors: tuple[SectorCell, ...]
     compound: str
@@ -109,6 +113,18 @@ class RaceControlMessage:
     message: str
     lap: int | None
     flag: str
+
+
+@dataclass(frozen=True, slots=True)
+class FastestLap:
+    """Who holds the session's fastest lap, and what it is."""
+
+    racing_number: str
+    tla: str
+    display_name: str
+    team_colour: str
+    lap_time: str
+    lap_number: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +161,7 @@ class LiveBoard:
     drivers: tuple[DriverRow, ...] = ()
     race_control: tuple[RaceControlMessage, ...] = ()
     team_radio: tuple[TeamRadioClip, ...] = ()
+    fastest_lap: FastestLap | None = None
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -271,6 +288,66 @@ def _race_control(payload: Mapping[str, Any]) -> tuple[RaceControlMessage, ...]:
     return tuple(reversed(built))[:MAX_RACE_CONTROL_MESSAGES]
 
 
+def _fastest_lap(
+    stats: Mapping[str, Any],
+    *,
+    drivers: Mapping[str, Any],
+) -> FastestLap | None:
+    """Who holds the session's fastest lap, from the feed's own marker.
+
+    ``PersonalBestLapTime.Position`` is the rank of that driver's best lap
+    against the field, so position 1 is the fastest lap of the session. Over
+    the 2026 Dutch Grand Prix race that marker stayed unique through
+    twenty-four changes of hands, from 3:18 on a wet track down to 1:15.
+
+    A fallback picks the quickest recorded time if the marker is ever missing
+    or shared, because a board that names two fastest laps is worse than one
+    that names the quickest it can see.
+    """
+
+    lines = _mapping(stats.get("Lines"))
+    marked: list[tuple[str, Mapping[str, Any]]] = []
+    timed: list[tuple[str, Mapping[str, Any]]] = []
+    for number, entry in lines.items():
+        best = _mapping(_mapping(entry).get("PersonalBestLapTime"))
+        if not _text(best.get("Value")):
+            continue
+        timed.append((number, best))
+        if _whole(best.get("Position")) == 1:
+            marked.append((number, best))
+
+    if len(marked) == 1:
+        number, best = marked[0]
+    elif timed:
+        number, best = min(timed, key=lambda item: _lap_time_sort_key(item[1]))
+    else:
+        return None
+
+    driver = _mapping(drivers.get(number))
+    return FastestLap(
+        racing_number=_text(driver.get("RacingNumber")) or number,
+        tla=_text(driver.get("Tla")),
+        display_name=_text(driver.get("FullName"))
+        or _text(driver.get("BroadcastName")),
+        team_colour=_text(driver.get("TeamColour")),
+        lap_time=_text(best.get("Value")),
+        lap_number=_whole(best.get("Lap")),
+    )
+
+
+def _lap_time_sort_key(best: Mapping[str, Any]) -> tuple[int, int, float]:
+    """Order "m:ss.sss" and "ss.sss" lap times without parsing failures."""
+
+    parts = _text(best.get("Value")).split(":")
+    try:
+        seconds = float(parts[-1])
+        minutes = int(parts[-2]) if len(parts) > 1 else 0
+    except ValueError:
+        # An unreadable time sorts last rather than crashing the board.
+        return (1, 0, 0.0)
+    return (0, minutes, seconds)
+
+
 def _team_radio(
     payload: Mapping[str, Any],
     *,
@@ -331,6 +408,7 @@ def build_board(
     timing = _mapping(topics.get("TimingData"))
     app_data = _mapping(_mapping(topics.get("TimingAppData")).get("Lines"))
     drivers = _mapping(topics.get("DriverList"))
+    fastest = _fastest_lap(_mapping(topics.get("TimingStats")), drivers=drivers)
 
     session_part = _whole(timing.get("SessionPart"))
     lines = _mapping(timing.get("Lines"))
@@ -370,6 +448,10 @@ def build_board(
                 last_lap=_text(last.get("Value")),
                 last_lap_personal_best=_flag(last.get("PersonalFastest")),
                 last_lap_overall_best=_flag(last.get("OverallFastest")),
+                holds_fastest_lap=(
+                    fastest is not None
+                    and fastest.racing_number == (_text(driver.get("RacingNumber")) or number)
+                ),
                 best_lap=_best_lap(line, session_part),
                 sectors=_sectors(line.get("Sectors")),
                 compound=compound,
@@ -408,6 +490,7 @@ def build_board(
         },
         drivers=tuple(rows),
         race_control=_race_control(_mapping(topics.get("RaceControlMessages"))),
+        fastest_lap=fastest,
         team_radio=_team_radio(
             _mapping(topics.get("TeamRadio")),
             session_path=_text(session.get("Path")),
@@ -448,6 +531,7 @@ def board_to_dict(board: LiveBoard) -> dict[str, Any]:
                 "last_lap": row.last_lap,
                 "last_lap_personal_best": row.last_lap_personal_best,
                 "last_lap_overall_best": row.last_lap_overall_best,
+                "holds_fastest_lap": row.holds_fastest_lap,
                 "best_lap": row.best_lap,
                 "sectors": [
                     {
@@ -481,6 +565,16 @@ def board_to_dict(board: LiveBoard) -> dict[str, Any]:
             }
             for item in board.race_control
         ],
+        "fastest_lap": None
+        if board.fastest_lap is None
+        else {
+            "racing_number": board.fastest_lap.racing_number,
+            "tla": board.fastest_lap.tla,
+            "display_name": board.fastest_lap.display_name,
+            "team_colour": board.fastest_lap.team_colour,
+            "lap_time": board.fastest_lap.lap_time,
+            "lap_number": board.fastest_lap.lap_number,
+        },
         "team_radio": [
             {
                 "utc": clip.utc,

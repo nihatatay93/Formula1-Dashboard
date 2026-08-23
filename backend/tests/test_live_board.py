@@ -456,3 +456,89 @@ def test_a_capture_without_a_session_path_is_dropped() -> None:
     )
 
     assert board.team_radio == ()
+
+
+def test_the_fastest_lap_holder_comes_from_the_feed_marker() -> None:
+    """`PersonalBestLapTime.Position` 1 is the session's fastest lap.
+
+    Over the 2026 Dutch Grand Prix race that marker stayed unique through
+    twenty-four changes of hands, so it is trusted rather than recomputed.
+    """
+    board = build_board(
+        {
+            "DriverList": {
+                "44": {
+                    "RacingNumber": "44",
+                    "Tla": "HAM",
+                    "FullName": "Lewis HAMILTON",
+                    "TeamColour": "ED1131",
+                }
+            },
+            "TimingStats": {
+                "Lines": {
+                    "1": {
+                        "PersonalBestLapTime": {
+                            "Value": "1:15.969",
+                            "Lap": 23,
+                            "Position": 3,
+                        }
+                    },
+                    "44": {
+                        "PersonalBestLapTime": {
+                            "Value": "1:15.566",
+                            "Lap": 28,
+                            "Position": 1,
+                        }
+                    },
+                }
+            },
+        }
+    )
+
+    assert board.fastest_lap is not None
+    assert board.fastest_lap.tla == "HAM"
+    assert board.fastest_lap.lap_time == "1:15.566"
+    assert board.fastest_lap.lap_number == 28
+
+
+def test_a_shared_marker_falls_back_to_the_quickest_time() -> None:
+    # Two drivers marked fastest is a board naming two fastest laps, which is
+    # worse than naming the quickest it can actually see.
+    board = build_board(
+        {
+            "TimingStats": {
+                "Lines": {
+                    "1": {
+                        "PersonalBestLapTime": {"Value": "1:16.100", "Position": 1}
+                    },
+                    "44": {
+                        "PersonalBestLapTime": {"Value": "1:15.566", "Position": 1}
+                    },
+                }
+            }
+        }
+    )
+
+    assert board.fastest_lap is not None
+    assert board.fastest_lap.racing_number == "44"
+
+
+def test_lap_times_across_a_minute_boundary_order_correctly() -> None:
+    # "59.900" is quicker than "1:00.100" but sorts after it as text.
+    board = build_board(
+        {
+            "TimingStats": {
+                "Lines": {
+                    "1": {"PersonalBestLapTime": {"Value": "1:00.100"}},
+                    "2": {"PersonalBestLapTime": {"Value": "59.900"}},
+                }
+            }
+        }
+    )
+
+    assert board.fastest_lap is not None
+    assert board.fastest_lap.racing_number == "2"
+
+
+def test_no_timed_lap_leaves_no_fastest_lap() -> None:
+    assert build_board({"TimingStats": {"Lines": {}}}).fastest_lap is None
