@@ -623,6 +623,7 @@ def test_openapi_documents_historical_session_routes() -> None:
 def _race_pace_response(query: RacePaceQuery) -> RacePaceResponse:
     return RacePaceResponse(
         session_id=SESSION_ID,
+        session_key="race",
         snapshot=_snapshot(),
         filters=RacePaceFilters(
             clean_only=query.clean_only,

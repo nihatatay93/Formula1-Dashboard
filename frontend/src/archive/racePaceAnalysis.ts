@@ -193,6 +193,31 @@ export interface Stint {
 /** FastF1's code for a red flag, within a lap's concatenated track status. */
 const RED_FLAG = "5";
 
+/**
+ * Sessions where entering the pit lane means serving a stop.
+ *
+ * In practice and qualifying a car comes in and waits in the garage between
+ * runs, so the interval between entering and leaving is garage time, not a
+ * pit-lane transit. Measured across the 2026 Dutch Grand Prix weekend the
+ * median was 259s in practice and 185s in qualifying, against 24s across
+ * seventy stops of the Monaco race.
+ */
+export const RACE_LIKE_SESSIONS = new Set(["race", "sprint"]);
+
+export function isRaceLike(sessionKey: string | undefined): boolean {
+  return RACE_LIKE_SESSIONS.has((sessionKey ?? "").toLowerCase());
+}
+
+/**
+ * The longest interval still credible as one pit-lane transit.
+ *
+ * A stop is a drive in, the stationary work and a drive out, and even a car
+ * serving a penalty clears the lane well inside this. Beyond it the car was
+ * parked: the 2026 Dutch sprint has an entry that computes to 1270s because
+ * the car went into the garage and stayed there.
+ */
+export const PIT_LANE_CEILING_US = 120_000_000;
+
 export interface PitStop {
   /** The lap the car entered the pit lane on. */
   lap_number: number;
@@ -210,6 +235,12 @@ export interface PitStop {
    * 2158 seconds, against 19 to 66 for the seventy that were not.
    */
   under_red_flag: boolean;
+  /**
+   * The car entered but did not rejoin promptly, so the interval measures how
+   * long it stood in the garage. Reported rather than dropped: the entry
+   * happened, and a retirement into the pits is worth seeing.
+   */
+  never_rejoined: boolean;
 }
 
 /**
@@ -236,16 +267,24 @@ export function pitStopsOf(entry: RacePaceEntry): PitStop[] {
     const underRedFlag =
       (lap.track_status ?? "").includes(RED_FLAG) ||
       (exit?.track_status ?? "").includes(RED_FLAG);
+    const elapsed =
+      exit?.pit_out_time_us != null
+        ? exit.pit_out_time_us - lap.pit_in_time_us
+        : null;
+    // Adjacency cannot be used here: FastF1 records the exit on the lap after
+    // the entry even when the car stood in the garage for twenty minutes,
+    // because the lap counter does not advance while it is stationary.
+    const neverRejoined =
+      elapsed !== null && !underRedFlag && elapsed > PIT_LANE_CEILING_US;
 
     stops.push({
       lap_number: lap.lap_number,
-      // A suspension is reported as no duration rather than as a 36-minute
-      // pit stop, which is what subtracting the two instants would give.
+      // A suspension, or a car that parked, is reported as no duration rather
+      // than as the many-minute figure subtracting the instants would give.
       pit_lane_us:
-        exit?.pit_out_time_us != null && !underRedFlag
-          ? exit.pit_out_time_us - lap.pit_in_time_us
-          : null,
+        elapsed !== null && !underRedFlag && !neverRejoined ? elapsed : null,
       under_red_flag: underRedFlag,
+      never_rejoined: neverRejoined,
     });
   }
   return stops;

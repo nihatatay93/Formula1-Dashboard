@@ -1,5 +1,5 @@
 import type { RacePaceEntry } from "../contracts";
-import { pitStopsOf } from "./racePaceAnalysis";
+import { isRaceLike, pitStopsOf } from "./racePaceAnalysis";
 
 /**
  * Every pit entry in the session, ordered by how long the car was in the lane.
@@ -26,19 +26,38 @@ interface Row {
   lapNumber: number;
   pitLaneUs: number | null;
   underRedFlag: boolean;
+  neverRejoined: boolean;
 }
 
 export default function PitStopTable({
   entries,
+  sessionKey,
 }: {
   entries: RacePaceEntry[];
+  sessionKey: string;
 }) {
+  if (!isRaceLike(sessionKey)) {
+    // Practice and qualifying cars return to the garage between runs, so the
+    // interval between entering and leaving the pit lane is time spent parked.
+    // Across the 2026 Dutch weekend the median read 259s in practice and 185s
+    // in qualifying, against 24s over seventy stops of a race. Presenting
+    // those as pit stops would be presenting a different quantity.
+    return (
+      <p className="session-explorer__hint">
+        Pit stops are only measured for races and sprints. In practice and
+        qualifying a car waits in the garage between runs, so the time between
+        entering and leaving the pit lane is not a pit stop.
+      </p>
+    );
+  }
+
   const rows: Row[] = entries.flatMap((entry) =>
     pitStopsOf(entry).map((stop) => ({
       entry,
       lapNumber: stop.lap_number,
       pitLaneUs: stop.pit_lane_us,
       underRedFlag: stop.under_red_flag,
+      neverRejoined: stop.never_rejoined,
     })),
   );
 
@@ -110,7 +129,9 @@ export default function PitStopTable({
                     ? formatSeconds(row.pitLaneUs)
                     : row.underRedFlag
                       ? "race suspended"
-                      : "no exit recorded"}
+                      : row.neverRejoined
+                        ? "did not rejoin"
+                        : "no exit recorded"}
                 </td>
               </tr>
             ))}

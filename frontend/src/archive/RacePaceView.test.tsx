@@ -37,6 +37,7 @@ function response(
 ): RacePaceResponse {
   return {
     session_id: "821",
+    session_key: "race",
     snapshot: {
       data_available: true,
       source: "fastf1_archive",

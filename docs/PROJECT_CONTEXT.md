@@ -2294,11 +2294,11 @@ race-run classification remain intentionally unimplemented.
 
 ## Next Steps
 
-1. Exercise the live client during an actual session weekend. It has been
-   verified against the real endpoint outside a session, which returns the last
-   state per topic, but sustained delta traffic, reconnects mid-session and the
-   `TimingData` update rate have not been observed live. The next event is the
-   Dutch Grand Prix on 2026-08-21.
+1. Done, during the 2026 Dutch Grand Prix race on 2026-08-23. Sustained delta
+   traffic, an unforced reconnect and the `TimingData` rate were all observed;
+   the figures are in "Live timing observed under load" below. What remains
+   unobserved is a full race distance: the capture covers the start, a red
+   flag on lap 2 and the restart, not two hours of it.
 2. Stabilize the shared API for the SwiftUI client, then implement the iOS
    application without exposing upstream credentials.
 3. `docs/FRONTEND_EVOLUTION_PLAN.md` is complete. All seven build phases have
@@ -2632,8 +2632,40 @@ mounted writable at `/live-sessions`.
   explicit PostCSS configuration.
 - `README.md`: Local development overview and commands.
 
+### Live timing observed under load
+
+Measured against the 2026 Dutch Grand Prix race, the first time this client
+has run during a real session.
+
+- Frame rate rises about 167x between the grid and green-flag running: 5
+  frames per minute with the cars stationary against 836 once racing, of which
+  `TimingData` alone is 714 per minute, roughly twelve a second. The collector
+  took it with nothing rejected and nothing dropped by the log cap.
+- A reconnect happened unforced. It cost no data: the feed replays its current
+  state on reconnect, the deep merge recognised every replayed frame as
+  changing nothing, and the duplicate counter absorbed them. The merged board
+  was identical either side of it.
+- Every `TimingData` delta touches exactly one car, and 95% of them carry only
+  `Sectors`. Segment status codes seen live were 2048, 0 and 2064, all already
+  mapped.
+- `Sectors` arrives as a list in the initial snapshot and as a dict in deltas.
+  `_ordered` already handled both.
+- A safety-car formation lap is not visible in `TrackStatus`, which stayed
+  `AllClear`. The only signal is a `RaceControlMessages` entry reading
+  "SAFETY CAR LIGHTS ON", free text under category "Other". Race control also
+  announced "STANDING START" six minutes before the lights. Anything that
+  needs to know the race is running behind a safety car has to read those
+  messages, not the track status.
+- A red flag on lap 2 reported `track_status_code` 5 and `session_status`
+  "Aborted", confirming the constant the pit-lane rule keys on.
+
 ## Change Log
 
+- 2026-08-23 — Measured the live client during the Dutch Grand Prix, and
+  corrected pit-stop reporting against real sessions of every kind. Timing a
+  pit entry against the next exit only means something in a race: in practice
+  and qualifying a car waits in the garage between runs, which read a median
+  of 259s and 185s against 24s across seventy stops of a race.
 - 2026-08-22 — Repaired season discovery during a live race weekend. Two
   faults compounded: an event whose session metadata upstream had not yet
   published failed the whole season's backfill with a 503, and FastF1's

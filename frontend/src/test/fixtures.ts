@@ -605,6 +605,7 @@ export const constructorStandings: ConstructorStandingsResponse = {
  */
 export const racePace = {
   session_id: "5001",
+  session_key: "race",
   snapshot: {
     data_available: true,
     source: "fastf1_archive",

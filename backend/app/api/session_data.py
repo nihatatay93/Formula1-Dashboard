@@ -288,7 +288,9 @@ def read_race_pace(
 
     with session_factory() as database, database.begin():
         _begin_read_only(database)
-        _, _, ingestion = _session_context(database, session_id=session_id)
+        race_session, _, ingestion = _session_context(
+            database, session_id=session_id
+        )
         snapshot = _require_snapshot(ingestion)
 
         # The reference is the best clean lap. Taking it from any lap would let
@@ -335,6 +337,7 @@ def read_race_pace(
 
         return RacePaceResponse(
             session_id=session_id,
+            session_key=race_session.session_key,
             snapshot=snapshot,
             filters=RacePaceFilters(
                 clean_only=query.clean_only,

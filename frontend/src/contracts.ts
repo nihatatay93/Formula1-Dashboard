@@ -741,6 +741,7 @@ export interface RacePaceEntry {
 
 export interface RacePaceResponse {
   session_id: string;
+  session_key: string;
   snapshot: SessionSnapshot;
   filters: {
     clean_only: boolean;

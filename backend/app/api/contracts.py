@@ -523,6 +523,11 @@ class RacePaceEntry(ApiModel):
 
 class RacePaceResponse(ApiModel):
     session_id: DecimalIdentifier
+    #: Which kind of session these laps came from. Pit and stint figures mean
+    #: different things in a race than in practice or qualifying, where a car
+    #: returns to the garage between runs, so a reader has to be told which
+    #: this is rather than left to guess from the lap data.
+    session_key: str = Field(min_length=1)
     snapshot: SessionSnapshot
     filters: RacePaceFilters
     clean_lap_definition: str

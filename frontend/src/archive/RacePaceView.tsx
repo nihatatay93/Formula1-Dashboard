@@ -247,7 +247,7 @@ export default function RacePaceView({
           {/* Strategy reads every lap the car ran, not only the clean ones:
               an in lap is exactly where a stint ends. */}
           <StrategyChart entries={data.items ?? []} />
-          <PitStopTable entries={data.items ?? []} />
+          <PitStopTable entries={data.items ?? []} sessionKey={data.session_key} />
         </>
       ) : null}
     </section>

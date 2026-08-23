@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { RacePaceEntry, RacePaceLap } from "../contracts";
 import {
   buildPaceSeries,
+  isRaceLike,
   orderByMedian,
   pitStopsOf,
   quantile,
@@ -328,7 +329,12 @@ describe("pitStopsOf", () => {
     // FastF1 records the two instants on different rows, so they have to be
     // stitched together.
     expect(stops).toEqual([
-      { lap_number: 10, pit_lane_us: 24_000_000, under_red_flag: false },
+      {
+        lap_number: 10,
+        pit_lane_us: 24_000_000,
+        under_red_flag: false,
+        never_rejoined: false,
+      },
     ]);
   });
 
@@ -339,7 +345,12 @@ describe("pitStopsOf", () => {
 
     // The car retired in the pits. The stop happened; its duration is unknown.
     expect(stops).toEqual([
-      { lap_number: 10, pit_lane_us: null, under_red_flag: false },
+      {
+        lap_number: 10,
+        pit_lane_us: null,
+        under_red_flag: false,
+        never_rejoined: false,
+      },
     ]);
   });
 
@@ -401,5 +412,72 @@ describe("stintsOf lap counts", () => {
     );
 
     expect(stints.map((stint) => stint.laps)).toEqual([3, 1]);
+  });
+});
+
+describe("pit stops against real session shapes", () => {
+  it("knows which sessions a pit stop means something in", () => {
+    expect(isRaceLike("race")).toBe(true);
+    expect(isRaceLike("sprint")).toBe(true);
+    // A car in practice or qualifying waits in the garage between runs.
+    expect(isRaceLike("qualifying")).toBe(false);
+    expect(isRaceLike("practice_1")).toBe(false);
+    expect(isRaceLike(undefined)).toBe(false);
+  });
+
+  it("refuses to time a stop the car never rejoined from", () => {
+    // The 2026 Dutch sprint has exactly this: the car entered and stayed in
+    // the garage, so subtracting the instants gives 1270 seconds.
+    const stops = pitStopsOf(
+      entry({
+        laps: [
+          lap({ lap_number: 20, pit_in_time_us: 1_000_000_000 }),
+          lap({ lap_number: 21, pit_out_time_us: 2_270_500_000 }),
+        ],
+      }),
+    );
+
+    expect(stops[0].never_rejoined).toBe(true);
+    expect(stops[0].pit_lane_us).toBeNull();
+  });
+
+  it("still times a normal stop, including a slow one", () => {
+    const stops = pitStopsOf(
+      entry({
+        laps: [
+          lap({ lap_number: 20, pit_in_time_us: 1_000_000_000 }),
+          // 66s was the slowest real stop of the Monaco race.
+          lap({ lap_number: 21, pit_out_time_us: 1_066_000_000 }),
+        ],
+      }),
+    );
+
+    expect(stops[0].never_rejoined).toBe(false);
+    expect(stops[0].pit_lane_us).toBe(66_000_000);
+  });
+
+  it("cannot rely on lap adjacency to tell the two apart", () => {
+    // FastF1 records the exit on the lap after the entry even when the car
+    // stood in the garage, because the lap counter does not advance while it
+    // is stationary. Both cases below are adjacent laps.
+    const parked = pitStopsOf(
+      entry({
+        laps: [
+          lap({ lap_number: 20, pit_in_time_us: 0 }),
+          lap({ lap_number: 21, pit_out_time_us: 1_270_500_000 }),
+        ],
+      }),
+    );
+    const served = pitStopsOf(
+      entry({
+        laps: [
+          lap({ lap_number: 20, pit_in_time_us: 0 }),
+          lap({ lap_number: 21, pit_out_time_us: 24_000_000 }),
+        ],
+      }),
+    );
+
+    expect(parked[0].pit_lane_us).toBeNull();
+    expect(served[0].pit_lane_us).toBe(24_000_000);
   });
 });

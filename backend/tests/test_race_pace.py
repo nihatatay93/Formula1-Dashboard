@@ -691,3 +691,17 @@ def test_a_stint_boundary_follows_the_stint_number(target: RacePaceTarget) -> No
     # a strategy chart segments on.
     assert [laps[n].stint_number for n in (1, 2, 3, 4, 5)] == [1, 1, 1, 1, 1]
     assert laps[6].stint_number == 2
+
+
+def test_the_response_says_which_kind_of_session_it_is(
+    target: RacePaceTarget,
+) -> None:
+    """The reader cannot interpret pit figures without knowing the session.
+
+    A car in practice or qualifying returns to the garage between runs, so the
+    interval between entering and leaving the pit lane is time parked, not a
+    pit-lane transit. Across the 2026 Dutch Grand Prix weekend that read a
+    median of 259s in practice and 185s in qualifying against 24s over seventy
+    stops of a race, so a caller has to be told which it is holding.
+    """
+    assert _read(target).session_key == "race"
