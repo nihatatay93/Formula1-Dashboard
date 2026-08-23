@@ -542,3 +542,126 @@ def test_lap_times_across_a_minute_boundary_order_correctly() -> None:
 
 def test_no_timed_lap_leaves_no_fastest_lap() -> None:
     assert build_board({"TimingStats": {"Lines": {}}}).fastest_lap is None
+
+
+def test_benchmarks_take_the_quickest_sector_from_whoever_ran_it() -> None:
+    """The three quickest sectors are a lap nobody drove.
+
+    `BestSectors` ranks each driver's sector against the field, so position 1
+    is the session best. Summing three of them across three drivers is the
+    theoretical best, and it is labelled as such rather than shown as a lap.
+    """
+    board = build_board(
+        {
+            "DriverList": {
+                "1": {"RacingNumber": "1", "Tla": "NOR"},
+                "12": {"RacingNumber": "12", "Tla": "ANT"},
+            },
+            "TimingStats": {
+                "Lines": {
+                    "1": {
+                        "BestSectors": [
+                            {"Position": 2, "Value": "25.680"},
+                            {"Position": 1, "Value": "27.056"},
+                            {"Position": 1, "Value": "22.810"},
+                        ]
+                    },
+                    "12": {
+                        "BestSectors": [
+                            {"Position": 1, "Value": "25.500"},
+                            {"Position": 3, "Value": "27.400"},
+                            {"Position": 2, "Value": "22.900"},
+                        ]
+                    },
+                }
+            },
+        }
+    )
+
+    assert board.benchmarks is not None
+    assert [(c.sector, c.value, c.tla) for c in board.benchmarks.sectors] == [
+        (1, "25.500", "ANT"),
+        (2, "27.056", "NOR"),
+        (3, "22.810", "NOR"),
+    ]
+    # 25.500 + 27.056 + 22.810 = 75.366, which is a minute and 15.366.
+    assert board.benchmarks.theoretical_best == "1:15.366"
+
+
+def test_a_theoretical_best_under_a_minute_drops_the_minutes() -> None:
+    board = build_board(
+        {
+            "TimingStats": {
+                "Lines": {
+                    "1": {
+                        "BestSectors": [
+                            {"Position": 1, "Value": "15.000"},
+                            {"Position": 1, "Value": "20.000"},
+                            {"Position": 1, "Value": "10.500"},
+                        ]
+                    }
+                }
+            }
+        }
+    )
+
+    assert board.benchmarks is not None
+    assert board.benchmarks.theoretical_best == "45.500"
+
+
+def test_an_unreadable_sector_leaves_no_total() -> None:
+    # A wrong sum is worse than none: the sectors still stand on their own.
+    board = build_board(
+        {
+            "TimingStats": {
+                "Lines": {
+                    "1": {
+                        "BestSectors": [
+                            {"Position": 1, "Value": "15.000"},
+                            {"Position": 1, "Value": "n/a"},
+                        ]
+                    }
+                }
+            }
+        }
+    )
+
+    assert board.benchmarks is not None
+    assert board.benchmarks.theoretical_best == ""
+    assert len(board.benchmarks.sectors) == 2
+
+
+def test_stints_read_as_runs_on_one_set_of_tyres() -> None:
+    board = build_board(
+        {
+            "DriverList": {"1": {"RacingNumber": "1", "Tla": "NOR"}},
+            "TimingData": {"Lines": {"1": {"Position": "1"}}},
+            "TimingAppData": {
+                "Lines": {
+                    "1": {
+                        "Stints": [
+                            {
+                                "Compound": "MEDIUM",
+                                "LapNumber": 2,
+                                "TotalLaps": 2,
+                                "New": "true",
+                            },
+                            {
+                                "Compound": "SOFT",
+                                "LapNumber": 9,
+                                "TotalLaps": 22,
+                                # The feed sends these as strings.
+                                "New": "false",
+                            },
+                        ]
+                    }
+                }
+            },
+        }
+    )
+
+    stints = board.drivers[0].stints
+    assert [(s.compound, s.started_on_lap, s.laps, s.fitted_new) for s in stints] == [
+        ("MEDIUM", 2, 2, True),
+        ("SOFT", 9, 22, False),
+    ]

@@ -92,6 +92,8 @@ class DriverRow:
     #: from ``last_lap_overall_best``, which is true only while that very lap
     #: is the latest one they set.
     holds_fastest_lap: bool
+    #: Every run on one set of tyres, oldest first.
+    stints: tuple[Stint, ...]
     best_lap: str
     sectors: tuple[SectorCell, ...]
     compound: str
@@ -113,6 +115,39 @@ class RaceControlMessage:
     message: str
     lap: int | None
     flag: str
+
+
+@dataclass(frozen=True, slots=True)
+class SectorBest:
+    """The quickest anyone has run one sector, and who ran it."""
+
+    sector: int
+    value: str
+    tla: str
+    racing_number: str
+
+
+@dataclass(frozen=True, slots=True)
+class Benchmarks:
+    """Session bests, and the lap nobody actually drove.
+
+    ``theoretical_best`` sums the three quickest sectors, which may come from
+    three different drivers. It is a benchmark, not a lap time: no car has run
+    it, and it is labelled so on screen.
+    """
+
+    sectors: tuple[SectorBest, ...]
+    theoretical_best: str
+
+
+@dataclass(frozen=True, slots=True)
+class Stint:
+    """One run on one set of tyres."""
+
+    compound: str
+    started_on_lap: int | None
+    laps: int | None
+    fitted_new: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +197,7 @@ class LiveBoard:
     race_control: tuple[RaceControlMessage, ...] = ()
     team_radio: tuple[TeamRadioClip, ...] = ()
     fastest_lap: FastestLap | None = None
+    benchmarks: Benchmarks | None = None
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -335,6 +371,78 @@ def _fastest_lap(
     )
 
 
+def _benchmarks(
+    stats: Mapping[str, Any],
+    *,
+    drivers: Mapping[str, Any],
+) -> Benchmarks | None:
+    """The quickest sector times of the session, and their sum.
+
+    ``BestSectors`` ranks each driver's best sector against the field, so
+    position 1 is the session best for that sector. The three added together
+    are a lap nobody drove, which is why it is called theoretical.
+    """
+
+    best_by_sector: dict[int, tuple[str, str]] = {}
+    for number, entry in _mapping(stats.get("Lines")).items():
+        for index, cell in enumerate(_ordered(_mapping(entry).get("BestSectors"))):
+            sector = _mapping(cell)
+            value = _text(sector.get("Value"))
+            if value and _whole(sector.get("Position")) == 1:
+                best_by_sector[index] = (value, number)
+
+    if not best_by_sector:
+        return None
+
+    sectors = tuple(
+        SectorBest(
+            sector=index + 1,
+            value=value,
+            tla=_text(_mapping(drivers.get(number)).get("Tla")),
+            racing_number=_text(
+                _mapping(drivers.get(number)).get("RacingNumber")
+            )
+            or number,
+        )
+        for index, (value, number) in sorted(best_by_sector.items())
+    )
+
+    total = 0.0
+    for cell in sectors:
+        try:
+            total += float(cell.value)
+        except ValueError:
+            # One unreadable sector makes the sum meaningless rather than
+            # merely wrong, so no total is offered at all.
+            return Benchmarks(sectors=sectors, theoretical_best="")
+    minutes, seconds = divmod(round(total, 3), 60)
+    theoretical = (
+        f"{int(minutes)}:{seconds:06.3f}" if minutes else f"{seconds:.3f}"
+    )
+    return Benchmarks(sectors=sectors, theoretical_best=theoretical)
+
+
+def _stints(entry: Mapping[str, Any]) -> tuple[Stint, ...]:
+    """Every run on one set of tyres, oldest first."""
+
+    runs: list[Stint] = []
+    for item in _ordered(entry.get("Stints")):
+        run = _mapping(item)
+        compound = _text(run.get("Compound"))
+        if not compound:
+            continue
+        runs.append(
+            Stint(
+                compound=compound,
+                started_on_lap=_whole(run.get("LapNumber")),
+                laps=_whole(run.get("TotalLaps")),
+                # The feed sends the flag as the strings "true" and "false".
+                fitted_new=_text(run.get("New")).lower() == "true",
+            )
+        )
+    return tuple(runs)
+
+
 def _lap_time_sort_key(best: Mapping[str, Any]) -> tuple[int, int, float]:
     """Order "m:ss.sss" and "ss.sss" lap times without parsing failures."""
 
@@ -408,7 +516,9 @@ def build_board(
     timing = _mapping(topics.get("TimingData"))
     app_data = _mapping(_mapping(topics.get("TimingAppData")).get("Lines"))
     drivers = _mapping(topics.get("DriverList"))
-    fastest = _fastest_lap(_mapping(topics.get("TimingStats")), drivers=drivers)
+    timing_stats = _mapping(topics.get("TimingStats"))
+    fastest = _fastest_lap(timing_stats, drivers=drivers)
+    benchmarks = _benchmarks(timing_stats, drivers=drivers)
 
     session_part = _whole(timing.get("SessionPart"))
     lines = _mapping(timing.get("Lines"))
@@ -448,6 +558,7 @@ def build_board(
                 last_lap=_text(last.get("Value")),
                 last_lap_personal_best=_flag(last.get("PersonalFastest")),
                 last_lap_overall_best=_flag(last.get("OverallFastest")),
+                stints=_stints(_mapping(app_data.get(number))),
                 holds_fastest_lap=(
                     fastest is not None
                     and fastest.racing_number == (_text(driver.get("RacingNumber")) or number)
@@ -491,6 +602,7 @@ def build_board(
         drivers=tuple(rows),
         race_control=_race_control(_mapping(topics.get("RaceControlMessages"))),
         fastest_lap=fastest,
+        benchmarks=benchmarks,
         team_radio=_team_radio(
             _mapping(topics.get("TeamRadio")),
             session_path=_text(session.get("Path")),
@@ -532,6 +644,15 @@ def board_to_dict(board: LiveBoard) -> dict[str, Any]:
                 "last_lap_personal_best": row.last_lap_personal_best,
                 "last_lap_overall_best": row.last_lap_overall_best,
                 "holds_fastest_lap": row.holds_fastest_lap,
+                "stints": [
+                    {
+                        "compound": run.compound,
+                        "started_on_lap": run.started_on_lap,
+                        "laps": run.laps,
+                        "fitted_new": run.fitted_new,
+                    }
+                    for run in row.stints
+                ],
                 "best_lap": row.best_lap,
                 "sectors": [
                     {
@@ -574,6 +695,20 @@ def board_to_dict(board: LiveBoard) -> dict[str, Any]:
             "team_colour": board.fastest_lap.team_colour,
             "lap_time": board.fastest_lap.lap_time,
             "lap_number": board.fastest_lap.lap_number,
+        },
+        "benchmarks": None
+        if board.benchmarks is None
+        else {
+            "sectors": [
+                {
+                    "sector": cell.sector,
+                    "value": cell.value,
+                    "tla": cell.tla,
+                    "racing_number": cell.racing_number,
+                }
+                for cell in board.benchmarks.sectors
+            ],
+            "theoretical_best": board.benchmarks.theoretical_best,
         },
         "team_radio": [
             {

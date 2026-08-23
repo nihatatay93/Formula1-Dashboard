@@ -5430,3 +5430,162 @@ th,
 .live-fastest__time {
   font-family: var(--mono);
 }
+
+/* --------------------------------------------------------------------------
+   Live conditions, tabs, benchmarks and stints
+   -------------------------------------------------------------------------- */
+
+/* Conditions read as one band above the board rather than a side panel: they
+   describe the session everything below is happening in. */
+.live-conditions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s5);
+  margin: 0 0 var(--s4);
+  padding: var(--s2) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r2);
+  background: var(--panel-inset);
+}
+
+.live-conditions > div {
+  display: flex;
+  gap: var(--s2);
+  align-items: baseline;
+}
+
+.live-conditions dt {
+  color: var(--muted);
+  font-size: var(--t-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.live-conditions dd {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  font-weight: 600;
+}
+
+.live-board__tabs {
+  margin-bottom: var(--s3);
+}
+
+.live-benchmarks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.live-benchmarks li {
+  display: flex;
+  gap: var(--s2);
+  align-items: baseline;
+}
+
+.live-benchmarks__sector {
+  width: 1.6rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+}
+
+.live-benchmarks__driver {
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  font-weight: 700;
+}
+
+.live-benchmarks__value {
+  margin-left: auto;
+  color: #c77dff;
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  font-weight: 700;
+}
+
+.live-benchmarks__total {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin: var(--s3) 0 0;
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line);
+  color: var(--ink-dim);
+  font-size: var(--t-small);
+}
+
+.live-benchmarks__total strong {
+  color: #c77dff;
+  font-family: var(--mono);
+}
+
+.live-benchmarks__total small {
+  color: var(--muted-dark);
+  font-size: var(--t-micro);
+  line-height: 1.5;
+}
+
+.live-stints {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin-bottom: var(--s4);
+}
+
+.live-stints__row {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+}
+
+.live-stints__driver {
+  display: inline-flex;
+  flex: none;
+  gap: var(--s2);
+  align-items: center;
+  width: 4.5rem;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  font-weight: 700;
+}
+
+.live-stints__swatch {
+  width: 3px;
+  height: 1.1rem;
+  border-radius: 999px;
+}
+
+.live-stints__bar {
+  display: flex;
+  flex: 1;
+  gap: 2px;
+  height: 1.1rem;
+  border-radius: var(--r1);
+  background: var(--panel-inset);
+  overflow: hidden;
+}
+
+.live-stints__stint {
+  height: 100%;
+  opacity: 0.85;
+}
+
+.live-stints__count {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--t-micro);
+}
+
+@media (width <= 700px) {
+  .live-conditions {
+    gap: var(--s1) var(--s3);
+  }
+}

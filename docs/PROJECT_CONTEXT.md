@@ -2661,6 +2661,24 @@ has run during a real session.
 - Peak sustained traffic was 272 frames in fifteen seconds, about 1088 a
   minute, during the opening laps.
 
+### Live timing view
+
+The layout follows the information architecture of the reference dashboard
+recorded in `docs/FRONTEND_EVOLUTION_PLAN.md`, rendered in this project's own
+tokens rather than copied: track conditions as one band above the board, the
+leaderboard and tyre stints behind tabs, and session bests beside race control
+and team radio.
+
+Two figures on it are not lap times and are labelled so. The theoretical best
+sums the three quickest sectors, which may come from three different drivers;
+it read 1:14.221 against an actual fastest of 1:14.321 during the Dutch Grand
+Prix, which is the relationship to expect. Pit-lane time is covered under race
+pace.
+
+`TimingAppData.Lines[car].Stints` carries each run's compound, the lap it began
+on and how many laps it has covered, which is where the live stint bars come
+from. `New` arrives as the strings "true" and "false", not booleans.
+
 ### Who holds the fastest lap
 
 `TimingStats.Lines[car].PersonalBestLapTime.Position` ranks each driver's best

@@ -149,7 +149,15 @@ function board(overrides: Record<string, unknown> = {}) {
     total_laps: 70,
     remaining: "01:20:00",
     extrapolating: true,
-    weather: { AirTemp: "31.3" },
+    // The keys and shapes the real feed sends, including rainfall as a flag.
+    weather: {
+      AirTemp: "23.4",
+      TrackTemp: "33.4",
+      Humidity: "59.2",
+      WindSpeed: "1.4",
+      Pressure: "1024.6",
+      Rainfall: "0",
+    },
     drivers: [
       {
         racing_number: "1",
@@ -168,6 +176,10 @@ function board(overrides: Record<string, unknown> = {}) {
         last_lap_personal_best: true,
         last_lap_overall_best: false,
         holds_fastest_lap: false,
+        stints: [
+          { compound: "MEDIUM", started_on_lap: 1, laps: 12, fitted_new: true },
+          { compound: "SOFT", started_on_lap: 13, laps: 8, fitted_new: false },
+        ],
         best_lap: "1:22.491",
         sectors: [
           {
@@ -198,6 +210,16 @@ function board(overrides: Record<string, unknown> = {}) {
     race_control: [
       { utc: "2026-07-26T14:45:40", category: "Flag", message: "GREEN LIGHT", lap: 1, flag: "GREEN" },
     ],
+    benchmarks: {
+      // Deliberately not the row fixture's driver: a query for that code
+      // must not match a side panel as well as the leaderboard.
+      sectors: [
+        { sector: 1, value: "25.500", tla: "ANT", racing_number: "12" },
+        { sector: 2, value: "27.056", tla: "VER", racing_number: "3" },
+        { sector: 3, value: "22.810", tla: "LEC", racing_number: "16" },
+      ],
+      theoretical_best: "1:15.366",
+    },
     fastest_lap: {
       // Deliberately not the driver in the row fixture, so a query for that
       // driver's code cannot match the header chip as well.
@@ -226,6 +248,72 @@ function board(overrides: Record<string, unknown> = {}) {
 }
 
 describe("LiveTiming", () => {
+  /** Emits the given board as-is; spreading a default back over it would
+      restore any key the caller deliberately deleted. */
+  async function openBoard(value: ReturnType<typeof board> = board()) {
+    getLiveStatus.mockResolvedValue(activeStatus());
+    render(<LiveTiming />);
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    socket().open();
+    socket().emit({
+      type: "snapshot",
+      record_state: "unconfirmed_live",
+      session: null,
+      board: value,
+    });
+  }
+
+  it("reads track conditions with their units", async () => {
+    await openBoard();
+
+    // The feed sends bare strings keyed by an internal name; a reader wants
+    // a label and a unit.
+    expect(await screen.findByText("Air")).toBeVisible();
+    expect(screen.getByText("23.4°C")).toBeVisible();
+  });
+
+  it("says whether it is raining rather than showing a flag value", async () => {
+    await openBoard();
+
+    // Rainfall arrives as "1" or "0", which means nothing on its own.
+    expect(await screen.findByText("Rain")).toBeVisible();
+    expect(screen.getByText("no")).toBeVisible();
+  });
+
+  it("names the quickest sector holders and the theoretical best", async () => {
+    await openBoard();
+
+    expect(await screen.findByText("Best sectors")).toBeVisible();
+    expect(screen.getByText("25.500")).toBeVisible();
+    expect(screen.getByText("1:15.366")).toBeVisible();
+    // A lap nobody drove must not read as a lap time.
+    expect(screen.getByText(/No car has driven it/)).toBeVisible();
+  });
+
+  it("switches to stints without losing the board", async () => {
+    const user = userEvent.setup();
+    await openBoard();
+    await screen.findByRole("tab", { name: "Stints" });
+
+    await user.click(screen.getByRole("tab", { name: "Stints" }));
+
+    expect(screen.getByText("2 stints")).toBeVisible();
+  });
+
+  it("survives a board with no benchmarks or stints", async () => {
+    const bare = board();
+    delete (bare as { benchmarks?: unknown }).benchmarks;
+    for (const row of bare.drivers as { stints?: unknown }[]) {
+      delete row.stints;
+    }
+
+    await openBoard(bare);
+
+    // An older contract must not blank the live view.
+    expect(await screen.findByText("NOR")).toBeVisible();
+    expect(screen.queryByText("Best sectors")).toBeNull();
+  });
+
   it("marks who holds the fastest lap", async () => {
     getLiveStatus.mockResolvedValue(activeStatus());
 

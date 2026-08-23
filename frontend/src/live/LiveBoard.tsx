@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import type {
   LiveBoard as Board,
   LiveDriverRow,
@@ -14,6 +16,9 @@ import type {
  * qualifying has a best lap per session part.
  */
 
+import LiveBenchmarksPanel from "./LiveBenchmarks";
+import LiveConditions from "./LiveConditions";
+import LiveStints from "./LiveStints";
 import TeamRadioPanel from "./TeamRadioPanel";
 
 function compoundClass(compound: string): string {
@@ -236,9 +241,12 @@ function DriverRow({ row, isRace }: { row: LiveDriverRow; isRace: boolean }) {
   );
 }
 
+type Tab = "leaderboard" | "stints";
+
 export default function LiveBoard({ board }: { board: Board }) {
   const isRace = board.session_type.toLowerCase() === "race";
   const tone = trackStatusTone(board.track_status_code);
+  const [tab, setTab] = useState<Tab>("leaderboard");
 
   return (
     <div className="live-board">
@@ -293,9 +301,36 @@ export default function LiveBoard({ board }: { board: Board }) {
         </div>
       </div>
 
+      <LiveConditions weather={board.weather} />
+
       {board.drivers.length > 0 ? (
         <>
-          <div className="live-board__table-wrap">
+          <div className="standings__tabs live-board__tabs" role="tablist" aria-label="Live view">
+            {(
+              [
+                ["leaderboard", "Leaderboard"],
+                ["stints", "Stints"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                aria-selected={tab === value}
+                className={tab === value ? "is-selected" : ""}
+                key={value}
+                onClick={() => setTab(value)}
+                role="tab"
+                type="button"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {tab === "stints" ? <LiveStints rows={board.drivers} /> : null}
+
+          <div
+            className="live-board__table-wrap"
+            hidden={tab !== "leaderboard"}
+          >
             <table className="live-board__table">
               <thead>
                 <tr>
@@ -354,6 +389,10 @@ export default function LiveBoard({ board }: { board: Board }) {
         {/* Optional chain on the field, not just the board: a deployment
             serving an older contract has no `team_radio`, and reading
             `.length` off it would blank the whole live view. */}
+        {board.benchmarks ? (
+          <LiveBenchmarksPanel benchmarks={board.benchmarks} />
+        ) : null}
+
         {(board.team_radio?.length ?? 0) > 0 ? (
           <TeamRadioPanel clips={board.team_radio} />
         ) : null}
