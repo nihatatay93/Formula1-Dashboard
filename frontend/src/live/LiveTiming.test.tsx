@@ -263,6 +263,29 @@ describe("LiveTiming", () => {
     });
   }
 
+  it("keeps a mini-sector column steady before a car reaches a sector", async () => {
+    const partial = board();
+    // A car that has only run the first sector: the other two have no blocks.
+    (partial.drivers[0] as { sectors: unknown[] }).sectors = [
+      {
+        value: "27.446",
+        personal_best: false,
+        overall_best: false,
+        segments: ["green", "green"],
+      },
+      { value: "", personal_best: false, overall_best: false, segments: [] },
+      { value: "", personal_best: false, overall_best: false, segments: [] },
+    ];
+
+    await openBoard(partial);
+    await screen.findByText("NOR");
+
+    // Three groups either way, so the column does not jump as a lap runs.
+    const strips = document.querySelector(".live-board__minisectors");
+    expect(strips?.querySelectorAll(".live-segments")).toHaveLength(3);
+    expect(strips?.querySelectorAll(".live-segments--empty")).toHaveLength(2);
+  });
+
   it("reads track conditions with their units", async () => {
     await openBoard();
 
@@ -503,20 +526,26 @@ describe("LiveTiming", () => {
 
     await screen.findByText("NOR");
 
-    // One block per micro-sector, coloured by its status.
-    const row = container.querySelector(".live-board__sectors");
-    expect(row?.querySelectorAll(".live-segments__block")).toHaveLength(7);
-    expect(row?.querySelectorAll(".live-segments__block--green")).toHaveLength(2);
-    expect(row?.querySelectorAll(".live-segments__block--purple")).toHaveLength(1);
-    expect(row?.querySelectorAll(".live-segments__block--pit")).toHaveLength(1);
-    expect(row?.querySelectorAll(".live-segments__block--pending")).toHaveLength(3);
+    // One block per micro-sector, coloured by its status, in the column of
+    // their own rather than crowded under the sector time.
+    const strips = container.querySelector(".live-board__minisectors");
+    expect(strips?.querySelectorAll(".live-segments__block")).toHaveLength(7);
+    expect(strips?.querySelectorAll(".live-segments__block--green")).toHaveLength(2);
+    expect(strips?.querySelectorAll(".live-segments__block--purple")).toHaveLength(1);
+    expect(strips?.querySelectorAll(".live-segments__block--pit")).toHaveLength(1);
+    expect(strips?.querySelectorAll(".live-segments__block--pending")).toHaveLength(3);
 
-    // The strip is decoration over the sector time, which still reads normally.
+    // Sector times keep their own column and still read normally.
     expect(screen.getByText("27.446")).toBeVisible();
-    expect(row?.querySelector(".live-segments")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
+    expect(
+      container.querySelector(".live-board__sectors .live-segments__block"),
+    ).toBeNull();
+
+    // Standing alone, the strip has to name itself rather than lean on the
+    // sector cell's title as it did when it sat inside one.
+    expect(
+      strips?.querySelector(".live-segments"),
+    ).toHaveAttribute("aria-label", expect.stringContaining("3/4 micro-sectors"));
     expect(
       container.querySelector(".live-sector[title]"),
     ).toHaveAttribute("title", expect.stringContaining("3/4 micro-sectors"));

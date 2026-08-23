@@ -71,12 +71,26 @@ function SegmentLegend() {
  * technology and summarised in the sector's title instead — 22 rows of ~22
  * blocks would otherwise flood a screen reader on every tick.
  */
-function SegmentStrip({ segments }: { segments: LiveSegmentStatus[] }) {
+function SegmentStrip({
+  segments,
+  label,
+}: {
+  segments: LiveSegmentStatus[];
+  label?: string;
+}) {
   if (segments.length === 0) {
-    return null;
+    // A placeholder keeps the three sectors aligned across every row while a
+    // car has not reached one yet.
+    return <span className="live-segments live-segments--empty" />;
   }
   return (
-    <span aria-hidden="true" className="live-segments">
+    <span
+      className="live-segments"
+      role={label ? "img" : undefined}
+      aria-hidden={label ? undefined : true}
+      aria-label={label}
+      title={label}
+    >
       {segments.map((status, index) => (
         <span
           className={`live-segments__block live-segments__block--${status}`}
@@ -222,8 +236,23 @@ function DriverRow({ row, isRace }: { row: LiveDriverRow; isRace: boolean }) {
                   title={sectorTitle(cell, index)}
                 >
                   <span className="live-sector__value">{cell.value || "—"}</span>
-                  <SegmentStrip segments={cell.segments} />
                 </span>
+              ))
+            : "—"}
+        </div>
+      </td>
+      <td>
+        {/* Where a driver is on track, sector by sector. The times beside it
+            say how quick the sector was; these say how far through it the car
+            is and which parts it took. */}
+        <div className="live-board__minisectors">
+          {row.sectors.length > 0
+            ? row.sectors.map((cell, index) => (
+                <SegmentStrip
+                  key={index}
+                  label={sectorTitle(cell, index)}
+                  segments={cell.segments}
+                />
               ))
             : "—"}
         </div>
@@ -348,6 +377,7 @@ export default function LiveBoard({ board }: { board: Board }) {
                   <th scope="col">Last lap</th>
                   <th scope="col">Best lap</th>
                   <th scope="col">Sectors</th>
+                  <th scope="col">Mini-sectors</th>
                   {isRace ? <th scope="col">Stops</th> : null}
                   <th scope="col">Status</th>
                 </tr>
