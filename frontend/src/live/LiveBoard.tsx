@@ -14,6 +14,8 @@ import type {
  * qualifying has a best lap per session part.
  */
 
+import TeamRadioPanel from "./TeamRadioPanel";
+
 function compoundClass(compound: string): string {
   const known = ["soft", "medium", "hard", "intermediate", "wet"];
   const normalized = compound.toLowerCase();
@@ -315,6 +317,13 @@ export default function LiveBoard({ board }: { board: Board }) {
               ))}
             </ol>
           </section>
+        ) : null}
+
+        {/* Optional chain on the field, not just the board: a deployment
+            serving an older contract has no `team_radio`, and reading
+            `.length` off it would blank the whole live view. */}
+        {(board.team_radio?.length ?? 0) > 0 ? (
+          <TeamRadioPanel clips={board.team_radio} />
         ) : null}
 
         {Object.keys(board.weather).length > 0 ? (

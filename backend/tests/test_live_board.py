@@ -386,3 +386,73 @@ class TestMiniSectorSegments:
 
         assert rendered["drivers"][0]["sectors"][0]["segments"] == ["purple"]
         json.dumps(rendered)
+
+
+def test_team_radio_clips_are_addressable_and_newest_first() -> None:
+    """A clip is only useful if it can be played and attributed.
+
+    `SessionInfo.Path` names the session directory and the capture names the
+    file; together they address the audio. The driver is resolved from
+    `DriverList` so the row reads like every other row on the board.
+    """
+    board = build_board(
+        {
+            "SessionInfo": {
+                "Path": "2026/2026-08-23_Dutch_Grand_Prix/2026-08-23_Race/",
+            },
+            "DriverList": {
+                "3": {
+                    "RacingNumber": "3",
+                    "Tla": "VER",
+                    "FullName": "Max VERSTAPPEN",
+                    "TeamColour": "4781D7",
+                }
+            },
+            "TeamRadio": {
+                "Captures": [
+                    {
+                        "Utc": "2026-08-23T12:24:32Z",
+                        "RacingNumber": "3",
+                        "Path": "TeamRadio/VER_3_early.mp3",
+                    },
+                    {
+                        "Utc": "2026-08-23T13:06:37Z",
+                        "RacingNumber": "3",
+                        "Path": "TeamRadio/VER_3_late.mp3",
+                    },
+                ]
+            },
+        }
+    )
+
+    assert [clip.utc for clip in board.team_radio] == [
+        "2026-08-23T13:06:37Z",
+        "2026-08-23T12:24:32Z",
+    ]
+    newest = board.team_radio[0]
+    assert newest.tla == "VER"
+    assert newest.display_name == "Max VERSTAPPEN"
+    assert newest.audio_url == (
+        "https://livetiming.formula1.com/static/2026/"
+        "2026-08-23_Dutch_Grand_Prix/2026-08-23_Race/TeamRadio/VER_3_late.mp3"
+    )
+
+
+def test_a_capture_without_a_session_path_is_dropped() -> None:
+    # Without the session directory the file cannot be addressed, and a clip
+    # that cannot be played is worse than no row at all.
+    board = build_board(
+        {
+            "TeamRadio": {
+                "Captures": [
+                    {
+                        "Utc": "2026-08-23T13:06:37Z",
+                        "RacingNumber": "3",
+                        "Path": "TeamRadio/VER_3.mp3",
+                    }
+                ]
+            }
+        }
+    )
+
+    assert board.team_radio == ()

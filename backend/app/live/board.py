@@ -23,6 +23,12 @@ from app.live.positions import PositionTracker
 #: Race control history is unbounded over a session; the dashboard shows the
 #: most recent messages rather than all of them.
 MAX_RACE_CONTROL_MESSAGES = 15
+MAX_TEAM_RADIO_CLIPS = 20
+
+#: Where a capture's relative path hangs off. `SessionInfo.Path` names the
+#: session directory, so the two together address the file.
+LIVE_TIMING_STATIC_ROOT = "https://livetiming.formula1.com/static/"
+
 
 #: Micro-sector status codes, derived from a recorded qualifying session rather
 #: than from documentation — the feed publishes no schema for them. Each sector
@@ -106,6 +112,23 @@ class RaceControlMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class TeamRadioClip:
+    """One radio capture.
+
+    The feed names an audio file and the car it belongs to. It carries no
+    transcript -- the text shown on a broadcast is transcribed there, not sent
+    here -- so a reader gets who, when, and something to play.
+    """
+
+    utc: str
+    racing_number: str
+    tla: str
+    display_name: str
+    team_colour: str
+    audio_url: str
+
+
+@dataclass(frozen=True, slots=True)
 class LiveBoard:
     meeting_name: str
     session_name: str
@@ -121,6 +144,7 @@ class LiveBoard:
     weather: dict[str, str] = field(default_factory=dict)
     drivers: tuple[DriverRow, ...] = ()
     race_control: tuple[RaceControlMessage, ...] = ()
+    team_radio: tuple[TeamRadioClip, ...] = ()
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -247,6 +271,43 @@ def _race_control(payload: Mapping[str, Any]) -> tuple[RaceControlMessage, ...]:
     return tuple(reversed(built))[:MAX_RACE_CONTROL_MESSAGES]
 
 
+def _team_radio(
+    payload: Mapping[str, Any],
+    *,
+    session_path: str,
+    drivers: Mapping[str, Any],
+) -> tuple[TeamRadioClip, ...]:
+    """Radio captures, newest first, each addressable as audio.
+
+    A capture without a usable path is dropped rather than shown as a clip that
+    cannot be played. The driver is resolved from `DriverList` so the row reads
+    like the rest of the board; the file name also carries a code, but the
+    driver list is the same source every other row uses.
+    """
+
+    clips: list[TeamRadioClip] = []
+    for entry in _ordered(payload.get("Captures")):
+        capture = _mapping(entry)
+        path = _text(capture.get("Path"))
+        if not path or not session_path:
+            continue
+        number = _text(capture.get("RacingNumber"))
+        driver = _mapping(drivers.get(number))
+        clips.append(
+            TeamRadioClip(
+                utc=_text(capture.get("Utc")),
+                racing_number=_text(driver.get("RacingNumber")) or number,
+                tla=_text(driver.get("Tla")),
+                display_name=_text(driver.get("FullName"))
+                or _text(driver.get("BroadcastName")),
+                team_colour=_text(driver.get("TeamColour")),
+                audio_url=f"{LIVE_TIMING_STATIC_ROOT}{session_path}{path}",
+            )
+        )
+    # Newest first, matching race control and how a reader scans it.
+    return tuple(reversed(clips))[:MAX_TEAM_RADIO_CLIPS]
+
+
 def build_board(
     topics: Mapping[str, Any],
     *,
@@ -347,6 +408,11 @@ def build_board(
         },
         drivers=tuple(rows),
         race_control=_race_control(_mapping(topics.get("RaceControlMessages"))),
+        team_radio=_team_radio(
+            _mapping(topics.get("TeamRadio")),
+            session_path=_text(session.get("Path")),
+            drivers=drivers,
+        ),
     )
 
 
@@ -414,5 +480,16 @@ def board_to_dict(board: LiveBoard) -> dict[str, Any]:
                 "flag": item.flag,
             }
             for item in board.race_control
+        ],
+        "team_radio": [
+            {
+                "utc": clip.utc,
+                "racing_number": clip.racing_number,
+                "tla": clip.tla,
+                "display_name": clip.display_name,
+                "team_colour": clip.team_colour,
+                "audio_url": clip.audio_url,
+            }
+            for clip in board.team_radio
         ],
     }

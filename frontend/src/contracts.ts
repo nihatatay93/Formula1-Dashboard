@@ -671,6 +671,16 @@ export interface LiveRaceControlMessage {
 }
 
 /** Display-ready board, normalised server-side from the raw feed topics. */
+export interface LiveTeamRadioClip {
+  utc: string;
+  racing_number: string;
+  tla: string;
+  display_name: string;
+  team_colour: string;
+  /** A playable mp3. The feed carries no transcript; broadcasts add that. */
+  audio_url: string;
+}
+
 export interface LiveBoard {
   meeting_name: string;
   session_name: string;
@@ -686,6 +696,7 @@ export interface LiveBoard {
   weather: Record<string, string>;
   drivers: LiveDriverRow[];
   race_control: LiveRaceControlMessage[];
+  team_radio: LiveTeamRadioClip[];
 }
 
 export interface LiveTopicState {

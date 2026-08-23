@@ -197,11 +197,47 @@ function board(overrides: Record<string, unknown> = {}) {
     race_control: [
       { utc: "2026-07-26T14:45:40", category: "Flag", message: "GREEN LIGHT", lap: 1, flag: "GREEN" },
     ],
+    team_radio: [
+      {
+        utc: "2026-07-26T14:46:10Z",
+        // A driver who is not in the row fixture, so the panel and the
+        // leaderboard cannot be confused for one another in a query.
+        racing_number: "3",
+        tla: "VER",
+        display_name: "Max VERSTAPPEN",
+        team_colour: "4781D7",
+        audio_url:
+          "https://livetiming.formula1.com/static/2026/x/y/TeamRadio/VER_3.mp3",
+      },
+    ],
     ...overrides,
   };
 }
 
 describe("LiveTiming", () => {
+  it("survives a board with no team radio field", async () => {
+    // A deployment on an older contract sends no `team_radio`. Reading
+    // `.length` off it would blank the live view, which is the failure that
+    // took the whole dashboard down once before.
+    const withoutRadio = board();
+    delete (withoutRadio as { team_radio?: unknown }).team_radio;
+    getLiveStatus.mockResolvedValue(activeStatus());
+
+    render(<LiveTiming />);
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    socket().open();
+    socket().emit({
+      type: "snapshot",
+      record_state: "unconfirmed_live",
+      session: null,
+      board: withoutRadio,
+    });
+
+    // The rest of the board still renders.
+    expect(await screen.findByText("NOR")).toBeVisible();
+  });
+
   beforeEach(() => {
     getLiveStatus.mockReset();
     startLiveSession.mockReset();

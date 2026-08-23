@@ -5284,3 +5284,107 @@ th,
 :root[data-density="compact"] .pit-stops__swatch {
   height: 1.1rem;
 }
+
+/* --------------------------------------------------------------------------
+   Team radio
+   -------------------------------------------------------------------------- */
+
+.live-radio__count {
+  margin-left: var(--s2);
+  padding: 0 var(--s2);
+  border-radius: 999px;
+  background: var(--neutral-soft);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  font-weight: 600;
+}
+
+.live-radio {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.live-radio li {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+  padding: var(--s1) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.live-radio li:last-child {
+  border-bottom: 0;
+}
+
+.live-radio__play {
+  flex: none;
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-dim);
+  font-size: 0.6rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.live-radio__play:hover {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.live-radio__play.is-playing {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.live-radio__play:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+}
+
+.live-radio__swatch {
+  flex: none;
+  width: 3px;
+  height: 1.5rem;
+  border-radius: 999px;
+}
+
+.live-radio__driver {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  font-weight: 700;
+}
+
+.live-radio__driver small {
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: var(--t-micro);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-radio__time {
+  margin-left: auto;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+}
+
+.live-radio__failed {
+  color: var(--danger);
+  font-size: var(--t-micro);
+}

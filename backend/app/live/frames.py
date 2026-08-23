@@ -38,6 +38,7 @@ CONSUMED_TOPICS: frozenset[str] = frozenset(
         "SessionData",
         "SessionInfo",
         "SessionStatus",
+        "TeamRadio",
         "TimingAppData",
         "TimingData",
         "TimingStats",
@@ -49,15 +50,18 @@ CONSUMED_TOPICS: frozenset[str] = frozenset(
 
 #: Known topics that are deliberately dropped. CarData.z and Position.z are
 #: base64 raw-deflate car telemetry and track coordinates: roughly 39% of frames
-#: in a recorded session, and outside the timing scope of the live view. The
-#: remainder are media streams.
+#: in a recorded session, and outside the timing scope of the live view.
+#:
+#: The rest are media streams carrying no per-driver content. ContentStreams
+#: holds an interactive-commentary URL and an HLS audio stream for the world
+#: feed; AudioStreams the same in another shape. TeamRadio is not among them:
+#: it names one capture per driver and is consumed.
 IGNORED_TOPICS: frozenset[str] = frozenset(
     {
         "AudioStreams",
         "CarData.z",
         "ContentStreams",
         "Position.z",
-        "TeamRadio",
     }
 )
 

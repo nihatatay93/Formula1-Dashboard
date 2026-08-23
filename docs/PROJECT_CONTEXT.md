@@ -2661,6 +2661,25 @@ has run during a real session.
 - Peak sustained traffic was 272 frames in fifteen seconds, about 1088 a
   minute, during the opening laps.
 
+### Team radio, and what the feed does not carry
+
+`TeamRadio` names one capture per driver: a car number, a moment, and a
+relative path to an mp3. `SessionInfo.Path` names the session directory, and
+the two together address the file on the static host, which serves it without
+authentication. It is consumed rather than ignored, and the board carries the
+clips newest first with the driver resolved from `DriverList`.
+
+The feed carries **no transcript**. The text a broadcast shows beside each
+message is transcribed there, not sent down the timing feed; a third-party
+dashboard reading the same feed shows only driver and time, as this one now
+does. Anything wanting words would need speech recognition over the audio,
+which is a different project.
+
+`ContentStreams` was investigated alongside it and stays ignored. It holds an
+interactive-commentary URL and an HLS audio stream for the world feed, with
+nothing per driver, so it is a media stream in the sense the comment beside it
+claims.
+
 **Editing backend code during a live session destroys the capture.** The dev
 API runs under `uvicorn --reload`, and the collector lives in the application
 process, so a reload tears it down, resets its counters and drops every

@@ -49,11 +49,39 @@ def test_unknown_topic_is_rejected_rather_than_stored() -> None:
     assert rejection_reason(topic=None) == FrameRejection.UNKNOWN_TOPIC
 
 
-@pytest.mark.parametrize("topic", ["CarData.z", "Position.z", "TeamRadio"])
+@pytest.mark.parametrize(
+    "topic",
+    ["CarData.z", "Position.z", "ContentStreams", "AudioStreams"],
+)
 def test_deliberately_ignored_topics_are_distinguished_from_unknown(
     topic: str,
 ) -> None:
     assert rejection_reason(topic=topic) == FrameRejection.IGNORED_TOPIC
+
+
+def test_team_radio_is_consumed_rather_than_dropped() -> None:
+    """It names one capture per driver, which is timing content, not media.
+
+    The feed gives a car number, a moment and an audio path -- never a
+    transcript, which broadcasts add themselves. ContentStreams beside it
+    really is a media stream: a commentary URL and an HLS audio feed, with
+    nothing per driver, so that one stays ignored.
+    """
+    frame = normalized(
+        {
+            "Captures": [
+                {
+                    "Utc": "2026-08-23T13:06:37.663Z",
+                    "RacingNumber": "3",
+                    "Path": "TeamRadio/VER_3_20260823_150618.mp3",
+                }
+            ]
+        },
+        topic="TeamRadio",
+    )
+
+    assert frame.topic == "TeamRadio"
+    assert frame.payload["Captures"][0]["RacingNumber"] == "3"
 
 
 def test_initial_flag_must_be_a_boolean() -> None:
